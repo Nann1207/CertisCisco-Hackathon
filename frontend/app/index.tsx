@@ -1,3 +1,5 @@
+
+
 import React from "react";
 import { Image, ImageBackground, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -8,9 +10,10 @@ export default function LaunchScreen() {
       <ImageBackground
         source={require("../assets/splash.png")}
         style={styles.bg}
+        imageStyle={{ opacity: 0.50 }}
         resizeMode="cover"
       >
-        {/* Dark overlay + bottom fade */}
+        
         <LinearGradient
           colors={[
             "rgba(14,45,82,0.00)",
@@ -24,9 +27,8 @@ export default function LaunchScreen() {
         {/* Center content */}
         <View style={styles.centerWrap}>
           <View style={styles.brandRow}>
-            <Text style={styles.fortis}>FORTIS</Text>
             <Image
-              source={require("../assets/fortis-mark.png")}
+              source={require("../assets/fortis-logo.png")}
               style={styles.mark}
               resizeMode="contain"
             />
@@ -49,8 +51,8 @@ const styles = StyleSheet.create({
   },
   bg: {
     flex: 1,
+    
   },
-
   centerWrap: {
     flex: 1,
     alignItems: "center",
@@ -62,24 +64,16 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 1, 
   },
-  fortis: {
-    color: "#FFFFFF",
-    fontSize: 64,
-    fontWeight: "700",
-    letterSpacing: -0.8,
-  },
   mark: {
-    width: 120,
+    width: 320,
     height: 120,
-    marginLeft: -20,
-    marginTop: 8, // slight drop so it visually aligns like your design
   },
 
   bottomWrap: {
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 70, // tweak to match your mock
+    bottom: 50, // tweak to match your mock
     alignItems: "center",
   },
   subtitle: {
