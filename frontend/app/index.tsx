@@ -1,10 +1,17 @@
-
-
 import React from "react";
 import { Image, ImageBackground, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from "expo-router";
+import { useEffect } from "react";
 
 export default function LaunchScreen() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const t = setTimeout(() => router.replace("/login"), 1800);
+    return () => clearTimeout(t);
+  }, [router]);
+
   return (
     <View style={styles.root}>
       <ImageBackground
@@ -73,7 +80,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 50, // tweak to match your mock
+    bottom: 50, 
     alignItems: "center",
   },
   subtitle: {
