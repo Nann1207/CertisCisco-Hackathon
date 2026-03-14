@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
+import { Eye, EyeOff } from "lucide-react-native";
 
 const ORANGE = "#F68D2C";
 const BLUE = "#0E2D52";
@@ -45,7 +46,7 @@ export default function LoginScreen() {
           style={StyleSheet.absoluteFill}
         />
 
-        {/* Optional language icon (does nothing yet) */}
+        
         <Pressable style={styles.langBtn} hitSlop={12} onPress={() => {}}>
           <Image
             source={require("../assets/translation.png")}
@@ -72,7 +73,7 @@ export default function LoginScreen() {
             />
           </View>
 
-          <Text style={[styles.fieldLabel, { marginTop: 18 }]}>Password:</Text>
+          <Text style={styles.passwordLabel}>Password:</Text>
           <View style={styles.inputWrap}>
             <TextInput
               value={password}
@@ -88,7 +89,11 @@ export default function LoginScreen() {
               style={styles.eyeBtn}
               hitSlop={10}
             >
-              <Text style={styles.eyeText}>{showPassword ? "Hide" : "Show"}</Text>
+              {showPassword ? (
+                <EyeOff size={18} color="rgba(0,0,0,0.45)" />
+              ) : (
+                <Eye size={18} color="rgba(0,0,0,0.45)" />
+              )}
             </Pressable>
           </View>
 
@@ -112,14 +117,14 @@ export default function LoginScreen() {
           </Pressable>
         </View>
 
-        {/* Bottom branding (optional) */}
+        
         <View style={styles.bottomBrand}>
-          <Text style={styles.bottomCertis}>Certis Cisco</Text>
           <Image
             source={require("../assets/fortis-logo.png")}
             style={styles.bottomMark}
             resizeMode="contain"
           />
+          <Text style={styles.bottomCertis}>Certis Cisco</Text>
         </View>
       </ImageBackground>
     </View>
@@ -135,21 +140,29 @@ const styles = StyleSheet.create({
 
   content: { paddingTop: 120, paddingHorizontal: 28 },
 
-  welcome: { color: "#FFFFFF", fontSize: 40, fontWeight: "400" },
+  welcome: { color: "#FFFFFF", fontSize: 40, fontWeight: "600",textAlign: "center", marginTop: 90, },
   hint: {
     marginTop: 8,
+    marginBottom: 10,
     color: "rgba(255,255,255,0.58)",
     fontSize: 24,
-    fontWeight: "400",
+    fontWeight: "500",
+    textAlign: "center",
   },
 
-  fieldLabel: { marginTop: 26, color: "#FFFFFF", fontSize: 19 },
+  fieldLabel: { marginTop: 26, color: "#FFFFFF", fontSize: 19, fontWeight: "500" },
+  passwordLabel: {
+    marginTop: 35,
+    color: "#FFFFFF",
+    fontSize: 19,
+    fontWeight: "500",
+  },
 
   inputWrap: {
     marginTop: 6,
     height: 46,
     borderRadius: 45,
-    borderWidth: 1,
+    borderWidth: 2,
     borderColor: ORANGE,
     backgroundColor: "#FFFFFF",
     justifyContent: "center",
@@ -163,10 +176,9 @@ const styles = StyleSheet.create({
     height: 46,
     justifyContent: "center",
   },
-  eyeText: { color: "rgba(0,0,0,0.45)", fontSize: 14, fontWeight: "600" },
 
   row: {
-    marginTop: 10,
+    marginTop: 15,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -181,25 +193,26 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   checkboxOn: { backgroundColor: ORANGE },
-  rememberText: { color: "#FFFFFF", fontSize: 16 },
+  rememberText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600", },
 
   forgot: {
     color: ORANGE,
     fontSize: 16,
     textDecorationLine: "underline",
+    fontWeight: "600",
   },
 
   signInBtn: {
-    marginTop: 18,
+    marginTop: 45,
     height: 41,
     borderRadius: 45,
-    backgroundColor: ORANGE,
+    backgroundColor: "#F68D2C",
     borderWidth: 1,
     borderColor: "#1C1C1C",
     alignItems: "center",
     justifyContent: "center",
   },
-  signInText: { color: BLUE, fontSize: 24, fontWeight: "700" },
+  signInText: { color: BLUE, fontSize: 24, fontWeight: "500" },
 
   bottomBrand: {
     position: "absolute",
@@ -208,12 +221,10 @@ const styles = StyleSheet.create({
     bottom: 60,
     alignItems: "center",
   },
-  bottomCertis: { marginTop: 8, color: "#FFFFFF", fontSize: 20 },
+  bottomCertis: { marginTop: 8, color: "#FFFFFF", fontSize: 20, textAlign: "center" },
   bottomMark: {
-    position: "absolute",
-    right: 80,
-    top: -8,
-    width: 64,
-    height: 98,
+    width: 200,
+    height: 84,
+    marginBottom: 25,
   },
 });

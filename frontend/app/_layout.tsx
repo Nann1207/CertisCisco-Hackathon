@@ -10,7 +10,6 @@ export default function RootLayout() {
 
   useEffect(() => {
     let isMounted = true;
-
     async function prepare() {
       try {
         await Asset.loadAsync([
@@ -23,9 +22,7 @@ export default function RootLayout() {
         }
       }
     }
-
     prepare();
-
     return () => {
       isMounted = false;
     };
