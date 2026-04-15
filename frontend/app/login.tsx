@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import {
+  Alert,
+  ActivityIndicator,
   Image,
   ImageBackground,
   Pressable,
@@ -11,9 +13,33 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { Eye, EyeOff } from "lucide-react-native";
+import { supabase } from "../lib/supabase";
 
 const ORANGE = "#F68D2C";
 const BLUE = "#0E2D52";
+const roleRoutes: Record<string, string> = {
+  "Security Officer": "/securityofficer/home",
+  "Senior Security Officer": "/sso/home",
+  "Security Supervisor": "/securitysupervisor/home",
+};
+const REQUEST_TIMEOUT_MS = 15000;
+
+async function withTimeout<T>(
+  promise: PromiseLike<T>,
+  timeoutMs = REQUEST_TIMEOUT_MS
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("Request timed out. Please try again.")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -22,10 +48,59 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  function onSignIn() {
-    
-    router.replace("/home");
+  async function onSignIn() {
+    if (loading) return;
+    if (!email.trim() || !password) {
+      Alert.alert("Missing details", "Please enter your email and password.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data: authData, error: authError } =
+        await withTimeout(
+          supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+          })
+        );
+
+      if (authError || !authData.user) {
+        Alert.alert("Sign in failed", authError?.message ?? "Invalid credentials.");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await withTimeout(
+        supabase
+          .from("employees")
+          .select("role")
+          .eq("id", authData.user.id)
+          .single()
+      );
+
+      if (profileError || !profile?.role) {
+        await supabase.auth.signOut();
+        Alert.alert("Sign in failed", "Employee role record was not found.");
+        return;
+      }
+
+      const route = roleRoutes[profile.role];
+      if (!route) {
+        await supabase.auth.signOut();
+        Alert.alert("Sign in failed", `Unsupported role: ${profile.role}`);
+        return;
+      }
+
+      router.replace(route);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unexpected error during sign in.";
+      Alert.alert("Sign in failed", message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -113,7 +188,11 @@ export default function LoginScreen() {
           </View>
 
           <Pressable onPress={onSignIn} style={styles.signInBtn}>
-            <Text style={styles.signInText}>SIGN IN</Text>
+            {loading ? (
+              <ActivityIndicator color={BLUE} />
+            ) : (
+              <Text style={styles.signInText}>SIGN IN</Text>
+            )}
           </Pressable>
         </View>
 
