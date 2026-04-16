@@ -1,7 +1,8 @@
 
 
 from supabase import create_client
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import uuid
 
 url = "https://wfsrbpckgdzfuagkycjq.supabase.co"
@@ -10,8 +11,14 @@ key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indm
 
 supabase = create_client(url, key)
 
+SGT = ZoneInfo("Asia/Singapore")
+
+
+def to_utc_iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
 def create_test_shifts():
-    base_date = datetime(2026, 4, 16)
+    base_date = datetime(2026, 4, 16, tzinfo=SGT)
     shifts = []
 
     # --- Day shifts for next 30 days ---
@@ -26,11 +33,11 @@ def create_test_shifts():
             "officer_id": "d8ec428f-6d12-4daf-b632-e2908d9381d5",
             "supervisor_id": "88be6b57-41d9-4e7e-baaf-10599603d024",
             "shift_date": shift_date.date().isoformat(),
-            "shift_start": start.isoformat() + "Z",
-            "shift_end": end.isoformat() + "Z",
+            "shift_start": to_utc_iso(start),
+            "shift_end": to_utc_iso(end),
             "location": "NEX Mall",
             "address": "Serangoon Central, 23, Singapore 556083",
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         })
 
     # --- Night shifts for next 4 days ---
@@ -45,11 +52,11 @@ def create_test_shifts():
             "officer_id": "d8ec428f-6d12-4daf-b632-e2908d9381d5",
             "supervisor_id": "88be6b57-41d9-4e7e-baaf-10599603d024",
             "shift_date": shift_date.date().isoformat(),
-            "shift_start": start.isoformat() + "Z",
-            "shift_end": end.isoformat() + "Z",
+            "shift_start": to_utc_iso(start),
+            "shift_end": to_utc_iso(end),
             "location": "NEX Mall",
             "address": "Serangoon Central, 23, Singapore 556083",
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         })
 
     response = supabase.table("shifts").insert(shifts).execute()

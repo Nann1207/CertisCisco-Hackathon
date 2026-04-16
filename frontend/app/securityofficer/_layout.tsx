@@ -9,9 +9,11 @@ export default function Layout() {
       <View style={styles.content}>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="home" />
-          <Stack.Screen name="dashboard" />
           <Stack.Screen name="reports" />
           <Stack.Screen name="incidents" />
+          <Stack.Screen name="schedule" />
+          <Stack.Screen name="shift-details" />
+          <Stack.Screen name="clock-in" />
           
         </Stack>
       </View>

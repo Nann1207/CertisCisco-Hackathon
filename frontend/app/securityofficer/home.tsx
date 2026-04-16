@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -19,8 +19,11 @@ import {
   ShieldAlert,
   Grid3X3,
 } from "lucide-react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 import { styles } from "../../styles/securityofficer/home.styles";
+
+const DISPLAY_TIME_ZONE = "Asia/Singapore";
 
 type Profile = {
   id: string;
@@ -31,8 +34,30 @@ type Profile = {
 
 type Shift = {
   id: string;
-  start_at: string;
-  end_at: string;
+  shift_date: string;
+  shift_start: string;
+  shift_end: string;
+  location: string | null;
+  address: string | null;
+  supervisor_id: string | null;
+  supervisor: {
+    first_name: string;
+    last_name: string;
+  } | null;
+};
+
+type UpcomingShift = {
+  id: string;
+  shift_date: string;
+  shift_start: string;
+  shift_end: string;
+  location: string | null;
+  address: string | null;
+  supervisor_id: string | null;
+  supervisor: {
+    first_name: string;
+    last_name: string;
+  } | null;
 };
 
 export default function Home() {
@@ -42,20 +67,27 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [todayShift, setTodayShift] = useState<Shift | null>(null);
   const [todayIncidentSummary, setTodayIncidentSummary] = useState<string | null>(null);
-  const [upcoming, setUpcoming] = useState<Shift[]>([]);
+  const [upcoming, setUpcoming] = useState<UpcomingShift[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [debugEmptyReason, setDebugEmptyReason] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
 
   const AVATAR_BUCKET = "profile-photos";
 
   const USE_SIGNED_URL = true;
 
-  const { dayStartISO, dayEndISO } = useMemo(() => {
-    const now = new Date();
-    const start = new Date(now);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(now);
-    end.setHours(23, 59, 59, 999);
-    return { dayStartISO: start.toISOString(), dayEndISO: end.toISOString() };
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000);
+
+    return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [profile?.avatar_url]);
 
   useEffect(() => {
     let alive = true;
@@ -89,8 +121,15 @@ export default function Home() {
     };
 
     const getAvatarUrlFromPath = async (rawPath: string) => {
+      const trimmed = rawPath.trim();
+
+      // If DB already stores a full URL, use it directly.
+      if (/^https?:\/\//i.test(trimmed)) {
+        return trimmed;
+      }
+
       // Accept both "employees/<id>/<file>" and "/employees/<id>/<file>".
-      let path = rawPath.trim().replace(/^\/+/, "");
+      let path = trimmed.replace(/^\/+/, "");
       // If bucket name is stored in DB path, strip it.
       if (path.startsWith(`${AVATAR_BUCKET}/`)) {
         path = path.slice(AVATAR_BUCKET.length + 1);
@@ -111,11 +150,14 @@ export default function Home() {
 
     const load = async () => {
       setLoading(true);
+      setLoadError(null);
+      setDebugEmptyReason(null);
 
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       const userId = sessionData.session?.user.id;
 
       if (sessionError || !userId) {
+        if (alive) setLoadError("Unable to load user session.");
         if (alive) setLoading(false);
         return;
       }
@@ -136,28 +178,123 @@ export default function Home() {
         avatarUrl = await getAvatarUrlFromFolder(userId);
       }
 
-      // 2) Today shift (NOTE: your shifts table/columns may differ; adjust when ready)
-      const { data: shift } = await supabase
+      const now = new Date();
+      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+        now.getDate()
+      ).padStart(2, "0")}`;
+
+      // 2) Today shift
+      const { data: shift, error: todayShiftError } = await supabase
         .from("shifts")
-        .select("id, start_at, end_at")
-        .eq("employee_id", userId)
-        .gte("start_at", dayStartISO)
-        .lte("start_at", dayEndISO)
-        .order("start_at", { ascending: true })
+        .select("id:shift_id, shift_date, shift_start, shift_end, location, address, supervisor_id")
+        .eq("officer_id", userId)
+        .eq("shift_date", todayISO)
+        .order("shift_start", { ascending: true })
+        .limit(1)
         .maybeSingle();
 
       // 3) Upcoming schedule (next 5)
-      const { data: upcomingShifts } = await supabase
+      const { data: upcomingShiftsRaw, error: upcomingError } = await supabase
         .from("shifts")
-        .select("id, start_at, end_at")
-        .eq("employee_id", userId)
-        .gte("start_at", new Date().toISOString())
-        .order("start_at", { ascending: true })
+        .select(`
+          id:shift_id,
+          shift_date,
+          shift_start,
+          shift_end,
+          location,
+          address,
+          supervisor_id
+        `)
+        .eq("officer_id", userId)
+        .gte("shift_date", todayISO)
+        .order("shift_date", { ascending: true })
+        .order("shift_start", { ascending: true })
         .limit(5);
+
+      const supervisorIds = Array.from(
+        new Set(
+          [
+            ...(upcomingShiftsRaw ?? []).map((s: any) => s.supervisor_id),
+            shift?.supervisor_id,
+          ].filter(Boolean)
+        )
+      ) as string[];
+
+      let supervisorMap = new Map<string, { first_name: string; last_name: string }>();
+      if (supervisorIds.length > 0) {
+        const { data: supervisors, error: supervisorsError } = await supabase
+          .from("employees")
+          .select("id, first_name, last_name")
+          .in("id", supervisorIds);
+
+        if (!supervisorsError && supervisors) {
+          supervisorMap = new Map(
+            supervisors.map((s) => [s.id, { first_name: s.first_name, last_name: s.last_name }])
+          );
+        }
+      }
+
+      const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? []).map((shiftItem: any) => {
+        const supervisor = shiftItem.supervisor_id
+          ? supervisorMap.get(shiftItem.supervisor_id) ?? null
+          : null;
+
+        return {
+          id: shiftItem.id,
+          shift_date: shiftItem.shift_date,
+          shift_start: shiftItem.shift_start,
+          shift_end: shiftItem.shift_end,
+          location: shiftItem.location ?? null,
+          address: shiftItem.address ?? null,
+          supervisor_id: shiftItem.supervisor_id ?? null,
+          supervisor,
+        };
+      });
+
+      const todayShiftData: Shift | null = shift
+        ? {
+            id: shift.id,
+            shift_date: shift.shift_date,
+            shift_start: shift.shift_start,
+            shift_end: shift.shift_end,
+            location: shift.location ?? null,
+            address: shift.address ?? null,
+            supervisor_id: shift.supervisor_id ?? null,
+            supervisor: shift.supervisor_id ? supervisorMap.get(shift.supervisor_id) ?? null : null,
+          }
+        : null;
+
+      if (todayShiftError || upcomingError) {
+        setLoadError("Unable to load shifts right now.");
+      }
+
+      if (!upcomingError && (upcomingShiftsRaw?.length ?? 0) === 0) {
+        const { data: visibleShifts, error: visibleError } = await supabase
+          .from("shifts")
+          .select("shift_id, officer_id, shift_date")
+          .gte("shift_date", todayISO)
+          .limit(20);
+
+        if (!visibleError) {
+          const visibleCount = visibleShifts?.length ?? 0;
+          const hasMatchingOfficer =
+            (visibleShifts ?? []).some((s: any) => s.officer_id === userId);
+
+          if (visibleCount === 0) {
+            setDebugEmptyReason(
+              `No shifts are visible for this session. Auth user: ${userId}. This usually means RLS policy is blocking select on shifts.`
+            );
+          } else if (!hasMatchingOfficer) {
+            setDebugEmptyReason(
+              `Shifts are visible, but none match officer_id = ${userId}. Check shifts.officer_id values for this user.`
+            );
+          }
+        }
+      }
 
       // 4) Incidents: STRICT rule = no shift => no incidents section
       // Since incidents table is not ready yet, keep it simple:
-      const incidentText = shift?.id ? "No incidents for today" : null;
+      const incidentText = todayShiftData?.id ? "No incidents for today" : null;
 
       if (!alive) return;
 
@@ -172,7 +309,7 @@ export default function Home() {
         setProfile(null);
       }
 
-      setTodayShift(shift ?? null);
+      setTodayShift(todayShiftData);
       setUpcoming(upcomingShifts ?? []);
       setTodayIncidentSummary(incidentText);
       setLoading(false);
@@ -183,7 +320,7 @@ export default function Home() {
     return () => {
       alive = false;
     };
-  }, [dayStartISO, dayEndISO]);
+  }, []);
 
   if (loading) {
     return (
@@ -195,6 +332,26 @@ export default function Home() {
 
   const name = profile?.first_name || "Officer";
 
+  const avatarSource =
+    profile?.avatar_url && !avatarLoadFailed
+      ? { uri: profile.avatar_url }
+      : require("../../assets/fortis-logo.png");
+  const todayDateText = todayShift
+    ? new Date(todayShift.shift_date).toLocaleDateString("en-GB", {
+        weekday: "long",
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+        timeZone: DISPLAY_TIME_ZONE,
+      })
+    : new Date().toLocaleDateString("en-GB", {
+        weekday: "long",
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+        timeZone: DISPLAY_TIME_ZONE,
+      });
+
   return (
     <View style={styles.root}>
       <ImageBackground
@@ -205,12 +362,9 @@ export default function Home() {
         <View style={styles.headerTopRow}>
           <View style={styles.profileRow}>
             <Image
-              source={
-                profile?.avatar_url
-                  ? { uri: profile.avatar_url }
-                  : require("../../assets/fortis-logo.png")
-              }
+              source={avatarSource}
               style={styles.avatar}
+              onError={() => setAvatarLoadFailed(true)}
             />
             <View>
               <Text style={styles.hiText}>Hi {name}!</Text>
@@ -219,54 +373,100 @@ export default function Home() {
           </View>
 
           <View style={styles.headerIcons}>
-            <Pressable onPress={() => router.push("/(officer)/translate")}>
+            <Pressable onPress={() => router.push("/securityofficer/translate")}>
               <Languages color="#fff" size={22} />
             </Pressable>
-            <Pressable onPress={() => router.push("/(officer)/notifications")}>
+            <Pressable onPress={() => router.push("/securityofficer/notifications")}>
               <Bell color="#fff" size={22} />
             </Pressable>
-            <Pressable onPress={() => router.push("/(officer)/settings")}>
+            <Pressable onPress={() => router.push("/securityofficer/settings")}>
               <Settings color="#fff" size={22} />
             </Pressable>
           </View>
         </View>
 
         <View style={styles.quickRow}>
-          <QuickAction label="ID Card" Icon={CreditCard} onPress={() => router.push("/(officer)/id-card")} />
-          <QuickAction label="Incidents" Icon={ShieldAlert} onPress={() => router.push("/(officer)/incidents")} />
-          <QuickAction label="Reports" Icon={FileText} onPress={() => router.push("/(officer)/reports")} />
-          <QuickAction label="All Services" Icon={Grid3X3} onPress={() => router.push("/(officer)/services")} />
+          <QuickAction label="ID Card" Icon={CreditCard} onPress={() => router.push("/securityofficer/id-card")} />
+          <QuickAction label="Incidents" Icon={ShieldAlert} onPress={() => router.push("/securityofficer/incidents")} />
+          <QuickAction label="Reports" Icon={FileText} onPress={() => router.push("/securityofficer/reports")} />
+          <QuickAction label="All Services" Icon={Grid3X3} onPress={() => router.push("/securityofficer/services")} />
         </View>
       </ImageBackground>
 
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>
-          {new Date().toLocaleDateString(undefined, {
-            weekday: "long",
-            day: "2-digit",
-            month: "long",
-            year: "numeric",
-          })}
-        </Text>
+      {todayShift ? (
+        <View style={styles.todayShiftCard}>
+          <View style={styles.todayInfoBlock}>
+            <View style={styles.todayInfoIconWrap}>
+              <Ionicons name="calendar-outline" size={45} color="#F1A579" />
+            </View>
+            <View style={styles.todayInfoTextCol}>
+              <Text style={styles.cardTitle}>{todayDateText}</Text>
+              <Text style={styles.todayShiftLocation}>Location: {todayShift.location ?? "-"}</Text>
+            </View>
+          </View>
 
-        <Text style={styles.cardSubtitle}>
-          {todayShift ? "Scheduled shift today" : "No scheduled shift today"}
-        </Text>
-      </View>
+          <View style={styles.timelineWrap}>
+            <View style={styles.timelineRow}>
+              <View style={styles.timelineEdgeLabel}>
+                <Text style={styles.timelineCaption}>Start time</Text>
+                <Text style={styles.timelineValue}>{formatTime(todayShift.shift_start)}</Text>
+              </View>
+
+              <View style={styles.timelineCenter}>
+                <Text style={styles.timelineNow}>{formatTime(currentTime.toISOString())}</Text>
+                <View style={styles.timelineTrack}>
+                  <View style={styles.timelineDot} />
+                  <View style={styles.timelineBar} />
+                  <View style={styles.timelineDot} />
+                </View>
+              </View>
+
+              <View style={styles.timelineEdgeLabel}>
+                <Text style={styles.timelineCaption}>End time</Text>
+                <Text style={styles.timelineValue}>{formatTime(todayShift.shift_end)}</Text>
+              </View>
+            </View>
+          </View>
+
+          <Pressable
+            style={styles.clockInButton}
+            onPress={() =>
+              router.push({
+                pathname: "/securityofficer/clock-in",
+                params: { shiftData: JSON.stringify(todayShift) },
+              })
+            }
+          >
+            <Text style={styles.clockInButtonText}>CLOCK IN</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>{todayDateText}</Text>
+          <Text style={styles.cardSubtitle}>No scheduled shift today</Text>
+        </View>
+      )}
 
       {todayIncidentSummary && (
-        <Pressable
-          style={[styles.card, styles.incidentCard]}
-          onPress={() => router.push("/(officer)/incidents")}
-        >
-          <Text style={[styles.cardTitle, { color: "#7C1515" }]}>Incidents</Text>
-          <Text style={[styles.cardSubtitle, { color: "#7C1515" }]}>{todayIncidentSummary}</Text>
-        </Pressable>
+        <>
+          <View style={styles.incidentsHeader}>
+            <Text style={styles.sectionTitle}>Incidents</Text>
+          </View>
+
+          <Pressable
+            style={[styles.card, styles.incidentCard]}
+            onPress={() => router.push("/securityofficer/incidents")}
+          >
+            <Text style={[styles.cardSubtitle, { color: "#7C1515", marginTop: 0 }]}>
+              {todayIncidentSummary}
+            </Text>
+          </Pressable>
+        </>
       )}
 
       <View style={styles.scheduleHeader}>
         <Text style={styles.sectionTitle}>Upcoming Schedule</Text>
-        <Pressable onPress={() => router.push("/(officer)/schedule")}>
+        <Pressable onPress={() => router.push("/securityofficer/schedule")}> 
           <Text style={styles.viewAll}>View all &gt;</Text>
         </Pressable>
       </View>
@@ -274,20 +474,40 @@ export default function Home() {
       <FlatList
         data={upcoming}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ gap: 10, paddingBottom: 20 }}
-        renderItem={({ item }) => (
-          <View style={styles.shiftRow}>
-            <Text style={styles.shiftDate}>
-              {new Date(item.start_at).toLocaleDateString(undefined, {
-                weekday: "long",
-                day: "2-digit",
-                month: "long",
-                year: "numeric",
+        contentContainerStyle={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}
+        ListEmptyComponent={
+          <Text style={{ paddingHorizontal: 16, color: "#6B7280", fontWeight: "600" }}>
+            {loadError ?? debugEmptyReason ?? "No upcoming shifts found."}
+          </Text>
+        }
+        renderItem={({ item }) => {
+          const dateObj = new Date(item.shift_date);
+          const dateString = dateObj.toLocaleDateString("en-GB", {
+            weekday: "long",
+            day: "2-digit",
+            month: "long",
+            year: "numeric",
+            timeZone: DISPLAY_TIME_ZONE,
+          });
+
+          return (
+            <Pressable 
+              style={styles.shiftCard} // Add shadow and background color in styles
+              onPress={() => router.push({
+                pathname: "/securityofficer/shift-details",
+                params: { shiftData: JSON.stringify(item) }
               })}
-            </Text>
-            <Text style={styles.shiftTime}>{formatTimeRange(item.start_at, item.end_at)}</Text>
-          </View>
-        )}
+            >
+              <View>
+                <Text style={styles.shiftDate}>{dateString}</Text>
+                <Text style={styles.shiftTime}>
+                  {formatTimeRange(item.shift_start, item.shift_end)}
+                </Text>
+              </View>
+              <Text style={styles.viewArrow}>&gt;</Text>
+            </Pressable>
+          );
+        }}
       />
     </View>
   );
@@ -307,6 +527,20 @@ function QuickAction({ label, Icon, onPress }: any) {
 function formatTimeRange(startISO: string, endISO: string) {
   const start = new Date(startISO);
   const end = new Date(endISO);
-  const opts: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit" };
+  const opts: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: DISPLAY_TIME_ZONE,
+  };
   return `${start.toLocaleTimeString([], opts)} - ${end.toLocaleTimeString([], opts)}`;
+}
+
+function formatTime(iso: string) {
+  const date = new Date(iso);
+  const opts: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: DISPLAY_TIME_ZONE,
+  };
+  return date.toLocaleTimeString([], opts);
 }
