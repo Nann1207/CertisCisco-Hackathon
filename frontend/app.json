@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Fortis",
+    "slug": "Fortis-app",
+    "scheme": "fortis",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0E2D52"
+    }
+  }
+}

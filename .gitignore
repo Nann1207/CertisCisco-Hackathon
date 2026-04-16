@@ -1,0 +1,61 @@
+.DS_Store
+Thumbs.db
+
+
+backend/.venv/
+backend/__pycache__/
+backend/**/*.pyc
+backend/.pytest_cache/
+backend/.env
+
+
+frontend/node_modules/
+frontend/.expo/
+frontend/.expo-shared/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.env
+
+
+frontend/dist/
+frontend/web-build/
+
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+
+*.pem
+
+# local env files
+.env*.local
+*.tsbuildinfo
+
+app-example
+/ios
+/android
