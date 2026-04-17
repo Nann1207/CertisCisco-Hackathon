@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { View, Text, StyleSheet, Pressable, Image, ScrollView } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Platform } from "react-native";
+import { View, StyleSheet, Pressable, Image, ScrollView, Alert } from "react-native";
+import Text from "../../components/TranslatedText";
 import { useWindowDimensions } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronLeft, Clock3 } from "lucide-react-native";
@@ -32,9 +34,13 @@ type Coords = {
 };
 
 export default function ClockInScreen() {
+    // Development/testing override
+    const [devAllowClockIn, setDevAllowClockIn] = useState(false);
+    const isDev = __DEV__ || process.env.NODE_ENV === "development";
   const router = useRouter();
   const { shiftData } = useLocalSearchParams();
   const { width, height } = useWindowDimensions();
+  const mapRef = useRef<MapView | null>(null);
   const [coords, setCoords] = useState<Coords | null>(null);
   const [targetCoords, setTargetCoords] = useState<Coords | null>(null);
   const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
@@ -44,8 +50,10 @@ export default function ClockInScreen() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [resolvedSupervisorName, setResolvedSupervisorName] = useState("-");
+  const [isSubmittingClockIn, setIsSubmittingClockIn] = useState(false);
 
-  const isWithinRange = distanceMeters !== null && distanceMeters <= 50;
+  const isWithinRange = distanceMeters !== null && distanceMeters <= 100;
+  const isNearAddress = distanceMeters !== null && distanceMeters <= 100;
 
   const contentHorizontalPadding = width < 360 ? 12 : 16;
   const headerTopPadding = Math.round(Math.max(28, Math.min(44, height * 0.045)));
@@ -55,7 +63,128 @@ export default function ClockInScreen() {
   const currentTimeSize = width < 360 ? 40 : width < 400 ? 44 : 48;
   const clockInMinWidth = Math.round(Math.min(width - contentHorizontalPadding * 2, 320));
 
+  const resetMapViewport = () => {
+    if (!mapRef.current) return;
+
+    const points = [coords, targetCoords].filter(Boolean) as Coords[];
+    if (points.length >= 2) {
+      mapRef.current.fitToCoordinates(points, {
+        edgePadding: { top: 60, right: 60, bottom: 60, left: 60 },
+        animated: true,
+      });
+      return;
+    }
+
+    const singlePoint = points[0];
+    if (singlePoint) {
+      mapRef.current.animateToRegion(
+        {
+          latitude: singlePoint.latitude,
+          longitude: singlePoint.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        },
+        300
+      );
+    }
+  };
+
   const shift = useMemo(() => parseShiftData(shiftData), [shiftData]);
+  const isWithinClockInWindow = useMemo(() => {
+    if (!shift) return false;
+
+    const shiftStart = new Date(shift.shift_start).getTime();
+    const shiftEnd = new Date(shift.shift_end).getTime();
+    if (!Number.isFinite(shiftStart) || !Number.isFinite(shiftEnd)) return false;
+
+    const now = currentTime.getTime();
+    const windowStart = shiftStart - 30 * 60 * 1000;
+
+    return now >= windowStart && now <= shiftEnd;
+  }, [currentTime, shift]);
+
+  const canClockIn = (isDev && devAllowClockIn) || (isWithinClockInWindow && isNearAddress);
+
+  const handleClockIn = async () => {
+    if (!shift) return;
+
+    const clockedInAt = new Date().toISOString();
+    setIsSubmittingClockIn(true);
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id;
+
+    if (!userId) {
+      setIsSubmittingClockIn(false);
+      Alert.alert("Clock in failed", "No active login session. Please sign in again.");
+      return;
+    }
+
+    let error: { message?: string } | null = null;
+    const firstTry = await supabase
+      .from("shifts")
+      .update({ clockin_time: clockedInAt, clockout_time: null })
+      .eq("shift_id", shift.id)
+      .eq("officer_id", userId);
+
+    error = firstTry.error;
+
+    if (error) {
+      setIsSubmittingClockIn(false);
+      const detail = error.message ? `\n\nDetails: ${error.message}` : "";
+      Alert.alert("Clock in failed", `Unable to save clock-in time. Please try again.${detail}`);
+      return;
+    }
+
+    const { data: verifyRow, error: verifyError } = await supabase
+      .from("shifts")
+      .select("clockin_time")
+      .eq("shift_id", shift.id)
+      .eq("officer_id", userId)
+      .maybeSingle();
+
+    if (verifyError || !verifyRow?.clockin_time) {
+      setIsSubmittingClockIn(false);
+      Alert.alert(
+        "Clock in not persisted",
+        "Clock-in was not written to database. Check your shifts UPDATE RLS policy for authenticated users on this row."
+      );
+      return;
+    }
+
+    router.replace({
+      pathname: "/securityofficer/home",
+      params: {
+        clockedInShiftId: shift.id,
+        clockedInAt,
+      },
+    });
+
+    setIsSubmittingClockIn(false);
+  };
+
+  const clockInHintText = useMemo(() => {
+    if (canClockIn) return "Eligible to clock in.";
+
+    const blocks: string[] = [];
+    if (!isWithinClockInWindow) {
+      blocks.push("Allowed: 30 min before start until shift end.");
+    }
+
+    if (!isNearAddress) {
+      if (distanceMeters === null) {
+        blocks.push("Be within 100m of shift location.");
+      } else {
+        const readableDistance =
+          distanceMeters > 1000
+            ? `${formatKm(distanceMeters)}km`
+            : `${Math.round(distanceMeters)}m`;
+        blocks.push(`Distance: ${readableDistance} (stay within 100m).`);
+      }
+    }
+
+    return blocks.join(" ");
+  }, [canClockIn, distanceMeters, isNearAddress, isWithinClockInWindow]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -102,13 +231,16 @@ export default function ClockInScreen() {
 
     const resolveTargetLocation = async () => {
       const address = shift?.address?.trim();
-      if (!address) {
+      const locationName = shift?.location?.trim();
+      const query = address || locationName;
+
+      if (!query) {
         if (alive) setTargetCoords(null);
         return;
       }
 
       try {
-        const geocoded = await Location.geocodeAsync(address);
+        const geocoded = await Location.geocodeAsync(query);
         if (!alive) return;
 
         const first = geocoded[0];
@@ -131,7 +263,11 @@ export default function ClockInScreen() {
     return () => {
       alive = false;
     };
-  }, [shift?.address]);
+  }, [shift?.address, shift?.location]);
+
+  useEffect(() => {
+    resetMapViewport();
+  }, [coords, targetCoords]);
 
   useEffect(() => {
     if (!coords || !targetCoords) {
@@ -301,25 +437,50 @@ export default function ClockInScreen() {
       >
 
       <View style={[styles.mapContainer, { height: mapHeight }]}>
-        {coords ? (
+        {coords || targetCoords ? (
           <MapView
+            ref={mapRef}
             style={StyleSheet.absoluteFill}
+            onMapReady={resetMapViewport}
+            onDoublePress={resetMapViewport}
             initialRegion={{
-              latitude: coords.latitude,
-              longitude: coords.longitude,
-              latitudeDelta: 0.01,
-              longitudeDelta: 0.01,
-            }}
-            region={{
-              latitude: coords.latitude,
-              longitude: coords.longitude,
+              latitude: (coords ?? targetCoords)!.latitude,
+              longitude: (coords ?? targetCoords)!.longitude,
               latitudeDelta: 0.01,
               longitudeDelta: 0.01,
             }}
             showsUserLocation
           >
-            <Marker coordinate={coords} title="You are here" />
-            {targetCoords ? <Marker coordinate={targetCoords} title="Shift location" /> : null}
+            {coords ? (
+              <Marker coordinate={coords} title="You are here">
+                <View style={styles.userPinContainer}>
+                  {/* Pin Head (Red) with white border */}
+                  <View style={styles.redPinHead}>
+                    <View style={styles.redPinInnerCircle}>
+                      {avatarUrl && !avatarLoadFailed ? (
+                        <Image
+                          source={{ uri: avatarUrl }}
+                          onError={() => setAvatarLoadFailed(true)}
+                          style={styles.redPinAvatar}
+                        />
+                      ) : (
+                        <View style={styles.redPinFallback}>
+                          <Ionicons name="person" size={16} color="#FFFFFF" />
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                  {/* Pin Tail (Red) */}
+                  <View style={styles.redPinTail}>
+                    <View style={styles.redPinTailInner} />
+                  </View>
+                  <View style={styles.userPinShadow} />
+                </View>
+              </Marker>
+            ) : null}
+            {targetCoords ? (
+              <Marker coordinate={targetCoords} title="Shift location" pinColor="#F97316" />
+            ) : null}
           </MapView>
         ) : (
           <View style={styles.mapPlaceholder}>
@@ -389,10 +550,60 @@ export default function ClockInScreen() {
           {formatClockTime(currentTime.toISOString())}
         </Text>
 
-        <Pressable style={[styles.clockInButton, { minWidth: clockInMinWidth }]}>
+
+        {/* Dev/Test Switch for Clock In */}
+        {isDev && (
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 8, alignSelf: "center" }}>
+            <Text style={{ marginRight: 8, color: "#0E2D52", fontSize: 13 }}>Dev/Test Clock In</Text>
+            <Pressable
+              onPress={() => setDevAllowClockIn((v) => !v)}
+              style={{
+                width: 38,
+                height: 22,
+                borderRadius: 12,
+                backgroundColor: devAllowClockIn ? "#22C55E" : "#D1D5DB",
+                justifyContent: "center",
+                padding: 2,
+              }}
+              accessibilityLabel="Toggle dev clock in override"
+            >
+              <View
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  backgroundColor: "#fff",
+                  alignSelf: devAllowClockIn ? "flex-end" : "flex-start",
+                  shadowColor: "#000",
+                  shadowOpacity: 0.1,
+                  shadowRadius: 2,
+                  elevation: 2,
+                }}
+              />
+            </Pressable>
+          </View>
+        )}
+
+        <Pressable
+          disabled={!canClockIn || isSubmittingClockIn}
+          onPress={() => {
+            void handleClockIn();
+          }}
+          style={[
+            styles.clockInButton,
+            { minWidth: clockInMinWidth },
+            (!canClockIn || isSubmittingClockIn) && styles.clockInButtonDisabled,
+          ]}
+        >
           <Clock3 size={18} color="#fff" />
-          <Text style={styles.clockInText}>Clock In</Text>
+          <Text style={[styles.clockInText, (!canClockIn || isSubmittingClockIn) && styles.clockInTextDisabled]}>
+            {isSubmittingClockIn ? "Saving..." : "Clock In"}
+          </Text>
         </Pressable>
+
+        <Text style={styles.clockInHint}>
+          {clockInHintText}
+        </Text>
       </View>
       </ScrollView>
     </View>
@@ -467,7 +678,15 @@ function getDistanceInMeters(from: Coords, to: Coords) {
 
 function formatDistanceText(distanceMeters: number | null) {
   if (distanceMeters === null) return "Location distance unavailable";
-  return `Location ${Math.round(distanceMeters)} meters away`;
+  if (distanceMeters > 1000) {
+    return `Location ${formatKm(distanceMeters)}km away`;
+  }
+  return `Location ${Math.round(distanceMeters)}m away`;
+}
+
+function formatKm(distanceMeters: number) {
+  const km = distanceMeters / 1000;
+  return km.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
 }
 
 const styles = StyleSheet.create({
@@ -500,6 +719,74 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   mapPlaceholderText: { color: "#374151", textAlign: "center", fontWeight: "600" },
+
+  userPinContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  redPinHead: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: "#fff",
+    backgroundColor: "#F73B3B",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 2,
+  },
+  redPinInnerCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    overflow: "hidden",
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  redPinAvatar: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  redPinFallback: {
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#F73B3B",
+  },
+  redPinTail: {
+    marginTop: -2,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 7,
+    borderRightWidth: 7,
+    borderTopWidth: 13,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderTopColor: "#F73B3B",
+    alignItems: "center",
+    zIndex: 1,
+  },
+  redPinTailInner: {
+    marginTop: -13,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderTopWidth: 8,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderTopColor: "#fff",
+  },
+  userPinShadow: {
+    marginTop: 2,
+    width: 12,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(0,0,0,0.2)",
+  },
   avatarWrap: {
     position: "absolute",
     bottom: -20,
@@ -584,7 +871,7 @@ const styles = StyleSheet.create({
     color: "#0E2D52",
     fontWeight: "800",
     letterSpacing: 2,
-    marginBottom: 12,
+    marginBottom: 5,
   },
   clockInButton: {
     alignSelf: "center",
@@ -597,5 +884,17 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     justifyContent: "center",
   },
+  clockInButtonDisabled: {
+    backgroundColor: "#8391A2",
+  },
+  clockInHint: {
+    textAlign: "center",
+    color: "#c05e03",
+    fontWeight: "600",
+    fontSize: 12,
+    marginTop: 8,
+    paddingHorizontal: 6,
+  },
   clockInText: { color: "#fff", fontWeight: "700", fontSize: 20 },
+  clockInTextDisabled: { color: "#E5E7EB" },
 });

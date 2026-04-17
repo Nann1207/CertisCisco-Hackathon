@@ -1,5 +1,6 @@
 import React from "react";
-import { View, Text, StyleSheet, Pressable, useWindowDimensions } from "react-native";
+import { View, StyleSheet, Pressable, useWindowDimensions } from "react-native";
+import Text from "../../components/TranslatedText";
 import { useRouter } from "expo-router";
 
 export default function Home() {

@@ -1,15 +1,18 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
-  Text,
+  Text as RNText,
   Image,
   ImageBackground,
   Pressable,
   FlatList,
   ActivityIndicator,
   useWindowDimensions,
+  Alert,
+  Modal,
 } from "react-native";
-import { useRouter } from "expo-router";
+import Text from "../../components/TranslatedText";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import {
   Settings,
@@ -38,6 +41,9 @@ type Shift = {
   shift_date: string;
   shift_start: string;
   shift_end: string;
+  clockin_time: string | null;
+  clockout_time: string | null;
+  completion_status: boolean | null;
   location: string | null;
   address: string | null;
   supervisor_id: string | null;
@@ -52,6 +58,7 @@ type UpcomingShift = {
   shift_date: string;
   shift_start: string;
   shift_end: string;
+  completion_status: boolean | null;
   location: string | null;
   address: string | null;
   supervisor_id: string | null;
@@ -63,22 +70,29 @@ type UpcomingShift = {
 
 export default function Home() {
   const router = useRouter();
+  const { clockedInShiftId, clockedInAt } = useLocalSearchParams<{
+    clockedInShiftId?: string;
+    clockedInAt?: string;
+  }>();
   const { width } = useWindowDimensions();
 
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [todayShift, setTodayShift] = useState<Shift | null>(null);
+  const [todayShifts, setTodayShifts] = useState<Shift[]>([]);
   const [todayIncidentSummary, setTodayIncidentSummary] = useState<string | null>(null);
   const [upcoming, setUpcoming] = useState<UpcomingShift[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [debugEmptyReason, setDebugEmptyReason] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [activeClockedInShiftId, setActiveClockedInShiftId] = useState<string | null>(null);
+  const [isSavingShiftAction, setIsSavingShiftAction] = useState(false);
+  const [showEarlyClockOutModal, setShowEarlyClockOutModal] = useState(false);
+  const [earlyClockOutShiftId, setEarlyClockOutShiftId] = useState<string | null>(null);
+  const [earlyClockOutFromText, setEarlyClockOutFromText] = useState<string>("");
 
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   const calendarIconSize = Math.round(clamp(width * 0.11, 34, 45));
-  const calendarIconOffset = Math.round(clamp(width * -0.16, -70, -26));
-  const calendarTextOffset = Math.round(clamp(width * 0.06, 8, 30));
   const calendarDateFontSize = Math.round(clamp(width * 0.045, 14, 17));
   const calendarLocationFontSize = Math.round(clamp(width * 0.04, 13, 16));
   const horizontalPadding = Math.round(clamp(width * 0.04, 12, 20));
@@ -92,10 +106,35 @@ export default function Home() {
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-    }, 60000);
+    }, 1000);
 
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!clockedInShiftId || !clockedInAt) return;
+
+    const parsed = new Date(clockedInAt);
+    if (!Number.isFinite(parsed.getTime())) return;
+
+    setActiveClockedInShiftId(clockedInShiftId);
+    setTodayShifts((prev) =>
+      prev.map((shift) =>
+        shift.id === clockedInShiftId
+          ? { ...shift, clockin_time: clockedInAt, clockout_time: null, completion_status: false }
+          : shift
+      )
+    );
+  }, [clockedInAt, clockedInShiftId]);
+
+  useEffect(() => {
+    if (activeClockedInShiftId) return;
+
+    const dbActiveShift = todayShifts.find((shift) => shift.clockin_time && !shift.clockout_time);
+    if (dbActiveShift) {
+      setActiveClockedInShiftId(dbActiveShift.id);
+    }
+  }, [activeClockedInShiftId, todayShifts]);
 
   useEffect(() => {
     setAvatarLoadFailed(false);
@@ -195,15 +234,13 @@ export default function Home() {
         now.getDate()
       ).padStart(2, "0")}`;
 
-      // 2) Today shift
-      const { data: shift, error: todayShiftError } = await supabase
+      // 2) Today's shifts
+      const { data: todayShiftsRaw, error: todayShiftError } = await supabase
         .from("shifts")
-        .select("id:shift_id, shift_date, shift_start, shift_end, location, address, supervisor_id")
+        .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
         .eq("officer_id", userId)
         .eq("shift_date", todayISO)
-        .order("shift_start", { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .order("shift_start", { ascending: true });
 
       // 3) Upcoming schedule (next 5)
       const { data: upcomingShiftsRaw, error: upcomingError } = await supabase
@@ -213,6 +250,7 @@ export default function Home() {
           shift_date,
           shift_start,
           shift_end,
+          completion_status,
           location,
           address,
           supervisor_id
@@ -223,12 +261,17 @@ export default function Home() {
         .order("shift_start", { ascending: true })
         .limit(5);
 
-      const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? []).map((shiftItem: any) => {
+      const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? [])
+        .filter((shiftItem: any) => !shiftItem.completion_status)
+        .map((shiftItem: any) => {
         return {
           id: shiftItem.id,
           shift_date: shiftItem.shift_date,
           shift_start: shiftItem.shift_start,
           shift_end: shiftItem.shift_end,
+          completion_status: shiftItem.completion_status ?? null,
+          clockin_time: shiftItem.clockin_time ?? null,
+          clockout_time: shiftItem.clockout_time ?? null,
           location: shiftItem.location ?? null,
           address: shiftItem.address ?? null,
           supervisor_id: shiftItem.supervisor_id ?? null,
@@ -236,18 +279,23 @@ export default function Home() {
         };
       });
 
-      const todayShiftData: Shift | null = shift
-        ? {
-            id: shift.id,
-            shift_date: shift.shift_date,
-            shift_start: shift.shift_start,
-            shift_end: shift.shift_end,
-            location: shift.location ?? null,
-            address: shift.address ?? null,
-            supervisor_id: shift.supervisor_id ?? null,
-            supervisor: null,
-          }
-        : null;
+      const todayShiftData: Shift[] = (todayShiftsRaw ?? [])
+        .filter((shiftItem: any) => !shiftItem.completion_status)
+        .map((shiftItem: any) => {
+        return {
+          id: shiftItem.id,
+          shift_date: shiftItem.shift_date,
+          shift_start: shiftItem.shift_start,
+          shift_end: shiftItem.shift_end,
+          clockin_time: shiftItem.clockin_time ?? null,
+          clockout_time: shiftItem.clockout_time ?? null,
+          completion_status: shiftItem.completion_status ?? null,
+          location: shiftItem.location ?? null,
+          address: shiftItem.address ?? null,
+          supervisor_id: shiftItem.supervisor_id ?? null,
+          supervisor: null,
+        };
+      });
 
       if (todayShiftError || upcomingError) {
         setLoadError("Unable to load shifts right now.");
@@ -279,7 +327,7 @@ export default function Home() {
 
       // 4) Incidents: STRICT rule = no shift => no incidents section
       // Since incidents table is not ready yet, keep it simple:
-      const incidentText = todayShiftData?.id ? "No incidents for today" : null;
+      const incidentText = todayShiftData.length > 0 ? "No incidents for today" : null;
 
       if (!alive) return;
 
@@ -294,7 +342,7 @@ export default function Home() {
         setProfile(null);
       }
 
-      setTodayShift(todayShiftData);
+      setTodayShifts(todayShiftData);
       setUpcoming(upcomingShifts ?? []);
       setTodayIncidentSummary(incidentText);
       setLoading(false);
@@ -307,20 +355,125 @@ export default function Home() {
     };
   }, []);
 
-  if (loading) {
-    return (
-      <View style={[styles.root, { justifyContent: "center", alignItems: "center" }]}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
-
   const name = profile?.first_name || "Officer";
 
   const avatarSource =
     profile?.avatar_url && !avatarLoadFailed
       ? { uri: profile.avatar_url }
       : require("../../assets/fortis-logo.png");
+
+  const todayShift = useMemo(() => {
+    return getDisplayShiftForToday(
+      todayShifts,
+      currentTime,
+      activeClockedInShiftId
+    );
+  }, [activeClockedInShiftId, currentTime, todayShifts]);
+
+  const isClockedInForTodayShift = Boolean(
+    todayShift && activeClockedInShiftId && todayShift.id === activeClockedInShiftId
+  );
+
+  const canClockOut = Boolean(
+    isClockedInForTodayShift && isClockOutWindowOpen(currentTime, todayShift?.shift_end)
+  );
+
+  const timelineProgress = getTimelineProgress(
+    currentTime,
+    todayShift?.shift_start,
+    todayShift?.shift_end
+  );
+
+  const showElapsedTimeline = isClockedInForTodayShift && timelineProgress !== null;
+  const normalizedProgress = showElapsedTimeline ? Math.max(0, Math.min(1, timelineProgress!)) : 0;
+  const elapsedTrackPercent = normalizedProgress * 100;
+  const hasReachedShiftEnd = normalizedProgress >= 1;
+
+  const completeClockOut = async (shiftToClockOut: Shift) => {
+    const clockedOutAt = new Date().toISOString();
+    setIsSavingShiftAction(true);
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id;
+
+    if (!userId) {
+      setIsSavingShiftAction(false);
+      Alert.alert("Clock out failed", "No active login session. Please sign in again.");
+      return;
+    }
+
+    let error: { message?: string } | null = null;
+    const firstTry = await supabase
+      .from("shifts")
+      .update({ clockout_time: clockedOutAt, completion_status: true })
+      .eq("shift_id", shiftToClockOut.id)
+      .eq("officer_id", userId);
+
+    error = firstTry.error;
+
+    if (error) {
+      setIsSavingShiftAction(false);
+      const detail = error.message ? `\n\nDetails: ${error.message}` : "";
+      Alert.alert("Clock out failed", `Unable to save clock-out time. Please try again.${detail}`);
+      return;
+    }
+
+    const { data: verifyRow, error: verifyError } = await supabase
+      .from("shifts")
+      .select("clockout_time")
+      .eq("shift_id", shiftToClockOut.id)
+      .eq("officer_id", userId)
+      .maybeSingle();
+
+    if (verifyError || !verifyRow?.clockout_time) {
+      setIsSavingShiftAction(false);
+      Alert.alert(
+        "Clock out not persisted",
+        "Clock-out was not written to database. Check your shifts UPDATE RLS policy for authenticated users on this row."
+      );
+      return;
+    }
+
+    setTodayShifts((prev) =>
+      prev.map((shift) =>
+        shift.id === shiftToClockOut.id
+          ? { ...shift, clockout_time: clockedOutAt, completion_status: true }
+          : shift
+      )
+    );
+    setActiveClockedInShiftId(null);
+    setIsSavingShiftAction(false);
+    router.push({
+      pathname: "/securityofficer/reports",
+      params: {
+        shiftId: shiftToClockOut.id,
+      },
+    });
+  };
+
+  const handleShiftButtonPress = async () => {
+    if (!todayShift) return;
+    if (isSavingShiftAction) return;
+
+    if (isClockedInForTodayShift) {
+      if (!canClockOut) {
+        const earliestClockOut = getClockOutStartTime(todayShift.shift_end);
+        setEarlyClockOutShiftId(todayShift.id);
+        setEarlyClockOutFromText(formatTime(earliestClockOut.toISOString()));
+        setShowEarlyClockOutModal(true);
+        return;
+      }
+
+      await completeClockOut(todayShift);
+      return;
+    }
+
+    router.push({
+      pathname: "/securityofficer/clock-in",
+      params: { shiftData: JSON.stringify(todayShift) },
+    });
+  };
+
   const todayDateText = todayShift
     ? new Date(todayShift.shift_date).toLocaleDateString("en-GB", {
         weekday: "long",
@@ -337,6 +490,14 @@ export default function Home() {
         timeZone: DISPLAY_TIME_ZONE,
       });
 
+  if (loading) {
+    return (
+      <View style={[styles.root, { justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
       <ImageBackground
@@ -352,7 +513,10 @@ export default function Home() {
               onError={() => setAvatarLoadFailed(true)}
             />
             <View>
-              <Text style={styles.hiText}>Hi {name}!</Text>
+              <View style={{ flexDirection: "row", alignItems: "baseline" }}>
+                <Text style={styles.hiText}>Hi </Text>
+                <RNText style={styles.hiText}>{name}!</RNText>
+              </View>
               <Text style={styles.welcomeText}>Welcome Back</Text>
             </View>
           </View>
@@ -381,13 +545,24 @@ export default function Home() {
       {todayShift ? (
         <View style={[styles.todayShiftCard, { marginHorizontal: horizontalPadding }]}> 
           <View style={styles.todayInfoBlock}>
-            <View style={[styles.todayInfoIconWrap, { marginLeft: calendarIconOffset }]}>
+            <View style={styles.todayInfoIconWrap}>
               <Ionicons name="calendar-outline" size={calendarIconSize} color="#F1A579" />
             </View>
-            <View style={[styles.todayInfoTextCol, { marginLeft: calendarTextOffset }]}> 
+            <View style={styles.todayInfoTextCol}> 
               <Text style={[styles.cardTitle, { fontSize: calendarDateFontSize }]}>{todayDateText}</Text>
-              <Text style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>Location: {todayShift.location ?? "-"}</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+                <Text style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>Location: </Text>
+                <RNText style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>
+                  {todayShift.location ?? "-"}
+                </RNText>
+              </View>
             </View>
+            {isClockedInForTodayShift ? (
+              <View style={styles.onShiftPill}>
+                <View style={styles.onShiftDot} />
+                <Text style={styles.onShiftText}>ON SHIFT</Text>
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.timelineWrap}>
@@ -398,11 +573,18 @@ export default function Home() {
               </View>
 
               <View style={styles.timelineCenter}>
-                <Text style={styles.timelineNow}>{formatTime(currentTime.toISOString())}</Text>
+                <Text style={[styles.timelineNow, showElapsedTimeline ? styles.timelineNowActive : null]}>
+                  {formatTime(currentTime.toISOString())}
+                </Text>
                 <View style={styles.timelineTrack}>
-                  <View style={styles.timelineDot} />
-                  <View style={styles.timelineBar} />
-                  <View style={styles.timelineDot} />
+                  <View style={[styles.timelineDot, showElapsedTimeline ? styles.timelineDotActive : null]} />
+                  <View style={styles.timelineBarWrap}>
+                    <View style={styles.timelineBar} />
+                    {showElapsedTimeline ? (
+                      <View style={[styles.timelineBarElapsed, { width: `${elapsedTrackPercent}%` }]} />
+                    ) : null}
+                  </View>
+                  <View style={[styles.timelineDot, hasReachedShiftEnd ? styles.timelineDotActive : null]} />
                 </View>
               </View>
 
@@ -415,14 +597,17 @@ export default function Home() {
 
           <Pressable
             style={styles.clockInButton}
-            onPress={() =>
-              router.push({
-                pathname: "/securityofficer/clock-in",
-                params: { shiftData: JSON.stringify(todayShift) },
-              })
-            }
+            onPress={() => {
+              void handleShiftButtonPress();
+            }}
           >
-            <Text style={styles.clockInButtonText}>CLOCK IN</Text>
+            <Text style={styles.clockInButtonText}>
+              {isSavingShiftAction
+                ? "Saving..."
+                : isClockedInForTodayShift
+                  ? "CLOCK OUT"
+                  : "CLOCK IN"}
+            </Text>
           </Pressable>
         </View>
       ) : (
@@ -432,7 +617,7 @@ export default function Home() {
         </View>
       )}
 
-      {todayIncidentSummary && (
+      {todayShift && todayIncidentSummary && (
         <>
           <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}> 
             <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
@@ -494,6 +679,52 @@ export default function Home() {
           );
         }}
       />
+
+      <Modal
+        visible={showEarlyClockOutModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEarlyClockOutModal(false)}
+      >
+        <View style={styles.earlyModalBackdrop}>
+          <View style={styles.earlyModalCard}>
+            <Text style={styles.earlyModalTitle}>Clock Out Early?</Text>
+            <Text style={styles.earlyModalText}>
+              You are clocking out before the allowed time.
+            </Text>
+            <Text style={styles.earlyModalSubText}>
+              Regular clock-out starts from {earlyClockOutFromText}.
+            </Text>
+
+            <View style={styles.earlyModalActions}>
+              <Pressable
+                style={styles.earlyModalCancelBtn}
+                onPress={() => {
+                  setShowEarlyClockOutModal(false);
+                  setEarlyClockOutShiftId(null);
+                }}
+              >
+                <Text style={styles.earlyModalCancelText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                style={styles.earlyModalConfirmBtn}
+                onPress={() => {
+                  setShowEarlyClockOutModal(false);
+                  const pendingId = earlyClockOutShiftId;
+                  setEarlyClockOutShiftId(null);
+                  const targetShift = todayShifts.find((shift) => shift.id === pendingId);
+                  if (targetShift) {
+                    void completeClockOut(targetShift);
+                  }
+                }}
+              >
+                <Text style={styles.earlyModalConfirmText}>Yes, clock out early</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -528,4 +759,67 @@ function formatTime(iso: string) {
     timeZone: DISPLAY_TIME_ZONE,
   };
   return date.toLocaleTimeString([], opts);
+}
+
+function getTimelineProgress(now: Date, shiftStart?: string, shiftEnd?: string) {
+  if (!shiftStart || !shiftEnd) return null;
+
+  const startMs = new Date(shiftStart).getTime();
+  const endMs = new Date(shiftEnd).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+
+  const nowMs = now.getTime();
+  if (nowMs <= startMs) return 0;
+  if (nowMs >= endMs) return 1;
+
+  return (nowMs - startMs) / (endMs - startMs);
+}
+
+function getClockOutStartTime(shiftEnd: string) {
+  const endMs = new Date(shiftEnd).getTime();
+  return new Date(endMs - 5 * 60 * 1000);
+}
+
+function isClockOutWindowOpen(now: Date, shiftEnd?: string) {
+  if (!shiftEnd) return false;
+  const endMs = new Date(shiftEnd).getTime();
+  if (!Number.isFinite(endMs)) return false;
+
+  const clockOutStartMs = endMs - 5 * 60 * 1000;
+  return now.getTime() >= clockOutStartMs;
+}
+
+function getDisplayShiftForToday(
+  todayShifts: Shift[],
+  now: Date,
+  activeClockedInShiftId: string | null
+) {
+  if (todayShifts.length === 0) return null;
+
+  const sorted = [...todayShifts].sort(
+    (a, b) => new Date(a.shift_start).getTime() - new Date(b.shift_start).getTime()
+  );
+
+  if (activeClockedInShiftId) {
+    const activeShift = sorted.find((shift) => shift.id === activeClockedInShiftId);
+    if (activeShift && !activeShift.clockout_time && !activeShift.completion_status) {
+      return activeShift;
+    }
+  }
+
+  const dbActiveShift = sorted.find(
+    (shift) => shift.clockin_time && !shift.clockout_time && !shift.completion_status
+  );
+  if (dbActiveShift) return dbActiveShift;
+
+  const nowMs = now.getTime();
+
+  // Show the next not-yet-completed shift today (ongoing or upcoming).
+  const nextShift = sorted.find((shift) => {
+    if (shift.clockout_time || shift.completion_status) return false;
+    const shiftEndMs = new Date(shift.shift_end).getTime();
+    return Number.isFinite(shiftEndMs) && shiftEndMs > nowMs;
+  });
+
+  return nextShift ?? null;
 }

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, useWindowDimensions } from "react-native";
+import { View, StyleSheet, Pressable, FlatList, ActivityIndicator, useWindowDimensions } from "react-native";
+import Text from "../../components/TranslatedText";
 import { useRouter } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
