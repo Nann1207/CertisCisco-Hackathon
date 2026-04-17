@@ -12,10 +12,10 @@ type Tab = {
 
 
 const TABS: Tab[] = [
-  { key: "home", href: "/securityoffier/home", Icon: Home },
-  { key: "reports", href: "/securityoffier/reports", Icon: NotebookPen },
-  { key: "phonecalls", href: "/securityoffier/phonecalls", Icon: PhoneCall },
-  { key: "services", href: "/securityoffier/message", Icon: MessageCircleMore }, 
+  { key: "home", href: "/securityofficer/home", Icon: Home },
+  { key: "reports", href: "/securityofficer/reports", Icon: NotebookPen },
+  { key: "phonecalls", href: "/securityofficer/phonecalls", Icon: PhoneCall },
+  { key: "services", href: "/securityofficer/messages", Icon: MessageCircleMore },
   { key: "sop", href: "/securityofficer/sop", Icon: ListChecks },
 ];
 

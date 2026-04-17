@@ -4,11 +4,12 @@ import {
   Pressable,
   ActivityIndicator,
   FlatList,
+  Modal,
+  ScrollView,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
-import { Picker } from "@react-native-picker/picker";
 import { Ionicons } from "@expo/vector-icons";
 import { styles } from "../../styles/securityofficer/category";
 
@@ -46,6 +47,7 @@ export default function CategoryPage() {
   const [selectedTitle, setSelectedTitle] = useState("");
   const [steps, setSteps] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showTitleModal, setShowTitleModal] = useState(false);
 
   const [tab, setTab] = useState("Guidelines");
   const [mediaTab, setMediaTab] = useState<"Images" | "Videos" | "Quiz">(
@@ -104,19 +106,15 @@ export default function CategoryPage() {
         {/* DROPDOWN */}
         <View style={styles.dropdownBox}>
           <Ionicons name="list" size={18} color="#A0B0C0" />
-          <View style={styles.pickerWrap}>
-            <Picker
-              mode="dropdown"
-              selectedValue={selectedTitle}
-              onValueChange={(value) => setSelectedTitle(value)}
-              style={styles.picker}
-              dropdownIconColor="#A0B0C0"
-            >
-              {titles.map((t) => (
-                <Picker.Item key={t} label={t} value={t} />
-              ))}
-            </Picker>
-          </View>
+          <Pressable
+            style={styles.titleSelectBtn}
+            onPress={() => setShowTitleModal(true)}
+          >
+            <Text style={styles.titleSelectText} numberOfLines={1}>
+              {selectedTitle || "Select SOP"}
+            </Text>
+            <Ionicons name="chevron-down" size={18} color="#A0B0C0" />
+          </Pressable>
         </View>
 
         {/* PILLS */}
@@ -265,6 +263,52 @@ export default function CategoryPage() {
           />
         )}
       </View>
+
+      <Modal
+        transparent
+        visible={showTitleModal}
+        animationType="fade"
+        onRequestClose={() => setShowTitleModal(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setShowTitleModal(false)}
+        >
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Select SOP</Text>
+            <ScrollView style={styles.modalList}>
+              {titles.map((title) => {
+                const isActive = title === selectedTitle;
+                return (
+                  <Pressable
+                    key={title}
+                    style={[
+                      styles.modalOption,
+                      isActive && styles.modalOptionActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedTitle(title);
+                      setShowTitleModal(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.modalOptionText,
+                        isActive && styles.modalOptionTextActive,
+                      ]}
+                    >
+                      {title}
+                    </Text>
+                    {isActive ? (
+                      <Ionicons name="checkmark" size={18} color="#2563EB" />
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

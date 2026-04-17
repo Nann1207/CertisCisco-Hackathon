@@ -49,21 +49,74 @@ export const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 10,
     marginTop: 10,
-     height:52,          // a bit taller
-  paddingVertical: -10,  // adds space so text isn't cut
+    height: 52,
   },
 
-  pickerWrap: {
+  titleSelectBtn: {
     flex: 1,
     marginLeft: 8,
-    justifyContent: "center",
-     paddingTop: -1,  
+    height: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
 
-  picker: {
-    flex: 1,
+  titleSelectText: {
     color: "#fff",
-    height: 50,
+    flex: 1,
+    marginRight: 8,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.45)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    paddingVertical: 14,
+    maxHeight: "70%",
+  },
+
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0E2D52",
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+
+  modalList: {
+    maxHeight: 360,
+  },
+
+  modalOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+
+  modalOptionActive: {
+    backgroundColor: "#EFF6FF",
+  },
+
+  modalOptionText: {
+    fontSize: 14,
+    color: "#0F172A",
+    flex: 1,
+    marginRight: 8,
+  },
+
+  modalOptionTextActive: {
+    color: "#1D4ED8",
+    fontWeight: "700",
   },
 
   /* =======================
