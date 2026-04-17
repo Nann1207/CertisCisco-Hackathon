@@ -16,7 +16,7 @@ const TABS: Tab[] = [
   { key: "reports", href: "/securityoffier/reports", Icon: NotebookPen },
   { key: "phonecalls", href: "/securityoffier/phonecalls", Icon: PhoneCall },
   { key: "services", href: "/securityoffier/message", Icon: MessageCircleMore }, 
-  { key: "incidents", href: "/securityoffier/incidents", Icon: ListChecks },
+  { key: "sop", href: "/securityofficer/sop", Icon: ListChecks },
 ];
 
 export default function BottomBar() {
