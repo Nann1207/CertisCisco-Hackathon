@@ -2,6 +2,7 @@ import React from "react";
 import { View, StyleSheet } from "react-native";
 import { Stack } from "expo-router";
 import BottomBar from "./components/BottomBar";
+import FloatingChatButton from "./components/FloatingChatButton";
 
 export default function Layout() {
   return (
@@ -26,7 +27,7 @@ export default function Layout() {
           
         </Stack>
       </View>
-
+      <FloatingChatButton bottomOffset={98} rightOffset={20} />
       <BottomBar />
     </View>
   );

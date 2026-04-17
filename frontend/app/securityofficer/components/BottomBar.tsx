@@ -16,7 +16,6 @@ const TABS: Tab[] = [
   { key: "reports", href: "/securityofficer/reports", Icon: NotebookPen },
   { key: "phonecalls", href: "/securityofficer/phonecalls", Icon: PhoneCall },
   { key: "services", href: "/securityofficer/messagingChannel", Icon: MessageCircleMore }, 
-  { key: "incidents", href: "/securityofficer/incidents", Icon: ListChecks },
   { key: "sop", href: "/securityofficer/sop", Icon: ListChecks },
 ];
 
