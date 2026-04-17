@@ -65,24 +65,6 @@ export default function UpcomingScheduleScreen() {
         return;
       }
 
-      const supervisorIds = Array.from(
-        new Set((shiftsRaw ?? []).map((s: any) => s.supervisor_id).filter(Boolean))
-      ) as string[];
-
-      let supervisorMap = new Map<string, { first_name: string; last_name: string }>();
-      if (supervisorIds.length > 0) {
-        const { data: supervisors } = await supabase
-          .from("employees")
-          .select("id, first_name, last_name")
-          .in("id", supervisorIds);
-
-        if (supervisors) {
-          supervisorMap = new Map(
-            supervisors.map((s) => [s.id, { first_name: s.first_name, last_name: s.last_name }])
-          );
-        }
-      }
-
       const mapped: ShiftItem[] = (shiftsRaw ?? []).map((item: any) => ({
         id: item.id,
         shift_date: item.shift_date,
@@ -91,7 +73,7 @@ export default function UpcomingScheduleScreen() {
         location: item.location ?? null,
         address: item.address ?? null,
         supervisor_id: item.supervisor_id ?? null,
-        supervisor: item.supervisor_id ? supervisorMap.get(item.supervisor_id) ?? null : null,
+        supervisor: null,
       }));
 
       if (!alive) return;

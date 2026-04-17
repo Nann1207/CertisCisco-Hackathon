@@ -38,36 +38,42 @@ export default function ShiftDetails() {
     let alive = true;
 
     const loadSupervisor = async () => {
-      if (!shift) {
-        setResolvedSupervisorName('-');
-        return;
+      try {
+        if (!shift) {
+          setResolvedSupervisorName('-');
+          return;
+        }
+
+        if (initialSupervisorName !== '-') {
+          setResolvedSupervisorName(initialSupervisorName);
+          return;
+        }
+
+        if (!shift.supervisor_id) {
+          setResolvedSupervisorName('-');
+          return;
+        }
+
+        const { data, error } = await supabase.rpc('get_my_supervisor_name', {
+          p_supervisor_id: shift.supervisor_id,
+        });
+
+        if (!alive) return;
+
+        const row = Array.isArray(data) ? data[0] : null;
+
+        if (error || !row) {
+          setResolvedSupervisorName('-');
+          return;
+        }
+
+        const fullName = `${(row.first_name ?? '').trim()} ${(row.last_name ?? '').trim()}`.trim();
+        setResolvedSupervisorName(fullName || '-');
+      } catch {
+        if (alive) {
+          setResolvedSupervisorName('-');
+        }
       }
-
-      if (initialSupervisorName !== '-') {
-        setResolvedSupervisorName(initialSupervisorName);
-        return;
-      }
-
-      if (!shift.supervisor_id) {
-        setResolvedSupervisorName('-');
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('employees')
-        .select('first_name, last_name')
-        .eq('id', shift.supervisor_id)
-        .maybeSingle();
-
-      if (!alive) return;
-
-      if (error || !data) {
-        setResolvedSupervisorName('-');
-        return;
-      }
-
-      const fullName = `${(data.first_name ?? '').trim()} ${(data.last_name ?? '').trim()}`.trim();
-      setResolvedSupervisorName(fullName || '-');
     };
 
     loadSupervisor();

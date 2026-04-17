@@ -211,34 +211,7 @@ export default function Home() {
         .order("shift_start", { ascending: true })
         .limit(5);
 
-      const supervisorIds = Array.from(
-        new Set(
-          [
-            ...(upcomingShiftsRaw ?? []).map((s: any) => s.supervisor_id),
-            shift?.supervisor_id,
-          ].filter(Boolean)
-        )
-      ) as string[];
-
-      let supervisorMap = new Map<string, { first_name: string; last_name: string }>();
-      if (supervisorIds.length > 0) {
-        const { data: supervisors, error: supervisorsError } = await supabase
-          .from("employees")
-          .select("id, first_name, last_name")
-          .in("id", supervisorIds);
-
-        if (!supervisorsError && supervisors) {
-          supervisorMap = new Map(
-            supervisors.map((s) => [s.id, { first_name: s.first_name, last_name: s.last_name }])
-          );
-        }
-      }
-
       const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? []).map((shiftItem: any) => {
-        const supervisor = shiftItem.supervisor_id
-          ? supervisorMap.get(shiftItem.supervisor_id) ?? null
-          : null;
-
         return {
           id: shiftItem.id,
           shift_date: shiftItem.shift_date,
@@ -247,7 +220,7 @@ export default function Home() {
           location: shiftItem.location ?? null,
           address: shiftItem.address ?? null,
           supervisor_id: shiftItem.supervisor_id ?? null,
-          supervisor,
+          supervisor: null,
         };
       });
 
@@ -260,7 +233,7 @@ export default function Home() {
             location: shift.location ?? null,
             address: shift.address ?? null,
             supervisor_id: shift.supervisor_id ?? null,
-            supervisor: shift.supervisor_id ? supervisorMap.get(shift.supervisor_id) ?? null : null,
+            supervisor: null,
           }
         : null;
 
