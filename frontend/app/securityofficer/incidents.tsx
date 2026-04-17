@@ -1,5 +1,6 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { Pressable, StyleSheet, View, useWindowDimensions } from "react-native";
+import Text from "../../components/TranslatedText";
 import { useRouter } from "expo-router";
 
 export default function IncidentsScreen() {

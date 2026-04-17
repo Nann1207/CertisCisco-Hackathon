@@ -17,6 +17,12 @@ export default function Layout() {
           <Stack.Screen name="messagingChannel" />
           <Stack.Screen name="newMessage" />
           <Stack.Screen name="message" />
+          <Stack.Screen name="shift-reports" />
+          <Stack.Screen name="id-card" />
+          <Stack.Screen name="translate" />
+          <Stack.Screen name="languages" />
+          <Stack.Screen name="settings" />
+          <Stack.Screen name="profile" />
           
         </Stack>
       </View>
