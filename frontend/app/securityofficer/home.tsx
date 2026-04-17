@@ -7,6 +7,7 @@ import {
   Pressable,
   FlatList,
   ActivityIndicator,
+  useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
@@ -62,6 +63,7 @@ type UpcomingShift = {
 
 export default function Home() {
   const router = useRouter();
+  const { width } = useWindowDimensions();
 
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -72,6 +74,16 @@ export default function Home() {
   const [debugEmptyReason, setDebugEmptyReason] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const calendarIconSize = Math.round(clamp(width * 0.11, 34, 45));
+  const calendarIconOffset = Math.round(clamp(width * -0.16, -70, -26));
+  const calendarTextOffset = Math.round(clamp(width * 0.06, 8, 30));
+  const calendarDateFontSize = Math.round(clamp(width * 0.045, 14, 17));
+  const calendarLocationFontSize = Math.round(clamp(width * 0.04, 13, 16));
+  const horizontalPadding = Math.round(clamp(width * 0.04, 12, 20));
+  const scheduleTitleSize = Math.round(clamp(width * 0.044, 14, 17));
+  const scheduleLinkSize = Math.round(clamp(width * 0.036, 12, 14));
 
   const AVATAR_BUCKET = "profile-photos";
 
@@ -367,14 +379,14 @@ export default function Home() {
       </ImageBackground>
 
       {todayShift ? (
-        <View style={styles.todayShiftCard}>
+        <View style={[styles.todayShiftCard, { marginHorizontal: horizontalPadding }]}> 
           <View style={styles.todayInfoBlock}>
-            <View style={styles.todayInfoIconWrap}>
-              <Ionicons name="calendar-outline" size={45} color="#F1A579" />
+            <View style={[styles.todayInfoIconWrap, { marginLeft: calendarIconOffset }]}>
+              <Ionicons name="calendar-outline" size={calendarIconSize} color="#F1A579" />
             </View>
-            <View style={styles.todayInfoTextCol}>
-              <Text style={styles.cardTitle}>{todayDateText}</Text>
-              <Text style={styles.todayShiftLocation}>Location: {todayShift.location ?? "-"}</Text>
+            <View style={[styles.todayInfoTextCol, { marginLeft: calendarTextOffset }]}> 
+              <Text style={[styles.cardTitle, { fontSize: calendarDateFontSize }]}>{todayDateText}</Text>
+              <Text style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>Location: {todayShift.location ?? "-"}</Text>
             </View>
           </View>
 
@@ -414,7 +426,7 @@ export default function Home() {
           </Pressable>
         </View>
       ) : (
-        <View style={styles.card}>
+        <View style={[styles.card, { marginHorizontal: horizontalPadding }]}> 
           <Text style={styles.cardTitle}>{todayDateText}</Text>
           <Text style={styles.cardSubtitle}>No scheduled shift today</Text>
         </View>
@@ -422,12 +434,12 @@ export default function Home() {
 
       {todayIncidentSummary && (
         <>
-          <View style={styles.incidentsHeader}>
-            <Text style={styles.sectionTitle}>Incidents</Text>
+          <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}> 
+            <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
           </View>
 
           <Pressable
-            style={[styles.card, styles.incidentCard]}
+            style={[styles.card, styles.incidentCard, { marginHorizontal: horizontalPadding }]}
             onPress={() => router.push("/securityofficer/incidents")}
           >
             <Text style={[styles.cardSubtitle, { color: "#7C1515", marginTop: 0 }]}>
@@ -437,19 +449,19 @@ export default function Home() {
         </>
       )}
 
-      <View style={styles.scheduleHeader}>
-        <Text style={styles.sectionTitle}>Upcoming Schedule</Text>
+      <View style={[styles.scheduleHeader, { marginHorizontal: horizontalPadding }]}> 
+        <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Upcoming Schedule</Text>
         <Pressable onPress={() => router.push("/securityofficer/schedule")}> 
-          <Text style={styles.viewAll}>View all &gt;</Text>
+          <Text style={[styles.viewAll, { fontSize: scheduleLinkSize }]}>View all &gt;</Text>
         </Pressable>
       </View>
 
       <FlatList
         data={upcoming}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ gap: 12, paddingHorizontal: 16, paddingBottom: 20 }}
+        contentContainerStyle={{ gap: 12, paddingHorizontal: horizontalPadding, paddingBottom: 20 }}
         ListEmptyComponent={
-          <Text style={{ paddingHorizontal: 16, color: "#6B7280", fontWeight: "600" }}>
+          <Text style={{ paddingHorizontal: horizontalPadding, color: "#6B7280", fontWeight: "600" }}>
             {loadError ?? debugEmptyReason ?? "No upcoming shifts found."}
           </Text>
         }

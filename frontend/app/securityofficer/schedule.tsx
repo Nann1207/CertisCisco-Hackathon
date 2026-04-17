@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, useWindowDimensions } from "react-native";
 import { useRouter } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
@@ -22,9 +22,18 @@ type ShiftItem = {
 
 export default function UpcomingScheduleScreen() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
   const [loading, setLoading] = useState(true);
   const [shifts, setShifts] = useState<ShiftItem[]>([]);
   const [errorText, setErrorText] = useState<string | null>(null);
+
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const horizontalPadding = Math.round(clamp(width * 0.04, 12, 20));
+  const headerTop = Math.round(clamp(height * 0.055, 30, 50));
+  const titleSize = Math.round(clamp(width * 0.06, 20, 26));
+  const dateSize = Math.round(clamp(width * 0.043, 14, 17));
+  const timeSize = Math.round(clamp(width * 0.05, 15, 19));
+  const metaSize = Math.round(clamp(width * 0.034, 12, 14));
 
   useEffect(() => {
     let alive = true;
@@ -99,17 +108,17 @@ export default function UpcomingScheduleScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={styles.headerRow}>
+      <View style={[styles.headerRow, { paddingHorizontal: horizontalPadding, paddingTop: headerTop }]}> 
         <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={24} color="#0E2D52" />
         </Pressable>
-        <Text style={styles.headerTitle}>Upcoming Schedule</Text>
+        <Text style={[styles.headerTitle, { fontSize: titleSize }]}>Upcoming Schedule</Text>
       </View>
 
       <FlatList
         data={shifts}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 28 }}
+        contentContainerStyle={{ padding: horizontalPadding, gap: 12, paddingBottom: 28 }}
         ListEmptyComponent={
           <Text style={styles.emptyText}>{errorText ?? "No upcoming shifts found."}</Text>
         }
@@ -124,9 +133,9 @@ export default function UpcomingScheduleScreen() {
             }
           >
             <View>
-              <Text style={styles.dateText}>{formatDate(item.shift_date)}</Text>
-              <Text style={styles.timeText}>{formatTimeRange(item.shift_start, item.shift_end)}</Text>
-              <Text style={styles.metaText}>Location: {item.location ?? "-"}</Text>
+              <Text style={[styles.dateText, { fontSize: dateSize }]}>{formatDate(item.shift_date)}</Text>
+              <Text style={[styles.timeText, { fontSize: timeSize }]}>{formatTimeRange(item.shift_start, item.shift_end)}</Text>
+              <Text style={[styles.metaText, { fontSize: metaSize }]}>Location: {item.location ?? "-"}</Text>
             </View>
             <Text style={styles.arrowText}>&gt;</Text>
           </Pressable>

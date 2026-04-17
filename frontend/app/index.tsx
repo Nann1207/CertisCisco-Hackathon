@@ -1,11 +1,19 @@
 import React from "react";
 import { Image, ImageBackground, StyleSheet, Text, View } from "react-native";
+import { useWindowDimensions } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect } from "react";
 
 export default function LaunchScreen() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+  const logoWidth = Math.round(clamp(width * 0.82, 240, 360));
+  const logoHeight = Math.round(clamp(logoWidth * 0.38, 92, 136));
+  const subtitleSize = Math.round(clamp(width * 0.09, 24, 40));
+  const bottomOffset = Math.round(clamp(height * 0.065, 30, 62));
 
   useEffect(() => {
     const t = setTimeout(() => router.replace("/login"), 1800);
@@ -36,15 +44,15 @@ export default function LaunchScreen() {
           <View style={styles.brandRow}>
             <Image
               source={require("../assets/fortis-logo.png")}
-              style={styles.mark}
+              style={[styles.mark, { width: logoWidth, height: logoHeight }]}
               resizeMode="contain"
             />
           </View>
         </View>
 
         {/* Bottom text */}
-        <View style={styles.bottomWrap}>
-          <Text style={styles.subtitle}>Certis Cisco</Text>
+        <View style={[styles.bottomWrap, { bottom: bottomOffset }]}> 
+          <Text style={[styles.subtitle, { fontSize: subtitleSize }]}>Certis Cisco</Text>
         </View>
       </ImageBackground>
     </View>

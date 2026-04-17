@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Image, ScrollView } from "react-native";
+import { useWindowDimensions } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronLeft, Clock3 } from "lucide-react-native";
 import MapView, { Marker } from "react-native-maps";
@@ -33,7 +34,10 @@ type Coords = {
 export default function ClockInScreen() {
   const router = useRouter();
   const { shiftData } = useLocalSearchParams();
+  const { width, height } = useWindowDimensions();
   const [coords, setCoords] = useState<Coords | null>(null);
+  const [targetCoords, setTargetCoords] = useState<Coords | null>(null);
+  const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [profileName, setProfileName] = useState("Security Officer");
@@ -41,7 +45,15 @@ export default function ClockInScreen() {
   const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
   const [resolvedSupervisorName, setResolvedSupervisorName] = useState("-");
 
-  const isGpsConnected = Boolean(coords) && !locationError;
+  const isWithinRange = distanceMeters !== null && distanceMeters <= 50;
+
+  const contentHorizontalPadding = width < 360 ? 12 : 16;
+  const headerTopPadding = Math.round(Math.max(28, Math.min(44, height * 0.045)));
+  const headerBottomPadding = Math.round(Math.max(8, Math.min(14, height * 0.015)));
+  const mapHeight = Math.round(Math.max(170, Math.min(240, height * 0.3)));
+  const avatarSize = width < 360 ? 52 : 56;
+  const currentTimeSize = width < 360 ? 40 : width < 400 ? 44 : 48;
+  const clockInMinWidth = Math.round(Math.min(width - contentHorizontalPadding * 2, 320));
 
   const shift = useMemo(() => parseShiftData(shiftData), [shiftData]);
 
@@ -84,6 +96,52 @@ export default function ClockInScreen() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+
+    const resolveTargetLocation = async () => {
+      const address = shift?.address?.trim();
+      if (!address) {
+        if (alive) setTargetCoords(null);
+        return;
+      }
+
+      try {
+        const geocoded = await Location.geocodeAsync(address);
+        if (!alive) return;
+
+        const first = geocoded[0];
+        if (!first) {
+          setTargetCoords(null);
+          return;
+        }
+
+        setTargetCoords({
+          latitude: first.latitude,
+          longitude: first.longitude,
+        });
+      } catch {
+        if (alive) setTargetCoords(null);
+      }
+    };
+
+    resolveTargetLocation();
+
+    return () => {
+      alive = false;
+    };
+  }, [shift?.address]);
+
+  useEffect(() => {
+    if (!coords || !targetCoords) {
+      setDistanceMeters(null);
+      return;
+    }
+
+    const meters = getDistanceInMeters(coords, targetCoords);
+    setDistanceMeters(meters);
+  }, [coords, targetCoords]);
 
   useEffect(() => {
     let alive = true;
@@ -218,8 +276,20 @@ export default function ClockInScreen() {
 
   return (
     <View style={styles.root}>
-      <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: headerTopPadding,
+            paddingBottom: headerBottomPadding,
+            paddingHorizontal: contentHorizontalPadding,
+          },
+        ]}
+      >
+        <Pressable
+          style={[styles.backButton, width < 360 ? { width: 34, height: 34 } : null]}
+          onPress={() => router.back()}
+        >
           <ChevronLeft size={24} color="#ffffff" />
         </Pressable>
         <Text style={styles.headerTitle}>Clock In</Text>
@@ -230,7 +300,7 @@ export default function ClockInScreen() {
         showsVerticalScrollIndicator={false}
       >
 
-      <View style={styles.mapContainer}>
+      <View style={[styles.mapContainer, { height: mapHeight }]}>
         {coords ? (
           <MapView
             style={StyleSheet.absoluteFill}
@@ -249,6 +319,7 @@ export default function ClockInScreen() {
             showsUserLocation
           >
             <Marker coordinate={coords} title="You are here" />
+            {targetCoords ? <Marker coordinate={targetCoords} title="Shift location" /> : null}
           </MapView>
         ) : (
           <View style={styles.mapPlaceholder}>
@@ -256,7 +327,16 @@ export default function ClockInScreen() {
           </View>
         )}
 
-        <View style={styles.avatarWrap}>
+        <View
+          style={[
+            styles.avatarWrap,
+            {
+              width: avatarSize,
+              height: avatarSize,
+              borderRadius: avatarSize / 2,
+            },
+          ]}
+        >
           <Image
             source={
               avatarUrl && !avatarLoadFailed
@@ -269,7 +349,7 @@ export default function ClockInScreen() {
         </View>
       </View>
 
-      <View style={styles.content}>
+      <View style={[styles.content, { paddingHorizontal: contentHorizontalPadding }]}>
         <Text style={styles.nameTitle}>{profileName}</Text>
         <Text style={styles.shiftDate}>{formatDate(shift?.shift_date)}</Text>
 
@@ -280,10 +360,11 @@ export default function ClockInScreen() {
               <Text style={styles.infoLabel}>Location</Text>
               <Text style={styles.locationValue}>{shift?.location ?? "-"}</Text>
               <Text style={styles.infoSub}>{shift?.address ?? "-"}</Text>
+              <Text style={styles.distanceText}>{formatDistanceText(distanceMeters)}</Text>
             </View>
           </View>
 
-          {isGpsConnected && (
+          {isWithinRange && (
             <View style={styles.gpsPill}>
               <Ionicons name="checkmark" size={14} color="#22C55E" />
               <Text style={styles.gpsText}>GPS</Text>
@@ -304,9 +385,11 @@ export default function ClockInScreen() {
         </View>
 
         <Text style={styles.currentLabel}>START TIME</Text>
-        <Text style={styles.currentTime}>{formatClockTime(currentTime.toISOString())}</Text>
+        <Text style={[styles.currentTime, { fontSize: currentTimeSize }]}>
+          {formatClockTime(currentTime.toISOString())}
+        </Text>
 
-        <Pressable style={styles.clockInButton}>
+        <Pressable style={[styles.clockInButton, { minWidth: clockInMinWidth }]}>
           <Clock3 size={18} color="#fff" />
           <Text style={styles.clockInText}>Clock In</Text>
         </Pressable>
@@ -367,14 +450,31 @@ function formatSupervisor(supervisor: ShiftData["supervisor"] | undefined) {
   return `${supervisor.first_name} ${supervisor.last_name}`.trim() || "-";
 }
 
+function getDistanceInMeters(from: Coords, to: Coords) {
+  const earthRadius = 6371000;
+  const lat1 = (from.latitude * Math.PI) / 180;
+  const lat2 = (to.latitude * Math.PI) / 180;
+  const dLat = ((to.latitude - from.latitude) * Math.PI) / 180;
+  const dLon = ((to.longitude - from.longitude) * Math.PI) / 180;
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadius * c;
+}
+
+function formatDistanceText(distanceMeters: number | null) {
+  if (distanceMeters === null) return "Location distance unavailable";
+  return `Location ${Math.round(distanceMeters)} meters away`;
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#F3F4F6" },
   scrollContent: { paddingBottom: 28 },
   header: {
     backgroundColor: "#0E2D52",
-    paddingTop: 50,
-    paddingBottom: 14,
-    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
@@ -390,7 +490,6 @@ const styles = StyleSheet.create({
   },
   headerTitle: { color: "#fff", fontSize: 22, fontWeight: "700" },
   mapContainer: {
-    height: 270,
     backgroundColor: "#D1D5DB",
     position: "relative",
   },
@@ -417,7 +516,7 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
   },
-  content: { paddingHorizontal: 16, paddingTop: 28 },
+  content: { paddingTop: 28 },
   nameTitle: {
     textAlign: "center",
     color: "#0E2D52",
@@ -430,7 +529,7 @@ const styles = StyleSheet.create({
     marginTop: -2,
     color: "#6B7280",
     fontWeight: "500",
-    fontSize: 16,
+    fontSize: 14,
     marginBottom: 12,
   },
   locationCard: {
@@ -449,7 +548,7 @@ const styles = StyleSheet.create({
     gap: 8,
     flex: 1,
   },
-  locationValue: { color: "#163A63", fontSize: 20, fontWeight: "700", marginTop: 0 },
+  locationValue: { color: "#163A63", fontSize: 16, fontWeight: "700", marginTop: 0 },
   gpsPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -464,26 +563,26 @@ const styles = StyleSheet.create({
     backgroundColor: "#DDE2E9",
     borderRadius: 12,
     padding: 12,
-    marginBottom: 14,
+    marginBottom: 10,
   },
-  infoLabel: { color: "#93A1B5", fontWeight: "700", textTransform: "uppercase" },
-  infoLabelSmall: { color: "#93A1B5", fontWeight: "700", marginTop: 10, textTransform: "uppercase" },
-  infoSub: { color: "#8A95A5", marginTop: 2, fontWeight: "600", fontSize: 13 },
-  shiftValue: { color: "#163A63", fontSize: 18, fontWeight: "700", marginTop: 2 },
-  infoDivider: { height: 1, backgroundColor: "#C5CBD6", marginTop: 10, marginBottom: 10 },
-  supervisorValue: { color: "#163A63", fontSize: 18, fontWeight: "700", marginTop: 2 },
+  infoLabel: { color: "#93A1B5", fontWeight: "700", textTransform: "uppercase", fontSize: 11 },
+  infoLabelSmall: { color: "#93A1B5", fontWeight: "700", marginTop: 6, textTransform: "uppercase", fontSize: 11 },
+  infoSub: { color: "#5b6675", marginTop: 2, fontWeight: "600", fontSize: 13 },
+  distanceText: { color: "#7489a5", marginTop: 4, fontWeight: "600", fontSize: 11 },
+  shiftValue: { color: "#163A63", fontSize: 15, fontWeight: "700", marginTop: 2 },
+  infoDivider: { height: 1, backgroundColor: "#C5CBD6", marginTop: 6},
+  supervisorValue: { color: "#163A63", fontSize: 14, fontWeight: "700", marginTop: 2 },
   currentLabel: {
     textAlign: "center",
     color: "#A3B1C2",
     fontWeight: "700",
     letterSpacing: 2,
-    marginTop: 12,
+    marginTop: 5,
   },
   currentTime: {
     textAlign: "center",
     color: "#0E2D52",
     fontWeight: "800",
-    fontSize: 52,
     letterSpacing: 2,
     marginBottom: 12,
   },
@@ -496,7 +595,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 42,
     paddingVertical: 13,
-    minWidth: 260,
     justifyContent: "center",
   },
   clockInText: { color: "#fff", fontWeight: "700", fontSize: 20 },
