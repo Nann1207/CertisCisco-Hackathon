@@ -12,11 +12,11 @@ type Tab = {
 
 
 const TABS: Tab[] = [
-  { key: "home", href: "/securityoffier/home", Icon: Home },
-  { key: "reports", href: "/securityoffier/reports", Icon: NotebookPen },
-  { key: "phonecalls", href: "/securityoffier/phonecalls", Icon: PhoneCall },
-  { key: "services", href: "/securityoffier/message", Icon: MessageCircleMore }, 
-  { key: "incidents", href: "/securityoffier/incidents", Icon: ListChecks },
+  { key: "home", href: "/securityofficer/home", Icon: Home },
+  { key: "reports", href: "/securityofficer/reports", Icon: NotebookPen },
+  { key: "phonecalls", href: "/securityofficer/phonecalls", Icon: PhoneCall },
+  { key: "services", href: "/securityofficer/messagingChannel", Icon: MessageCircleMore }, 
+  { key: "incidents", href: "/securityofficer/incidents", Icon: ListChecks },
 ];
 
 export default function BottomBar() {
@@ -27,7 +27,10 @@ export default function BottomBar() {
     <View style={styles.wrap}>
       <View style={styles.bar}>
         {TABS.map(({ key, href, Icon }) => {
-          const active = pathname === href;
+          const active =
+            pathname === href ||
+            (key === "services" &&
+              (pathname === "/securityofficer/message" || pathname === "/securityofficer/messagingChannel"));
 
           return (
             <Pressable

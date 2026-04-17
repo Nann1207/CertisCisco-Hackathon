@@ -14,6 +14,9 @@ export default function Layout() {
           <Stack.Screen name="schedule" />
           <Stack.Screen name="shift-details" />
           <Stack.Screen name="clock-in" />
+          <Stack.Screen name="messagingChannel" />
+          <Stack.Screen name="newMessage" />
+          <Stack.Screen name="message" />
           
         </Stack>
       </View>

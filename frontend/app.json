@@ -7,6 +7,18 @@
       "image": "./assets/splash.png",
       "resizeMode": "cover",
       "backgroundColor": "#0E2D52"
-    }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Fortis to access photos and videos so you can attach them to messages.",
+          "cameraPermission": "Allow Fortis to use the camera so you can take photos and videos for messages.",
+          "microphonePermission": "Allow Fortis to use the microphone when recording videos for messages."
+        }
+      ],
+      "expo-video"
+    ]
   }
 }
