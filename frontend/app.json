@@ -3,6 +3,15 @@
     "name": "Fortis",
     "slug": "Fortis-app",
     "scheme": "fortis",
+    "ios": {
+      "bundleIdentifier": "com.certiscisco.fortis"
+    },
+    "android": {
+      "package": "com.certiscisco.fortis",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "cover",
@@ -18,7 +27,23 @@
           "microphonePermission": "Allow Fortis to use the microphone when recording videos for messages."
         }
       ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "chat-messages",
+          "sounds": [
+            "./app/securityofficer/assets/urgent_bells.mp3"
+          ]
+        }
+      ],
       "expo-video"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2b6e6fc2-bd50-4d57-8ec4-077b3891de2c"
+      }
+    },
+    "owner": "pohyeewpy"
   }
 }

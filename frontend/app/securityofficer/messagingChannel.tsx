@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { ChevronLeft, MessageCirclePlus, Search } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
+import { createRealtimeTopic } from "../../lib/realtime";
 import {
   formatMessageTime,
   getAvatarColor,
@@ -14,6 +15,14 @@ import {
   type ChatMessageRecord,
   type EmployeeProfile,
 } from "../../lib/messageData";
+import {
+  formatUnreadCount,
+  getReadStateMap,
+  getUnreadCountsByParticipant,
+  isMissingChatReadStatesTableError,
+  type ChatReadStateMap,
+} from "../../lib/chatUnread";
+import { attachProfilePhotoUrls } from "../../lib/profilePhotos";
 
 const IMPORTANT_PREFIX = "[IMPORTANT] ";
 const ATTACHMENT_PREFIX = "[ATTACHMENT] ";
@@ -47,7 +56,11 @@ const Avatar = ({ channel, size = 54 }: { channel: ChatChannel; size?: number })
       },
     ]}
   >
-    <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    {channel.avatarUrl ? (
+      <Image source={{ uri: channel.avatarUrl }} style={styles.avatarImage} />
+    ) : (
+      <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    )}
     {channel.online && <View style={styles.onlineDot} />}
   </View>
 );
@@ -65,9 +78,15 @@ export default function MessagingChannelScreen() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   };
 
-  const buildChannels = useCallback((messages: ChatMessageRecord[], userId: string, profiles: EmployeeProfile[]) => {
+  const buildChannels = useCallback((
+    messages: ChatMessageRecord[],
+    userId: string,
+    profiles: EmployeeProfile[],
+    readStateMap: ChatReadStateMap
+  ) => {
     const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
     const latestByParticipant = new Map<string, ChatMessageRecord>();
+    const unreadCounts = getUnreadCountsByParticipant(messages, userId, readStateMap);
 
     messages.forEach((message) => {
       const participantId = message.sender_id === userId ? message.receiver_id : message.sender_id;
@@ -91,8 +110,10 @@ export default function MessagingChannelScreen() {
           lastMessage: getMessagePreview(latestMessage.text, latestMessage.sender_id === userId),
           lastTime: formatMessageTime(latestMessage.created_at),
           online: false,
+          avatarUrl: profile?.avatarUrl ?? null,
           avatarColor,
           avatarTextColor: getAvatarTextColor(avatarColor),
+          unread: unreadCounts.get(participantId) ?? 0,
         };
       })
       .sort((a, b) => {
@@ -118,7 +139,11 @@ export default function MessagingChannelScreen() {
 
     setCurrentUserId(userId);
 
-    const [{ data: messagesData, error: messagesError }, { data: shiftData, error: shiftError }] = await Promise.all([
+    const [
+      { data: messagesData, error: messagesError },
+      { data: shiftData, error: shiftError },
+      readStateResult,
+    ] = await Promise.all([
       supabase
         .from("messages")
         .select("id, sender_id, receiver_id, text, created_at")
@@ -133,6 +158,10 @@ export default function MessagingChannelScreen() {
         .order("shift_start", { ascending: true })
         .limit(1)
         .maybeSingle(),
+      getReadStateMap(userId).then(
+        (readStateMap) => ({ readStateMap, error: null }),
+        (error) => ({ readStateMap: new Map<string, string>(), error })
+      ),
     ]);
 
     if (shiftError) {
@@ -148,6 +177,10 @@ export default function MessagingChannelScreen() {
       return;
     }
 
+    if (readStateResult.error && !isMissingChatReadStatesTableError(readStateResult.error)) {
+      console.error("Error fetching message read states:", readStateResult.error);
+    }
+
     const messages = (messagesData || []) as ChatMessageRecord[];
     const participantIds = Array.from(
       new Set(messages.map((message) => (message.sender_id === userId ? message.receiver_id : message.sender_id)))
@@ -161,14 +194,15 @@ export default function MessagingChannelScreen() {
 
     const { data: profilesData, error: profilesError } = await supabase
       .from("employees")
-      .select("id, first_name, last_name, role")
+      .select("id, emp_id, first_name, last_name, role, profile_photo_path")
       .in("id", participantIds);
 
     if (profilesError) {
       console.error("Error fetching message profiles:", profilesError);
     }
 
-    setChannels(buildChannels(messages, userId, (profilesData || []) as EmployeeProfile[]));
+    const profilesWithPhotos = await attachProfilePhotoUrls((profilesData || []) as EmployeeProfile[]);
+    setChannels(buildChannels(messages, userId, profilesWithPhotos, readStateResult.readStateMap));
     setLoading(false);
   }, [buildChannels]);
 
@@ -186,7 +220,7 @@ export default function MessagingChannelScreen() {
     if (!currentUserId) return;
 
     const channel = supabase
-      .channel(`message-channels:${currentUserId}`)
+      .channel(createRealtimeTopic(`message-channels:${currentUserId}`))
       .on(
         "postgres_changes",
         {
@@ -242,7 +276,7 @@ export default function MessagingChannelScreen() {
           </Text>
           {channel.unread ? (
             <View style={styles.unreadBadge}>
-              <Text style={styles.unreadText}>{channel.unread}</Text>
+              <Text style={styles.unreadText}>{formatUnreadCount(channel.unread)}</Text>
             </View>
           ) : channel.lastTime ? (
             <Text style={styles.channelCheck}>{"\u2713"}</Text>
@@ -255,7 +289,7 @@ export default function MessagingChannelScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.back()} hitSlop={10}>
+        <Pressable style={styles.backButton} onPress={() => router.replace("/securityofficer/home")} hitSlop={10}>
           <ChevronLeft size={28} color="#FFFFFF" strokeWidth={2.4} />
         </Pressable>
 
@@ -394,8 +428,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   avatar: {
+    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
   avatarText: {
     fontSize: 17,

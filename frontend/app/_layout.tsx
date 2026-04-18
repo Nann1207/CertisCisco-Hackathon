@@ -4,6 +4,7 @@ import { Asset } from "expo-asset";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useState } from "react";
 import { setLanguagePreference } from "../lib/language-preferences";
+import ChatNotificationListener from "../components/ChatNotificationListener";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -120,9 +121,12 @@ export default function RootLayout() {
 
   // default stack (before routing happens)
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="login" />
-    </Stack>
+    <>
+      <ChatNotificationListener />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="login" />
+      </Stack>
+    </>
   );
 }

@@ -20,6 +20,7 @@ export default function Layout() {
           <Stack.Screen name="message" />
           <Stack.Screen name="shift-reports" />
           <Stack.Screen name="id-card" />
+          <Stack.Screen name="notifications" />
           <Stack.Screen name="translate" />
           <Stack.Screen name="languages" />
           <Stack.Screen name="settings" />
