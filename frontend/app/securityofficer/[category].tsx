@@ -1,5 +1,6 @@
 import {
   View,
+  Text,
   Pressable,
   ActivityIndicator,
   FlatList,
@@ -8,11 +9,11 @@ import {
   Image,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "../../lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import YoutubePlayer from "react-native-youtube-iframe";
 import { styles } from "../../styles/securityofficer/category";
-import Text from "../../components/TranslatedText";
 
 type QuizQuestion = {
   id: string;
@@ -23,6 +24,10 @@ type QuizQuestion = {
 };
 
 export default function CategoryPage() {
+  // IMPORTANT: For Expo Go on a phone, this must be your laptop's LAN IP.
+  // If your IP changes, update it.
+  const BACKEND_URL = "http://192.168.1.14:5001";
+
   const { category } = useLocalSearchParams();
   const router = useRouter();
 
@@ -39,6 +44,17 @@ export default function CategoryPage() {
     "suspicious-person": "Suspicious Person",
   };
 
+  const categoryImageMap: Record<string, any> = {
+    "fire-evacuation": require("../../assets/sop/fire_evacuation.png"),
+    robbery: require("../../assets/sop/robbery.png"),
+    violence: require("../../assets/sop/violence.png"),
+    "lift-alarm": require("../../assets/sop/lift_alarm.png"),
+    medical: require("../../assets/sop/medical.png"),
+    "bomb-threat": require("../../assets/sop/bomb_threat.png"),
+    "suspicious-item": require("../../assets/sop/suspicious_item.png"),
+    "suspicious-person": require("../../assets/sop/suspicious_person.png"),
+  };
+
   const emojiMap: Record<string, string> = {
     "fire-evacuation": "🔥",
     robbery: "🛡️",
@@ -50,6 +66,39 @@ export default function CategoryPage() {
     "suspicious-person": "🕵️",
   };
 
+  const categoryLogisticsMap: Record<string, string[]> = {
+    "fire-evacuation": [
+      "Cordon tape",
+      "Safety boots",
+      "Torch / flashlight",
+      "Two-way radio",
+      "High-visibility vest",
+      "Evacuation map",
+    ],
+    robbery: ["Two-way radio", "CCTV access", "Incident report form"],
+    violence: ["Two-way radio", "First aid kit", "Cordon tape"],
+    "lift-alarm": [
+      "Two-way radio",
+      "Lift emergency contacts",
+      "Torch / flashlight",
+    ],
+    medical: ["First aid kit", "AED (if available)", "Disposable gloves", "Mask"],
+    "bomb-threat": ["Bomb threat checklist", "Cordon tape", "Notebook + pen"],
+    "suspicious-item": ["Cordon tape", "Two-way radio", "Do not touch item"],
+    "suspicious-person": ["Two-way radio", "CCTV access", "Incident report form"],
+  };
+
+  const categoryVideoMap: Record<string, string> = {
+    "fire-evacuation": "GVBamXXVD30",
+    robbery: "c6oSDANCzqQ",
+    violence: "PtCoqlnDXlg",
+    "lift-alarm": "YsCZIHWYK2Q",
+    medical: "mNk0mZRJBV0",
+    "bomb-threat": "ApKUtuNTzzI",
+    "suspicious-item": "rl3iJlFTFC0",
+    "suspicious-person": "i5dmOmmiwC0",
+  };
+
   const decodedCategory = categoryMap[slug] ?? slug;
 
   const [titles, setTitles] = useState<string[]>([]);
@@ -58,30 +107,109 @@ export default function CategoryPage() {
   const [loading, setLoading] = useState(false);
   const [showTitleModal, setShowTitleModal] = useState(false);
 
-  const [tab, setTab] = useState("Guidelines");
+  const [tab, setTab] = useState<"Guidelines" | "Logistics">("Guidelines");
   const [mediaTab, setMediaTab] = useState<"Images" | "Videos" | "Quiz">(
     "Images"
   );
 
-  const fetchTitles = useCallback(async () => {
-    const { data } = await supabase
+  const [showImageModal, setShowImageModal] = useState(false);
+
+  // ✅ AI quiz state
+  const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [quizLoading, setQuizLoading] = useState(false);
+  const [quizError, setQuizError] = useState<string | null>(null);
+
+  const [quizIndex, setQuizIndex] = useState(0);
+  const [quizSelected, setQuizSelected] = useState<number | null>(null);
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
+
+  // ✅ Results
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
+  const [quizShowResults, setQuizShowResults] = useState(false);
+
+  const resetToDefault = () => {
+    setTab("Guidelines");
+    setMediaTab("Images");
+
+    setQuizIndex(0);
+    setQuizSelected(null);
+    setQuizSubmitted(false);
+    setQuizAnswers({});
+    setQuizShowResults(false);
+
+    setQuizError(null);
+    setQuizQuestions([]);
+  };
+
+  const restartQuiz = async () => {
+    setTab("Guidelines");
+    setMediaTab("Quiz");
+
+    setQuizIndex(0);
+    setQuizSelected(null);
+    setQuizSubmitted(false);
+    setQuizAnswers({});
+    setQuizShowResults(false);
+
+    await generateQuiz();
+  };
+
+  const quizScore = useMemo(() => {
+    if (quizQuestions.length === 0) return 0;
+    return quizQuestions.reduce((acc, q) => {
+      const user = quizAnswers[q.id];
+      return acc + (user === q.answerIndex ? 1 : 0);
+    }, 0);
+  }, [quizAnswers, quizQuestions]);
+
+  const quizPercent = useMemo(() => {
+    if (quizQuestions.length === 0) return 0;
+    return Math.round((quizScore / quizQuestions.length) * 100);
+  }, [quizScore, quizQuestions.length]);
+
+  const quizBadge = useMemo(() => {
+    if (quizQuestions.length === 0) return "—";
+    if (quizPercent >= 90) return "Excellent";
+    if (quizPercent >= 70) return "Good";
+    if (quizPercent >= 50) return "Needs Practice";
+    return "Try Again";
+  }, [quizPercent, quizQuestions.length]);
+
+  // Reset when category changes
+  useEffect(() => {
+    resetToDefault();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
+
+  useEffect(() => {
+    fetchTitles();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchTitles = async () => {
+    const { data, error } = await supabase
       .from("sop")
       .select("title")
       .eq("category", decodedCategory)
       .order("title", { ascending: true });
 
-    const uniqueTitles = [...new Set(data?.map((d: any) => d.title))];
+    if (error) {
+      console.error("fetchTitles error:", error);
+      setTitles([]);
+      return;
+    }
+
+    const rows = data ?? [];
+    const uniqueTitles = [
+      ...new Set(rows.map((d: any) => d.title).filter(Boolean)),
+    ] as string[];
 
     setTitles(uniqueTitles);
 
     if (uniqueTitles.length > 0) {
       setSelectedTitle(uniqueTitles[0]);
     }
-  }, [decodedCategory]);
-
-  useEffect(() => {
-    fetchTitles();
-  }, [fetchTitles]);
+  };
 
   useEffect(() => {
     if (selectedTitle && tab === "Guidelines") fetchSteps(selectedTitle);
@@ -91,15 +219,78 @@ export default function CategoryPage() {
   const fetchSteps = async (title: string) => {
     setLoading(true);
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("sop")
       .select("*")
       .eq("title", title)
       .order("step_no");
 
+    if (error) {
+      console.error("fetchSteps error:", error);
+      setSteps([]);
+      setLoading(false);
+      return;
+    }
+
     setSteps(data || []);
     setLoading(false);
   };
+
+  const generateQuiz = async () => {
+    // Need SOP steps + a chosen SOP title
+    if (!selectedTitle) {
+      setQuizError("Select an SOP first.");
+      return;
+    }
+    if (!steps || steps.length === 0) {
+      setQuizError("No SOP steps loaded yet. Try again in a moment.");
+      return;
+    }
+
+    setQuizLoading(true);
+    setQuizError(null);
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/quiz/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: decodedCategory,
+          title: selectedTitle,
+          num_questions: 5,
+          steps: steps.map((s: any) => ({
+            step_no: s.step_no,
+            step_short: s.step_short,
+            step_description: s.step_description,
+          })),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data?.error || `Quiz generation failed (${res.status})`);
+      }
+
+      setQuizQuestions((data.questions || []) as QuizQuestion[]);
+    } catch (e: any) {
+      setQuizQuestions([]);
+      setQuizError(e?.message || "Quiz generation failed");
+    } finally {
+      setQuizLoading(false);
+    }
+  };
+
+  // If user switches SOP title, clear previous quiz
+  useEffect(() => {
+    setQuizQuestions([]);
+    setQuizError(null);
+    setQuizShowResults(false);
+    setQuizIndex(0);
+    setQuizSelected(null);
+    setQuizSubmitted(false);
+    setQuizAnswers({});
+  }, [selectedTitle]);
 
   const imageSource = categoryImageMap[slug];
   const videoId = categoryVideoMap[slug];
@@ -138,12 +329,7 @@ export default function CategoryPage() {
       {/* 🔵 HEADER */}
       <View style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable
-            onPress={() =>
-              router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
-            }
-            style={styles.backBtn}
-          >
+          <Pressable onPress={() => router.back()} style={styles.backBtn}>
             <Ionicons name="chevron-back" size={24} color="#fff" />
           </Pressable>
 
@@ -292,13 +478,15 @@ export default function CategoryPage() {
                     </Pressable>
 
                     <Pressable
-                      onPress={() => {
+                      onPress={async () => {
                         setMediaTab("Quiz");
                         setQuizIndex(0);
                         setQuizSelected(null);
                         setQuizSubmitted(false);
                         setQuizAnswers({});
                         setQuizShowResults(false);
+
+                        await generateQuiz();
                       }}
                       style={[
                         styles.mediaChip,
@@ -357,6 +545,39 @@ export default function CategoryPage() {
                    ======================= */}
                 {isQuizMode ? (
                   <View style={styles.quizWrap}>
+                    {quizLoading ? (
+                      <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                        <ActivityIndicator />
+                        <Text
+                          style={{
+                            marginTop: 8,
+                            fontWeight: "800",
+                            color: "#64748B",
+                          }}
+                        >
+                          Generating quiz...
+                        </Text>
+                      </View>
+                    ) : quizError ? (
+                      <View style={{ paddingVertical: 16, alignItems: "center" }}>
+                        <Text
+                          style={{
+                            color: "#EF4444",
+                            fontWeight: "900",
+                            textAlign: "center",
+                          }}
+                        >
+                          {quizError}
+                        </Text>
+                        <Pressable
+                          style={[styles.quizPrimaryBtn, { marginTop: 10 }]}
+                          onPress={generateQuiz}
+                        >
+                          <Text style={styles.quizPrimaryBtnText}>Try Again</Text>
+                        </Pressable>
+                      </View>
+                    ) : null}
+
                     {/* RESULTS PAGE */}
                     {isQuizResults ? (
                       <View style={styles.quizResultsWrap}>
@@ -434,7 +655,10 @@ export default function CategoryPage() {
                             <Text style={styles.quizEmptyText}>
                               No quiz questions yet for this category.
                             </Text>
-                            <Pressable style={styles.quizPrimaryBtn} onPress={resetToDefault}>
+                            <Pressable
+                              style={styles.quizPrimaryBtn}
+                              onPress={resetToDefault}
+                            >
                               <Text style={styles.quizPrimaryBtnText}>
                                 Back to Guidelines
                               </Text>
@@ -498,9 +722,14 @@ export default function CategoryPage() {
 
                             {quizSubmitted ? (
                               <View style={styles.quizExplainBox}>
-                                <Text style={styles.quizExplainTitle}>Correct Answer:</Text>
+                                <Text style={styles.quizExplainTitle}>
+                                  Correct Answer:
+                                </Text>
                                 <Text style={styles.quizExplainText}>
-                                  {String.fromCharCode(65 + currentQuestion.answerIndex)}.{" "}
+                                  {String.fromCharCode(
+                                    65 + currentQuestion.answerIndex
+                                  )}
+                                  .{" "}
                                   {currentQuestion.choices[currentQuestion.answerIndex]}
                                 </Text>
 
@@ -524,7 +753,10 @@ export default function CategoryPage() {
                                   <Text style={styles.quizPrimaryBtnText}>Submit</Text>
                                 </Pressable>
                               ) : (
-                                <Pressable style={styles.quizPrimaryBtn} onPress={handleNext}>
+                                <Pressable
+                                  style={styles.quizPrimaryBtn}
+                                  onPress={handleNext}
+                                >
                                   <Text style={styles.quizPrimaryBtnText}>
                                     {quizIndex + 1 >= quizQuestions.length
                                       ? "Finish"
