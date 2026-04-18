@@ -7,6 +7,9 @@
       "image": "./assets/splash.png",
       "resizeMode": "cover",
       "backgroundColor": "#0E2D52"
-    }
+    },
+    "plugins": [
+      "expo-video"
+    ]
   }
 }
