@@ -250,7 +250,12 @@ export default function ProfileScreen() {
 			) : (
 				<>
 					<View style={styles.headerRow}>
-						<Pressable style={styles.backButton} onPress={() => router.back()}>
+						<Pressable
+							style={styles.backButton}
+							onPress={() =>
+								router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+							}
+						>
 							<ChevronLeft size={27} color="#FFFFFF" strokeWidth={2.2} />
 						</Pressable>
 					</View>

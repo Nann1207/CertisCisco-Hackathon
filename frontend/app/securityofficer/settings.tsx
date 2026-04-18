@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
 	ActivityIndicator,
 	Alert,
@@ -13,6 +13,12 @@ import { ChevronLeft, ChevronRight, Languages, LogOut, UserCircle2 } from "lucid
 import { LinearGradient } from "expo-linear-gradient";
 import { supabase } from "../../lib/supabase";
 import Text from "../../components/TranslatedText";
+import {
+	getLanguagePreference,
+	LanguagePreference,
+	subscribeLanguagePreference,
+} from "../../lib/language-preferences";
+import { translateWithGoogle } from "../../lib/google-translate";
 
 const AVATAR_BUCKET = "profile-photos";
 const USE_SIGNED_URL = true;
@@ -33,6 +39,26 @@ export default function SettingsScreen() {
 	const [profile, setProfile] = useState<EmployeeProfile | null>(null);
 	const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 	const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+	const [language, setLanguage] = useState<LanguagePreference>(
+		getLanguagePreference()
+	);
+
+	useEffect(() => {
+		return subscribeLanguagePreference(setLanguage);
+	}, []);
+
+	const translateForAlert = useCallback(async (value: string) => {
+		if (language === "English") return value;
+		return translateWithGoogle(value, language);
+	}, [language]);
+
+	const showTranslatedAlert = useCallback(async (title: string, message: string) => {
+		const [translatedTitle, translatedMessage] = await Promise.all([
+			translateForAlert(title),
+			translateForAlert(message),
+		]);
+		Alert.alert(translatedTitle, translatedMessage);
+	}, [translateForAlert]);
 
 	useEffect(() => {
 		let alive = true;
@@ -99,7 +125,10 @@ export default function SettingsScreen() {
 			if (!userId) {
 				if (alive) {
 					setLoading(false);
-					Alert.alert("Load failed", sessionError?.message ?? "Unable to load user session.");
+					void showTranslatedAlert(
+						"Load failed",
+						sessionError?.message ?? "Unable to load user session."
+					);
 				}
 				return;
 			}
@@ -125,7 +154,7 @@ export default function SettingsScreen() {
 
 			if (!employee) {
 				setLoading(false);
-				Alert.alert("Load failed", "Employee profile not found.");
+				void showTranslatedAlert("Load failed", "Employee profile not found.");
 				return;
 			}
 
@@ -149,12 +178,12 @@ export default function SettingsScreen() {
 		return () => {
 			alive = false;
 		};
-	}, []);
+	}, [showTranslatedAlert]);
 
 	const handleSignOut = async () => {
 		const { error } = await supabase.auth.signOut();
 		if (error) {
-			Alert.alert("Sign out failed", error.message);
+			void showTranslatedAlert("Sign out failed", error.message);
 			return;
 		}
 		router.replace("/login");
@@ -167,7 +196,12 @@ export default function SettingsScreen() {
 	return (
 		<SafeAreaView style={styles.root}>
 			<View style={styles.headerBar}>
-				<Pressable style={styles.headerBackButton} onPress={() => router.back()}>
+				<Pressable
+					style={styles.headerBackButton}
+					onPress={() =>
+						router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+					}
+				>
 					<ChevronLeft color="#123560" size={26} strokeWidth={2.2} />
 					<Text style={styles.headerTitle}>Settings</Text>
 				</Pressable>

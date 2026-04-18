@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Platform } from "react-native";
-import { View, StyleSheet, Pressable, Image, ScrollView, Alert } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { View, StyleSheet, Pressable, Image, ScrollView, Alert, useWindowDimensions } from "react-native";
+
 import Text from "../../components/TranslatedText";
-import { useWindowDimensions } from "react-native";
+
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronLeft, Clock3 } from "lucide-react-native";
 import MapView, { Marker } from "react-native-maps";
@@ -63,7 +63,7 @@ export default function ClockInScreen() {
   const currentTimeSize = width < 360 ? 40 : width < 400 ? 44 : 48;
   const clockInMinWidth = Math.round(Math.min(width - contentHorizontalPadding * 2, 320));
 
-  const resetMapViewport = () => {
+  const resetMapViewport = useCallback(() => {
     if (!mapRef.current) return;
 
     const points = [coords, targetCoords].filter(Boolean) as Coords[];
@@ -87,7 +87,11 @@ export default function ClockInScreen() {
         300
       );
     }
-  };
+  }, [coords, targetCoords]);
+
+  useEffect(() => {
+    resetMapViewport();
+  }, [resetMapViewport]);
 
   const shift = useMemo(() => parseShiftData(shiftData), [shiftData]);
   const isWithinClockInWindow = useMemo(() => {
@@ -266,10 +270,6 @@ export default function ClockInScreen() {
   }, [shift?.address, shift?.location]);
 
   useEffect(() => {
-    resetMapViewport();
-  }, [coords, targetCoords]);
-
-  useEffect(() => {
     if (!coords || !targetCoords) {
       setDistanceMeters(null);
       return;
@@ -424,7 +424,9 @@ export default function ClockInScreen() {
       >
         <Pressable
           style={[styles.backButton, width < 360 ? { width: 34, height: 34 } : null]}
-          onPress={() => router.back()}
+          onPress={() =>
+            router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+          }
         >
           <ChevronLeft size={24} color="#ffffff" />
         </Pressable>

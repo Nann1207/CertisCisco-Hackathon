@@ -1,5 +1,6 @@
 import type { LanguagePreference } from "./language-preferences";
 import Constants from "expo-constants";
+import { Alert } from "react-native";
 
 function getDefaultApiUrl() {
   const hostUri = (Constants.expoConfig as { hostUri?: string } | null)?.hostUri;
@@ -9,6 +10,7 @@ function getDefaultApiUrl() {
 
 const API_URL = process.env.EXPO_PUBLIC_TRANSLATE_API_URL ?? getDefaultApiUrl();
 const translationCache = new Map<string, string>();
+let translationDownAlertShown = false;
 const PROTECTED_BRANDS = ["Certis", "Cisco", "Fortis", "Supabase", "Expo", "GPS"];
 const UI_NON_NAME_WORDS = new Set([
   "incidents",
@@ -20,17 +22,51 @@ const UI_NON_NAME_WORDS = new Set([
   "reports",
   "shift",
   "clock",
+  "in",
+  "out",
   "language",
+  "languages",
   "translate",
   "settings",
   "notifications",
+  "notification",
   "services",
+  "service",
   "location",
+  "address",
   "supervisor",
   "officer",
+  "security",
+  "senior",
   "welcome",
   "back",
   "today",
+  "user",
+  "profile",
+  "sign",
+  "first",
+  "last",
+  "name",
+  "date",
+  "birth",
+  "age",
+  "email",
+  "phone",
+  "number",
+  "save",
+  "saving",
+  "load",
+  "failed",
+  "update",
+  "updated",
+  "current",
+  "preference",
+  "preferences",
+  "choose",
+  "cancel",
+  "guidelines",
+  "logistics",
+  "operation",
 ]);
 const LOCATION_SUFFIXES = [
   "Road",
@@ -67,6 +103,10 @@ const ADDRESS_CHUNK_PATTERN =
   /\b(?:Blk|Block)\s*\d+[A-Za-z]?(?:\s+[A-Za-z0-9#(),./-]+){0,12}\b/gi;
 const SINGAPORE_ADDRESS_PATTERN =
   /\b[0-9A-Za-z#(),./-]+(?:\s+[0-9A-Za-z#(),./-]+){1,12},\s*Singapore\s*\d{6}\b/gi;
+const GREETING_WITH_NAME_PATTERN =
+  /\b(?:Hi|Hello|Welcome)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})(?=[!,.?]|\b)/g;
+const ROLE_LABEL_WITH_NAME_PATTERN =
+  /\b(?:Supervisor|Officer|Name)\s*:\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b/g;
 
 type ProtectedResult = {
   text: string;
@@ -82,11 +122,11 @@ function escapeRegExp(value: string) {
 }
 
 function isLikelyPersonName(value: string) {
-  const trimmed = value.trim();
+  const trimmed = value.trim().replace(/[!,.?:;]+$/g, "");
   const parts = trimmed.split(/\s+/).filter(Boolean);
 
-  // Names are generally 2-3 title-cased words (e.g., "John Tan").
-  if (parts.length < 2 || parts.length > 3) return false;
+  // Names are generally 1-3 title-cased words (e.g., "Anthony", "John Tan").
+  if (parts.length < 1 || parts.length > 3) return false;
   if (!parts.every((part) => /^[A-Z][a-z]+$/.test(part))) return false;
 
   const hasUiWord = parts.some((part) => UI_NON_NAME_WORDS.has(part.toLowerCase()));
@@ -142,6 +182,17 @@ function protectSegments(input: string): ProtectedResult {
     working = working.replace(regex, (match) => register(match));
   }
 
+  // Preserve likely human names in common greeting and role label phrases.
+  working = working.replace(GREETING_WITH_NAME_PATTERN, (fullMatch, name: string) => {
+    if (!isLikelyPersonName(name)) return fullMatch;
+    return fullMatch.replace(name, register(name));
+  });
+
+  working = working.replace(ROLE_LABEL_WITH_NAME_PATTERN, (fullMatch, name: string) => {
+    if (!isLikelyPersonName(name)) return fullMatch;
+    return fullMatch.replace(name, register(name));
+  });
+
   working = working.replace(LOCATION_FIELD_PATTERN, (fullMatch, label: string, value: string) => {
     const safeValue = value.trim();
     if (!safeValue) return fullMatch;
@@ -166,6 +217,63 @@ function restoreSegments(input: string, dictionary: Array<{ token: string; origi
     restored = restored.split(item.token).join(item.original);
   }
   return restored;
+}
+
+function hasAnyLetter(value: string) {
+  return /[A-Za-z]/.test(value);
+}
+
+function isAllUpper(value: string) {
+  return hasAnyLetter(value) && value === value.toUpperCase();
+}
+
+function isAllLower(value: string) {
+  return hasAnyLetter(value) && value === value.toLowerCase();
+}
+
+function isSentenceStyle(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || !hasAnyLetter(trimmed)) return false;
+
+  const firstLetterMatch = trimmed.match(/[A-Za-z]/);
+  if (!firstLetterMatch || typeof firstLetterMatch.index !== "number") return false;
+
+  const firstLetterIndex = firstLetterMatch.index;
+  const firstLetter = trimmed[firstLetterIndex];
+  if (firstLetter !== firstLetter.toUpperCase()) return false;
+
+  const remainder = trimmed.slice(firstLetterIndex + 1);
+  const lettersOnly = remainder.replace(/[^A-Za-z]/g, "");
+  if (!lettersOnly) return true;
+
+  return lettersOnly === lettersOnly.toLowerCase();
+}
+
+function applySourceCasing(source: string, translated: string) {
+  if (!translated.trim()) return translated;
+
+  if (isAllUpper(source)) {
+    return translated.toUpperCase();
+  }
+
+  if (isAllLower(source)) {
+    return translated.toLowerCase();
+  }
+
+  if (isSentenceStyle(source)) {
+    const firstLetterMatch = translated.match(/[A-Za-z]/);
+    if (!firstLetterMatch || typeof firstLetterMatch.index !== "number") {
+      return translated;
+    }
+
+    const firstLetterIndex = firstLetterMatch.index;
+    const head = translated.slice(0, firstLetterIndex);
+    const first = translated[firstLetterIndex].toUpperCase();
+    const tail = translated.slice(firstLetterIndex + 1);
+    return `${head}${first}${tail}`;
+  }
+
+  return translated;
 }
 
 export async function translateWithGoogle(text: string, language: LanguagePreference): Promise<string> {
@@ -197,22 +305,59 @@ export async function translateWithGoogle(text: string, language: LanguagePrefer
   const cached = translationCache.get(cacheKey);
   if (cached) return cached;
 
-  const response = await fetch(API_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: protectedResult.text,
-      targetLanguage: language,
-    }),
-  });
-
-  if (!response.ok) {
+  let response: Response;
+  try {
+    response = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: protectedResult.text,
+        targetLanguage: language,
+      }),
+    });
+  } catch {
+    if (!translationDownAlertShown) {
+      translationDownAlertShown = true;
+      Alert.alert(
+        "Translation currently down",
+        "Translation is currently down. Your content is still available in English, and we will restore translation shortly."
+      );
+    }
     return text;
   }
 
-  const body = (await response.json()) as { translatedText?: string };
+  if (!response.ok) {
+    if (!translationDownAlertShown) {
+      translationDownAlertShown = true;
+      Alert.alert(
+        "Translation currently down",
+        "Translation is currently down. Your content is still available in English, and we will restore translation shortly."
+      );
+    }
+    return text;
+  }
+
+  const body = (await response.json()) as {
+    translatedText?: string;
+    translationStatus?: string;
+    userMessage?: string;
+  };
+
+  if (body.translationStatus === "down") {
+    if (!translationDownAlertShown) {
+      translationDownAlertShown = true;
+      Alert.alert(
+        "Translation currently down",
+        body.userMessage ??
+          "Translation is currently down. Your content is still available in English, and we will restore translation shortly."
+      );
+    }
+    return text;
+  }
+
   const translatedRaw = body.translatedText?.trim() ? body.translatedText : protectedResult.text;
-  const translated = restoreSegments(translatedRaw, protectedResult.dictionary);
+  const restored = restoreSegments(translatedRaw, protectedResult.dictionary);
+  const translated = applySourceCasing(text, restored);
   translationCache.set(cacheKey, translated);
   return translated;
 }

@@ -1,6 +1,5 @@
 import {
   View,
-  Text,
   Pressable,
   ActivityIndicator,
   FlatList,
@@ -8,10 +7,11 @@ import {
   ScrollView,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import { styles } from "../../styles/securityofficer/category";
+import Text from "../../components/TranslatedText";
 
 export default function CategoryPage() {
   const { category } = useLocalSearchParams();
@@ -54,11 +54,7 @@ export default function CategoryPage() {
     "Images"
   );
 
-  useEffect(() => {
-    fetchTitles();
-  }, []);
-
-  const fetchTitles = async () => {
+  const fetchTitles = useCallback(async () => {
     const { data } = await supabase
       .from("sop")
       .select("title")
@@ -72,7 +68,11 @@ export default function CategoryPage() {
     if (uniqueTitles.length > 0) {
       setSelectedTitle(uniqueTitles[0]);
     }
-  };
+  }, [decodedCategory]);
+
+  useEffect(() => {
+    fetchTitles();
+  }, [fetchTitles]);
 
   useEffect(() => {
     if (selectedTitle) fetchSteps(selectedTitle);
@@ -96,7 +96,12 @@ export default function CategoryPage() {
       {/* 🔵 HEADER */}
       <View style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <Pressable
+            onPress={() =>
+              router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+            }
+            style={styles.backBtn}
+          >
             <Ionicons name="chevron-back" size={24} color="#fff" />
           </Pressable>
 

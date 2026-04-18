@@ -1,10 +1,10 @@
-import React from "react";
-import { Image, ImageBackground, StyleSheet, View } from "react-native";
+import React, { useEffect } from "react";
+import { Image, ImageBackground, StyleSheet, View , useWindowDimensions } from "react-native";
 import Text from "../components/TranslatedText";
-import { useWindowDimensions } from "react-native";
+
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { useEffect } from "react";
+
 
 export default function LaunchScreen() {
   const router = useRouter();

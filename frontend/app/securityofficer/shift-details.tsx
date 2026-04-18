@@ -96,7 +96,12 @@ export default function ShiftDetails() {
     return (
       <View style={[styles.container, { padding: pagePad }]}> 
         <View style={[styles.headerRow, { marginTop: headerTop }]}> 
-          <Pressable style={styles.backButton} onPress={() => router.back()}>
+          <Pressable
+            style={styles.backButton}
+            onPress={() =>
+              router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+            }
+          >
             <ChevronLeft size={22} color="#0E2D52" />
           </Pressable>
           <Text style={[styles.header, { fontSize: headerSize }]}>Shift Details</Text>
@@ -124,7 +129,12 @@ export default function ShiftDetails() {
   return (
     <View style={[styles.container, { padding: pagePad }]}> 
       <View style={[styles.headerRow, { marginTop: headerTop }]}> 
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() =>
+            router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+          }
+        >
           <ChevronLeft size={22} color="#0E2D52" />
         </Pressable>
         <Text style={[styles.header, { fontSize: headerSize }]}>Shift Details</Text>

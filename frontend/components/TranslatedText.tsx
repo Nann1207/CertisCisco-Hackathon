@@ -9,26 +9,36 @@ import { translateWithGoogle } from "../lib/google-translate";
 
 type TranslatedTextProps = TextProps & {
   children?: React.ReactNode;
+  disableDynamicFontSize?: boolean;
 };
 
 function toPlainString(children: React.ReactNode): string | null {
-  if (typeof children === "string" || typeof children === "number") {
-    return String(children);
-  }
+  const extract = (node: React.ReactNode): string => {
+    if (typeof node === "string" || typeof node === "number") {
+      return String(node);
+    }
 
-  if (Array.isArray(children)) {
-    const parts = children.map((item) => {
-      if (typeof item === "string" || typeof item === "number") return String(item);
-      return "";
-    });
-    const joined = parts.join("");
-    return joined.trim().length > 0 ? joined : null;
-  }
+    if (Array.isArray(node)) {
+      return node.map((item) => extract(item)).join("");
+    }
 
-  return null;
+    if (React.isValidElement(node)) {
+      const childProp = (node.props as { children?: React.ReactNode } | null)?.children;
+      return extract(childProp ?? null);
+    }
+
+    return "";
+  };
+
+  const joined = extract(children);
+  return joined.trim().length > 0 ? joined : null;
 }
 
-export default function TranslatedText({ children, ...props }: TranslatedTextProps) {
+export default function TranslatedText({
+  children,
+  disableDynamicFontSize = false,
+  ...props
+}: TranslatedTextProps) {
   const [language, setLanguage] = useState<LanguagePreference>(getLanguagePreference());
   const [translatedText, setTranslatedText] = useState<string | null>(null);
 
@@ -40,26 +50,41 @@ export default function TranslatedText({ children, ...props }: TranslatedTextPro
   }, [props.style]);
 
   const dynamicFontSize = useMemo(() => {
+    if (disableDynamicFontSize) return undefined;
     if (!renderedText || !plainText) return undefined;
-    if (renderedText.includes("\n")) return undefined;
 
     const baseFontSize = flattenedStyle?.fontSize;
     if (typeof baseFontSize !== "number") return undefined;
 
-    const sourceLength = Math.max(plainText.length, 1);
-    const renderedLength = renderedText.length;
+    const sourceLength = Math.max(plainText.replace(/\s+/g, " ").trim().length, 1);
+    const renderedLength = renderedText.replace(/\s+/g, " ").trim().length;
     const expansionRatio = renderedLength / sourceLength;
 
-    // Keep original size when translation length is close to source.
-    if (expansionRatio <= 1.1) return undefined;
+    const hasLineBreaks = renderedText.includes("\n");
 
-    // Shrink progressively for longer translations while maintaining readability.
-    const scale = Math.max(0.78, 1 - (expansionRatio - 1) * 0.35);
+    // Keep original size when translation length is close to source and still short.
+    if (expansionRatio <= 1.1 && renderedLength <= 32 && !hasLineBreaks) {
+      return undefined;
+    }
+
+    // Combine penalties from relative expansion, absolute length, and explicit line breaks.
+    const expansionPenalty = expansionRatio > 1.08 ? Math.min(0.24, (expansionRatio - 1.08) * 0.3) : 0;
+    const lengthPenalty = renderedLength > 64 ? Math.min(0.15, (renderedLength - 64) / 240) : 0;
+    const multilinePenalty = hasLineBreaks ? 0.08 : 0;
+
+    const scale = Math.max(0.72, 1 - expansionPenalty - lengthPenalty - multilinePenalty);
+    if (scale >= 0.99) return undefined;
+
     return Math.round(baseFontSize * scale * 100) / 100;
-  }, [flattenedStyle?.fontSize, plainText, renderedText]);
+  }, [disableDynamicFontSize, flattenedStyle?.fontSize, plainText, renderedText]);
 
   const adaptiveStyle = useMemo(() => {
-    const patch: TextStyle = { flexShrink: 1 };
+    const patch: TextStyle = {
+      flexShrink: 1,
+      minWidth: 0,
+      maxWidth: "100%",
+      flexWrap: "wrap",
+    };
     if (typeof dynamicFontSize === "number") {
       patch.fontSize = dynamicFontSize;
     }
@@ -103,7 +128,7 @@ export default function TranslatedText({ children, ...props }: TranslatedTextPro
       {...props}
       style={adaptiveStyle}
       adjustsFontSizeToFit={props.adjustsFontSizeToFit ?? true}
-      minimumFontScale={props.minimumFontScale ?? 0.78}
+      minimumFontScale={props.minimumFontScale ?? 0.72}
     >
       {renderedText}
     </RNText>

@@ -1,7 +1,8 @@
-import { View, Text, Pressable, SafeAreaView } from "react-native";
+import { View, Pressable, SafeAreaView } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { styles } from "../../styles/securityofficer/sop";
+import Text from "../../components/TranslatedText";
 
 export default function SOPPage() {
   const router = useRouter();

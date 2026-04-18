@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useRouter } from "expo-router";
 import { ChevronLeft, MessageCirclePlus, Search } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
+import Text from "../../components/TranslatedText";
 import {
   formatMessageTime,
   getAvatarColor,
@@ -255,7 +256,13 @@ export default function MessagingChannelScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.back()} hitSlop={10}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() =>
+            router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+          }
+          hitSlop={10}
+        >
           <ChevronLeft size={28} color="#FFFFFF" strokeWidth={2.4} />
         </Pressable>
 

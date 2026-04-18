@@ -7,4 +7,23 @@ module.exports = defineConfig([
   {
     ignores: ['dist/*'],
   },
+  {
+    files: ['app/**/*.tsx', 'components/**/*.tsx'],
+    ignores: ['components/TranslatedText.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'react-native',
+              importNames: ['Text'],
+              message:
+                'Use components/TranslatedText instead of Text from react-native so localization is applied globally.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);

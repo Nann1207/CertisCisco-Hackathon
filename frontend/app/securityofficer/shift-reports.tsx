@@ -30,7 +30,11 @@ type ReportShift = {
 
 export default function ReportsScreen() {
   const router = useRouter();
-  const { shiftId } = useLocalSearchParams<{ shiftId?: string }>();
+  const { shiftId, incidentId, reportType } = useLocalSearchParams<{
+    shiftId?: string;
+    incidentId?: string;
+    reportType?: string;
+  }>();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -39,8 +43,21 @@ export default function ReportsScreen() {
   const [supervisorName, setSupervisorName] = useState("-");
   const [shiftDescription, setShiftDescription] = useState("");
   const [showSubmitSuccessModal, setShowSubmitSuccessModal] = useState(false);
+  const isDocumentationMode = !shiftId && !(incidentId && reportType);
 
   useEffect(() => {
+    if (!incidentId || !reportType) return;
+    router.replace(
+      `/securityofficer/createReport?incidentId=${incidentId}&reportType=${reportType}`
+    );
+  }, [incidentId, reportType, router]);
+
+  useEffect(() => {
+    if (incidentId && reportType) {
+      setLoading(true);
+      return;
+    }
+
     let alive = true;
 
     const loadReportData = async () => {
@@ -103,7 +120,7 @@ export default function ReportsScreen() {
     return () => {
       alive = false;
     };
-  }, [shiftId]);
+  }, [incidentId, reportType, shiftId]);
 
   const dateText = useMemo(() => {
     if (!shift?.shift_date) return "-";
@@ -132,6 +149,14 @@ export default function ReportsScreen() {
 
     setSaving(true);
 
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const authUserId = sessionData.session?.user.id ?? null;
+    if (!authUserId) {
+      setSaving(false);
+      Alert.alert("Submit failed", sessionError?.message ?? "Unable to validate your session.");
+      return;
+    }
+
     const { error } = await supabase
       .from("shifts")
       .update({ shift_description: description })
@@ -143,7 +168,25 @@ export default function ReportsScreen() {
       return;
     }
 
+    const { error: closeAssignmentsError } = await supabase
+      .from("incident_assignments")
+      .update({ active_status: false })
+      .eq("officer_id", authUserId)
+      .eq("shift_id", shift.shift_id)
+      .eq("active_status", true)
+      .select("assignment_id");
+
+    if (closeAssignmentsError) {
+      setSaving(false);
+      Alert.alert(
+        "Submit failed",
+        `Shift report was saved, but assignments could not be closed for this shift. ${closeAssignmentsError.message}`
+      );
+      return;
+    }
+
     setSaving(false);
+
     setShowSubmitSuccessModal(true);
   };
 
@@ -155,7 +198,12 @@ export default function ReportsScreen() {
     >
 
       <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.back()}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() =>
+            router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+          }
+        >
           <ChevronLeft size={24} color="#fff" />
         </Pressable>
         <Text style={styles.headerTitle}>Shift Report</Text>
@@ -165,6 +213,58 @@ export default function ReportsScreen() {
         <View style={styles.loaderWrap}>
           <ActivityIndicator color="#0E2D52" />
         </View>
+      ) : isDocumentationMode ? (
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.docsCard}>
+            <Text style={styles.docsTitle}>Shift Reports Documentation</Text>
+            <Text style={styles.docsBody}>
+              Shift Reports captures your full shift handover in one place, including time coverage, officer details,
+              supervisor details, and final shift summary.
+            </Text>
+
+            <Text style={styles.docsSectionTitle}>What Is Included</Text>
+            <Text style={styles.docsBullet}>- Shift date with clock-in and clock-out records</Text>
+            <Text style={styles.docsBullet}>- Duty officer and supervisor in-charge</Text>
+            <Text style={styles.docsBullet}>- Final shift description for handover</Text>
+            <Text style={styles.docsBullet}>- Auto-close of active incident assignments for the same shift</Text>
+
+            <Text style={styles.docsSectionTitle}>How To Submit</Text>
+            <Text style={styles.docsBullet}>1. Clock out from Home.</Text>
+            <Text style={styles.docsBullet}>2. Enter a complete shift description.</Text>
+            <Text style={styles.docsBullet}>3. Submit to store documentation and close active assignments.</Text>
+
+            <Text style={styles.docsSectionTitle}>Access Through Services</Text>
+            <Text style={styles.docsBody}>You can open Shift Reports from these service entry points:</Text>
+            <View style={styles.docsButtonRow}>
+              <Pressable
+                style={styles.docsServiceBtn}
+                onPress={() => router.push("/securityofficer/home")}
+              >
+                <Text style={styles.docsServiceBtnText}>Home</Text>
+              </Pressable>
+              <Pressable
+                style={styles.docsServiceBtn}
+                onPress={() => router.push("/securityofficer/reports")}
+              >
+                <Text style={styles.docsServiceBtnText}>Reports</Text>
+              </Pressable>
+            </View>
+            <View style={styles.docsButtonRow}>
+              <Pressable
+                style={styles.docsServiceBtn}
+                onPress={() => router.push("/securityofficer/incidents")}
+              >
+                <Text style={styles.docsServiceBtnText}>Incidents</Text>
+              </Pressable>
+              <Pressable
+                style={styles.docsServiceBtn}
+                onPress={() => router.push("/securityofficer/schedule")}
+              >
+                <Text style={styles.docsServiceBtnText}>Schedule</Text>
+              </Pressable>
+            </View>
+          </View>
+        </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.card}>
@@ -350,6 +450,58 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 20,
     paddingBottom: 14,
+  },
+  docsCard: {
+    backgroundColor: "rgba(255,255,255,0.9)",
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.35)",
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
+  },
+  docsTitle: {
+    color: "#0E2D52",
+    fontSize: 24,
+    fontWeight: "800",
+    marginBottom: 8,
+  },
+  docsSectionTitle: {
+    color: "#1E3A5F",
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  docsBody: {
+    color: "#334155",
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  docsBullet: {
+    color: "#334155",
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 2,
+  },
+  docsButtonRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
+  },
+  docsServiceBtn: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 10,
+    backgroundColor: "#0E2D52",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  docsServiceBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
   },
   label: {
     color: "#0A0F18",

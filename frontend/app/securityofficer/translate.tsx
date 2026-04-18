@@ -2,18 +2,17 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
 	ActivityIndicator,
 	Alert,
-	Modal,
 	Pressable,
-	SafeAreaView,
 	StyleSheet,
 	View,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { ChevronLeft } from "lucide-react-native";
+import { X } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
 import Text from "../../components/TranslatedText";
 import {
 	LanguagePreference,
+	normalizeLanguagePreference,
 	setLanguagePreference as setGlobalLanguagePreference,
 } from "../../lib/language-preferences";
 
@@ -24,7 +23,6 @@ export default function TranslateScreen() {
 
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
-	const [modalVisible, setModalVisible] = useState(false);
 	const [languagePreference, setLanguagePreference] = useState<LanguagePreference>("English");
 	const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -59,7 +57,7 @@ export default function TranslateScreen() {
 				.eq("id", userId)
 				.maybeSingle();
 
-			let preference = employeeById?.language_preferences as LanguagePreference | null;
+			let preference = employeeById?.language_preferences ?? null;
 
 			if (!preference && userEmail) {
 				const { data: employeeByEmail } = await supabase
@@ -67,7 +65,7 @@ export default function TranslateScreen() {
 					.select("language_preferences")
 					.eq("email", userEmail)
 					.maybeSingle();
-				preference = (employeeByEmail?.language_preferences as LanguagePreference | null) ?? null;
+				preference = employeeByEmail?.language_preferences ?? null;
 			}
 
 			if (!alive) return;
@@ -78,10 +76,14 @@ export default function TranslateScreen() {
 				return;
 			}
 
-			if (preference && LANGUAGE_OPTIONS.includes(preference)) {
-				setLanguagePreference(preference);
+			const normalizedPreference = normalizeLanguagePreference(preference);
+
+			if (normalizedPreference && LANGUAGE_OPTIONS.includes(normalizedPreference)) {
+				setLanguagePreference(normalizedPreference);
+				setGlobalLanguagePreference(normalizedPreference);
 			} else {
 				setLanguagePreference("English");
+				setGlobalLanguagePreference("English");
 			}
 
 			setLoading(false);
@@ -142,136 +144,119 @@ export default function TranslateScreen() {
 			return;
 		}
 
-		setGlobalLanguagePreference(nextValue);
-		setModalVisible(false);
+		setGlobalLanguagePreference(nextValue, { forceNotify: true });
+		setLanguagePreference(nextValue);
 		Alert.alert("Saved", `Language preference updated to ${nextValue}.`);
 	};
 
 	return (
-		<SafeAreaView style={styles.root}>
-			<View style={styles.headerRow}>
-				<Pressable style={styles.backButton} onPress={() => router.back()}>
-					<ChevronLeft size={20} color="#1F2457" />
-					<Text style={styles.headerTitle}>Translate</Text>
-				</Pressable>
-			</View>
+		<View style={styles.overlayRoot}>
+			<Pressable
+				style={styles.backdrop}
+				onPress={() =>
+					router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+				}
+			/>
 
-			{loading ? (
-				<View style={styles.centerWrap}>
-					<ActivityIndicator color="#1F2457" />
-				</View>
-			) : loadError ? (
-				<View style={styles.centerWrap}>
-					<Text style={styles.errorTitle}>Unable to load language preference</Text>
-					<Text style={styles.errorText}>{loadError}</Text>
-				</View>
-			) : (
-				<View style={styles.contentCard}>
-					<Text style={styles.label}>Language</Text>
-					<Text style={styles.value}>{subtitleText}</Text>
-
+			<View style={styles.modalCard}>
+				<View style={styles.modalHeaderRow}>
+					<Text style={styles.modalTitle}>Translate</Text>
 					<Pressable
-						style={[styles.primaryButton, saving ? styles.disabledButton : null]}
-						onPress={() => setModalVisible(true)}
-						disabled={saving}
+						onPress={() =>
+							router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+						}
+						hitSlop={8}
 					>
-						<Text style={styles.primaryButtonText}>{saving ? "Saving..." : "Change Language"}</Text>
+						<X size={18} color="#6B7280" />
 					</Pressable>
 				</View>
-			)}
 
-			<Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
-				<View style={styles.modalBackdrop}>
-					<View style={styles.modalCard}>
-						<Text style={styles.modalTitle}>Choose a language</Text>
+				{loading ? (
+					<View style={styles.centerWrap}>
+						<ActivityIndicator color="#1F2457" />
+					</View>
+				) : loadError ? (
+					<View style={styles.centerWrap}>
+						<Text style={styles.errorTitle}>Unable to load language preference</Text>
+						<Text style={styles.errorText}>{loadError}</Text>
+					</View>
+				) : (
+					<View style={styles.contentCard}>
+						<Text style={styles.label}>{subtitleText}</Text>
 
 						{LANGUAGE_OPTIONS.map((option) => {
 							const active = option === languagePreference;
 							return (
 								<Pressable
 									key={option}
-									style={[styles.optionButton, active ? styles.optionButtonActive : null]}
+									style={[styles.optionButton, active ? styles.optionButtonActive : null, saving ? styles.disabledButton : null]}
 									onPress={() => void updateLanguagePreference(option)}
 									disabled={saving}
 								>
-									<Text style={[styles.optionText, active ? styles.optionTextActive : null]}>{option}</Text>
+									<Text style={[styles.optionText, active ? styles.optionTextActive : null]}>
+										{saving && active ? "Saving..." : option}
+									</Text>
 								</Pressable>
 							);
 						})}
-
-						<Pressable style={styles.cancelButton} onPress={() => setModalVisible(false)} disabled={saving}>
-							<Text style={styles.cancelText}>Cancel</Text>
-						</Pressable>
 					</View>
-				</View>
-			</Modal>
-		</SafeAreaView>
+				)}
+			</View>
+		</View>
 	);
 }
 
 const styles = StyleSheet.create({
-	root: {
+	overlayRoot: {
 		flex: 1,
-		backgroundColor: "#F4F4F4",
-		paddingHorizontal: 18,
-		paddingTop: 50,
-	},
-	headerRow: {
-		marginBottom: 20,
-	},
-	backButton: {
-		flexDirection: "row",
-		alignItems: "center",
-		gap: 6,
-		alignSelf: "flex-start",
-	},
-	headerTitle: {
-		color: "#1F2457",
-		fontSize: 28,
-		fontWeight: "700",
-	},
-	centerWrap: {
-		flex: 1,
+		backgroundColor: "rgba(0,0,0,0.38)",
 		alignItems: "center",
 		justifyContent: "center",
-		paddingHorizontal: 20,
+		paddingHorizontal: 18,
+	},
+	backdrop: {
+		...StyleSheet.absoluteFillObject,
+	},
+	modalHeaderRow: {
+		flexDirection: "row",
+		justifyContent: "space-between",
+		alignItems: "center",
+		marginBottom: 10,
+	},
+	modalCard: {
+		width: "100%",
+		maxWidth: 380,
+		borderRadius: 16,
+		backgroundColor: "#FFFFFF",
+		padding: 16,
+		gap: 10,
+		borderWidth: 1,
+		borderColor: "rgba(0,0,0,0.1)",
+		shadowColor: "#000",
+		shadowOpacity: 0.18,
+		shadowRadius: 16,
+		shadowOffset: { width: 0, height: 10 },
+		elevation: 12,
+	},
+	centerWrap: {
+		alignItems: "center",
+		justifyContent: "center",
+		paddingVertical: 24,
+		paddingHorizontal: 12,
 	},
 	contentCard: {
-		backgroundColor: "#FFFFFF",
-		borderRadius: 16,
-		borderWidth: 1,
-		borderColor: "rgba(0,0,0,0.08)",
-		padding: 18,
 		gap: 12,
 	},
 	label: {
-		fontSize: 14,
+		fontSize: 15,
 		color: "#6B7280",
 		fontWeight: "600",
-	},
-	value: {
-		fontSize: 20,
-		color: "#111827",
-		fontWeight: "700",
-	},
-	primaryButton: {
-		marginTop: 6,
-		backgroundColor: "#1F2457",
-		borderRadius: 10,
-		alignItems: "center",
-		justifyContent: "center",
-		paddingVertical: 12,
 	},
 	disabledButton: {
 		opacity: 0.6,
 	},
-	primaryButtonText: {
-		color: "#FFFFFF",
-		fontSize: 15,
-		fontWeight: "700",
-	},
 	errorTitle: {
-		fontSize: 20,
+		fontSize: 18,
 		color: "#1F2457",
 		fontWeight: "700",
 		textAlign: "center",
@@ -283,26 +268,10 @@ const styles = StyleSheet.create({
 		color: "#6B7280",
 		textAlign: "center",
 	},
-	modalBackdrop: {
-		flex: 1,
-		backgroundColor: "rgba(0,0,0,0.35)",
-		alignItems: "center",
-		justifyContent: "center",
-		paddingHorizontal: 20,
-	},
-	modalCard: {
-		width: "100%",
-		maxWidth: 360,
-		borderRadius: 14,
-		backgroundColor: "#FFFFFF",
-		padding: 16,
-		gap: 10,
-	},
 	modalTitle: {
 		fontSize: 18,
 		fontWeight: "700",
 		color: "#111827",
-		marginBottom: 6,
 	},
 	optionButton: {
 		borderWidth: 1,
@@ -323,16 +292,5 @@ const styles = StyleSheet.create({
 	optionTextActive: {
 		color: "#1F2457",
 		fontWeight: "700",
-	},
-	cancelButton: {
-		marginTop: 2,
-		alignItems: "center",
-		justifyContent: "center",
-		paddingVertical: 10,
-	},
-	cancelText: {
-		color: "#6B7280",
-		fontSize: 15,
-		fontWeight: "600",
 	},
 });

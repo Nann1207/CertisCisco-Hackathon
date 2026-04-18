@@ -11,6 +11,7 @@ import Text from "../../components/TranslatedText";
 import { useRouter } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
 import QRCode from "react-native-qrcode-svg";
+import { LinearGradient } from "expo-linear-gradient";
 import { supabase } from "../../lib/supabase";
 
 const AVATAR_BUCKET = "profile-photos";
@@ -185,7 +186,12 @@ export default function IdCardScreen() {
 	return (
 		<ImageBackground source={require("../../assets/srbackground.png")} style={styles.root} resizeMode="cover">
 			<View style={styles.headerRow}>
-				<Pressable style={styles.doneButton} onPress={() => router.back()}>
+				<Pressable
+					style={styles.doneButton}
+					onPress={() =>
+						router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+					}
+				>
 					<ChevronLeft size={20} color="#ffffff" />
 					<Text style={styles.doneText}>ID Card</Text>
 				</Pressable>
@@ -211,7 +217,12 @@ export default function IdCardScreen() {
 				</View>
 			) : (
 				<View style={styles.cardWrap}>
-					<View style={styles.cardTop}>
+					<LinearGradient
+						colors={["#3c7fa8", "#0E2D52"]}
+						start={{ x: 0, y: 0 }}
+						end={{ x: 1, y: 1 }}
+						style={styles.cardTop}
+					>
 						<View style={styles.cardTitleRow}>
 							<Text style={styles.orgText}>CERTIS CISCO</Text>
 							<Text style={styles.yearText}>{yearMonthText}</Text>
@@ -233,7 +244,7 @@ export default function IdCardScreen() {
 
 						<Text style={styles.nameText}>{fullName}</Text>
 						<Text style={styles.roleText}>{roleText}</Text>
-					</View>
+					</LinearGradient>
 
 					<View style={styles.cardBottom}>
 						<QRCode value={qrValue} size={150} />

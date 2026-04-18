@@ -11,7 +11,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   Vibration,
   View,
@@ -23,6 +22,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { supabase } from "../../lib/supabase";
+import Text from "../../components/TranslatedText";
 import {
   getAvatarColor,
   getAvatarTextColor,
