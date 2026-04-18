@@ -444,7 +444,7 @@ export default function Home() {
     setActiveClockedInShiftId(null);
     setIsSavingShiftAction(false);
     router.push({
-      pathname: "/securityofficer/reports",
+      pathname: "/securityofficer/shift-reports",
       params: {
         shiftId: shiftToClockOut.id,
       },
