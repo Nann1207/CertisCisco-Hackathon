@@ -6,8 +6,10 @@ import type { TileState } from "../components/CCTVTile";
 import { ThreatPanel } from "../components/ThreatPanel";
 import type { ThreatState } from "../components/ThreatPanel";
 import { uploadVideoForTile } from "../lib/api";
+import logo from "../assets/logo.png";
 
 const TILE_IDS = ["cctv1", "cctv2", "cctv3", "cctv4"] as const;
+const REQUIRED_ROLE = "Security Supervisor";
 
 export function DashboardPage() {
   const nav = useNavigate();
@@ -43,6 +45,19 @@ export function DashboardPage() {
         nav("/");
         return;
       }
+
+      const { data: employee, error: employeeError } = await supabase
+        .from("employees")
+        .select("role")
+        .eq("id", data.session.user.id)
+        .maybeSingle();
+
+      if (employeeError || !employee || employee.role !== REQUIRED_ROLE) {
+        await supabase.auth.signOut();
+        nav("/");
+        return;
+      }
+
       setAccessToken(data.session.access_token);
     })();
   }, [nav]);
@@ -150,9 +165,9 @@ export function DashboardPage() {
     <div className="dashShell">
       <header className="dashTopbar">
         <div className="dashBrand">
-          <div className="dashLogo">C</div>
+          <img src={logo} className="dashLogoImg" alt="Fortis logo" />
           <div>
-            <div className="dashTitle">Certic C2</div>
+            <div className="dashTitle">Fortis</div>
             <div className="dashSub">Command & Control Console</div>
           </div>
         </div>
@@ -161,7 +176,7 @@ export function DashboardPage() {
           <button className="btnGhost" onClick={onClear}>Clear</button>
           <button className="btnGhost" onClick={onLogout}>Sign out</button>
           <div className={anyThreat ? "statusPill statusDanger" : "statusPill statusOk"}>
-            {anyThreat ? "THREAT" : "CLEAR"}
+            {anyThreat ? "THREAT" : "SAFE"}
           </div>
         </div>
       </header>

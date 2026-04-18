@@ -2,6 +2,11 @@
     min-height: 100vh;
     display:flex;
     flex-direction: column;
+    background: linear-gradient(
+        180deg,
+        #1a3558 25%,
+        #0E2D52 100%
+    );
   }
   
   .dashTopbar{
@@ -10,21 +15,18 @@
     align-items: center;
     padding: 16px 18px;
     border-bottom: 1px solid var(--border);
-    background: rgba(0,0,0,0.18);
+    background: #7997bc43 25%;
     backdrop-filter: blur(10px);
   }
   
   .dashBrand{ display:flex; gap:12px; align-items:center; }
-  .dashLogo{
-    width: 40px; height: 40px;
-    border-radius: 14px;
-    display:flex; align-items:center; justify-content:center;
-    font-weight: 900;
-    background: rgba(122,162,255,0.22);
-    border: 1px solid rgba(122,162,255,0.35);
+  .dashLogoImg{
+    width: 140px;
+    height: auto;
+    display: block;
   }
   .dashTitle{ font-weight: 900; letter-spacing: 0.4px; }
-  .dashSub{ color: var(--muted); font-size: 12px; margin-top:2px; }
+  .dashSub{ color: var(--muted); font-size: 18px; margin-top:2px; }
   
   .dashActions{ display:flex; gap:10px; align-items:center; }
   
@@ -50,9 +52,9 @@
     border: 1px solid var(--border);
   }
   .statusOk{
-    background: rgba(61,220,151,0.12);
-    border-color: rgba(61,220,151,0.35);
-    color: rgba(220,255,240,0.92);
+    background: rgba(255,59,59,0.12);
+    border-color: rgba(255,59,59,0.35);
+    color: rgba(255,230,230,0.92);
   }
   .statusDanger{
     background: rgba(255,59,59,0.12);
