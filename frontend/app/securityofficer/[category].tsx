@@ -5,13 +5,22 @@ import {
   FlatList,
   Modal,
   ScrollView,
+  Image,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
+import YoutubePlayer from "react-native-youtube-iframe";
 import { styles } from "../../styles/securityofficer/category";
 import Text from "../../components/TranslatedText";
+
+type QuizQuestion = {
+  id: string;
+  question: string;
+  choices: string[];
+  answerIndex: number;
+  explanation: string;
+};
 
 export default function CategoryPage() {
   const { category } = useLocalSearchParams();
@@ -75,8 +84,9 @@ export default function CategoryPage() {
   }, [fetchTitles]);
 
   useEffect(() => {
-    if (selectedTitle) fetchSteps(selectedTitle);
-  }, [selectedTitle]);
+    if (selectedTitle && tab === "Guidelines") fetchSteps(selectedTitle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTitle, tab]);
 
   const fetchSteps = async (title: string) => {
     setLoading(true);
@@ -89,6 +99,38 @@ export default function CategoryPage() {
 
     setSteps(data || []);
     setLoading(false);
+  };
+
+  const imageSource = categoryImageMap[slug];
+  const videoId = categoryVideoMap[slug];
+
+  const logisticsItems = useMemo(() => categoryLogisticsMap[slug] ?? [], [slug]);
+
+  const isQuizMode = tab === "Guidelines" && mediaTab === "Quiz";
+  const isQuizResults = isQuizMode && quizShowResults;
+
+  const listData = tab === "Guidelines" ? steps : logisticsItems;
+  const currentQuestion = quizQuestions[quizIndex];
+
+  const handleSubmitQuestion = () => {
+    if (!currentQuestion) return;
+    if (quizSelected === null) return;
+
+    setQuizSubmitted(true);
+    setQuizAnswers((prev) => ({ ...prev, [currentQuestion.id]: quizSelected }));
+  };
+
+  const handleNext = () => {
+    const nextIndex = quizIndex + 1;
+
+    if (nextIndex >= quizQuestions.length) {
+      setQuizShowResults(true);
+      return;
+    }
+
+    setQuizIndex(nextIndex);
+    setQuizSelected(null);
+    setQuizSubmitted(false);
   };
 
   return (
@@ -126,7 +168,10 @@ export default function CategoryPage() {
         <View style={styles.pillRow}>
           <Pressable
             style={[styles.pill, tab === "Guidelines" && styles.pillActive]}
-            onPress={() => setTab("Guidelines")}
+            onPress={() => {
+              setTab("Guidelines");
+              if (tab === "Logistics") setMediaTab("Images");
+            }}
           >
             <Text
               style={[
@@ -140,7 +185,15 @@ export default function CategoryPage() {
 
           <Pressable
             style={[styles.pill, tab === "Logistics" && styles.pillActive]}
-            onPress={() => setTab("Logistics")}
+            onPress={() => {
+              setTab("Logistics");
+              setMediaTab("Images");
+              setQuizIndex(0);
+              setQuizSelected(null);
+              setQuizSubmitted(false);
+              setQuizAnswers({});
+              setQuizShowResults(false);
+            }}
           >
             <Text
               style={[
@@ -156,119 +209,374 @@ export default function CategoryPage() {
 
       {/* 🔽 CONTENT CARD */}
       <View style={styles.card}>
-        {/* TITLE + EMOJI */}
-        <View style={styles.cardTitleRow}>
-          <View style={styles.emojiBadge}>
-            <Text style={styles.emojiText}>{emojiMap[slug] ?? "📋"}</Text>
-          </View>
-
-          <Text style={styles.cardTitle}>{decodedCategory}</Text>
-        </View>
-
-        {/* META */}
-        <Text style={styles.metaText}>{steps.length} Steps • ~3 min read</Text>
-
-        {/* MEDIA CHIPS (clickable like Figma) */}
-        <View style={styles.mediaTabRow}>
-          <Pressable
-            onPress={() => setMediaTab("Images")}
-            style={[
-              styles.mediaChip,
-              mediaTab === "Images" && styles.mediaChipActive,
-            ]}
-          >
-            <Ionicons
-              name="image-outline"
-              size={14}
-              color={mediaTab === "Images" ? "#2563EB" : "#64748B"}
-            />
-            <Text
-              style={[
-                styles.mediaChipText,
-                mediaTab === "Images" && styles.mediaChipTextActiveBlue,
-              ]}
-            >
-              Images
-            </Text>
-          </Pressable>
-
-          <Pressable
-            onPress={() => setMediaTab("Videos")}
-            style={[
-              styles.mediaChip,
-              mediaTab === "Videos" && styles.mediaChipActive,
-            ]}
-          >
-            <Ionicons
-              name="play-circle-outline"
-              size={14}
-              color={mediaTab === "Videos" ? "#EF4444" : "#64748B"}
-            />
-            <Text
-              style={[
-                styles.mediaChipText,
-                mediaTab === "Videos" && styles.mediaChipTextActiveRed,
-              ]}
-            >
-              Videos
-            </Text>
-          </Pressable>
-
-          <Pressable
-            onPress={() => setMediaTab("Quiz")}
-            style={[
-              styles.mediaChip,
-              mediaTab === "Quiz" && styles.mediaChipActive,
-            ]}
-          >
-            <Ionicons
-              name="help-circle-outline"
-              size={14}
-              color={mediaTab === "Quiz" ? "#F59E0B" : "#64748B"}
-            />
-            <Text
-              style={[
-                styles.mediaChipText,
-                mediaTab === "Quiz" && styles.mediaChipTextActiveOrange,
-              ]}
-            >
-              Quiz
-            </Text>
-          </Pressable>
-        </View>
-
-        {/* PLACEHOLDER IMAGE BOX (for UI now) */}
-        {mediaTab === "Images" ? (
-          <View style={styles.heroPlaceholder}>
-            <Text style={styles.heroPlaceholderText}>
-              Category Image Placeholder
-            </Text>
-          </View>
-        ) : null}
-
-        {/* STEPS */}
-        {loading ? (
+        {loading && tab === "Guidelines" && !isQuizMode ? (
           <ActivityIndicator />
         ) : (
           <FlatList
-            data={steps}
-            keyExtractor={(item) => item.step_no.toString()}
-            renderItem={({ item }) => (
-              <View style={styles.stepRow}>
-                <View style={styles.stepNumber}>
-                  <Text style={styles.stepNumberText}>{item.step_no}</Text>
+            data={isQuizMode ? [] : listData}
+            keyExtractor={(item, index) =>
+              tab === "Guidelines"
+                ? (item as any).step_no.toString()
+                : `${slug}-log-${index}`
+            }
+            contentContainerStyle={styles.stepsContentContainer}
+            showsVerticalScrollIndicator={false}
+            ListHeaderComponent={
+              <View>
+                {/* TITLE + EMOJI */}
+                <View style={styles.cardTitleRow}>
+                  <View style={styles.emojiBadge}>
+                    <Text style={styles.emojiText}>{emojiMap[slug] ?? "📋"}</Text>
+                  </View>
+
+                  <Text style={styles.cardTitle}>
+                    {isQuizMode ? `Quiz - ${decodedCategory}` : decodedCategory}
+                  </Text>
                 </View>
 
-                <View style={styles.stepContent}>
-                  <Text style={styles.stepShort}>{item.step_short}</Text>
-                  <Text style={styles.stepDesc}>{item.step_description}</Text>
-                </View>
+                {/* META (hide in quiz mode) */}
+                {!isQuizMode ? (
+                  <Text style={styles.metaText}>
+                    {tab === "Guidelines"
+                      ? `${steps.length} Steps • ~3 min read`
+                      : `${logisticsItems.length} Items`}
+                  </Text>
+                ) : null}
+
+                {/* media chips hidden when Quiz active or Logistics */}
+                {tab === "Guidelines" && !isQuizMode ? (
+                  <View style={styles.mediaTabRow}>
+                    <Pressable
+                      onPress={() => setMediaTab("Images")}
+                      style={[
+                        styles.mediaChip,
+                        mediaTab === "Images" && styles.mediaChipActive,
+                      ]}
+                    >
+                      <Ionicons
+                        name="image-outline"
+                        size={14}
+                        color={mediaTab === "Images" ? "#2563EB" : "#64748B"}
+                      />
+                      <Text
+                        style={[
+                          styles.mediaChipText,
+                          mediaTab === "Images" &&
+                            styles.mediaChipTextActiveBlue,
+                        ]}
+                      >
+                        Images
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={() => setMediaTab("Videos")}
+                      style={[
+                        styles.mediaChip,
+                        mediaTab === "Videos" && styles.mediaChipActive,
+                      ]}
+                    >
+                      <Ionicons
+                        name="play-circle-outline"
+                        size={14}
+                        color={mediaTab === "Videos" ? "#EF4444" : "#64748B"}
+                      />
+                      <Text
+                        style={[
+                          styles.mediaChipText,
+                          mediaTab === "Videos" && styles.mediaChipTextActiveRed,
+                        ]}
+                      >
+                        Videos
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={() => {
+                        setMediaTab("Quiz");
+                        setQuizIndex(0);
+                        setQuizSelected(null);
+                        setQuizSubmitted(false);
+                        setQuizAnswers({});
+                        setQuizShowResults(false);
+                      }}
+                      style={[
+                        styles.mediaChip,
+                        mediaTab === "Quiz" && styles.mediaChipActive,
+                      ]}
+                    >
+                      <Ionicons
+                        name="help-circle-outline"
+                        size={14}
+                        color={mediaTab === "Quiz" ? "#F59E0B" : "#64748B"}
+                      />
+                      <Text
+                        style={[
+                          styles.mediaChipText,
+                          mediaTab === "Quiz" &&
+                            styles.mediaChipTextActiveOrange,
+                        ]}
+                      >
+                        Quiz
+                      </Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+
+                {/* Images/Videos shown only when Guidelines and NOT quiz */}
+                {tab === "Guidelines" && !isQuizMode ? (
+                  <>
+                    {mediaTab === "Images" && imageSource ? (
+                      <Pressable
+                        style={styles.heroImageWrap}
+                        onPress={() => setShowImageModal(true)}
+                      >
+                        <Image
+                          source={imageSource}
+                          style={styles.heroImage}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.expandIcon}>
+                          <Ionicons name="expand-outline" size={18} color="#fff" />
+                        </View>
+                      </Pressable>
+                    ) : null}
+
+                    {mediaTab === "Videos" && videoId ? (
+                      <View style={styles.videoWrap}>
+                        <YoutubePlayer height={190} play={false} videoId={videoId} />
+                      </View>
+                    ) : null}
+
+                    <Text style={styles.guidelinesTitle}>Guidelines of SOP</Text>
+                  </>
+                ) : null}
+
+                {/* =======================
+                    QUIZ UI + RESULTS PAGE
+                   ======================= */}
+                {isQuizMode ? (
+                  <View style={styles.quizWrap}>
+                    {/* RESULTS PAGE */}
+                    {isQuizResults ? (
+                      <View style={styles.quizResultsWrap}>
+                        <View style={styles.quizResultsTop}>
+                          <View style={styles.quizScoreCircle}>
+                            <Text style={styles.quizScoreBig}>{quizPercent}%</Text>
+                            <Text style={styles.quizScoreSmall}>
+                              {quizScore}/{quizQuestions.length}
+                            </Text>
+                          </View>
+
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.quizResultsTitle}>Results</Text>
+                            <Text style={styles.quizResultsBadge}>{quizBadge}</Text>
+                            <Text style={styles.quizResultsSub}>
+                              Review your score or try again to improve.
+                            </Text>
+                          </View>
+                        </View>
+
+                        <View style={styles.quizReviewBox}>
+                          <Text style={styles.quizReviewTitle}>Question Review</Text>
+
+                          {quizQuestions.map((q, idx) => {
+                            const user = quizAnswers[q.id];
+                            const correct = user === q.answerIndex;
+                            const userLabel =
+                              typeof user === "number"
+                                ? `${String.fromCharCode(65 + user)}`
+                                : "—";
+                            const correctLabel = `${String.fromCharCode(
+                              65 + q.answerIndex
+                            )}`;
+
+                            return (
+                              <View key={q.id} style={styles.quizReviewRow}>
+                                <View
+                                  style={[
+                                    styles.quizReviewDot,
+                                    correct
+                                      ? styles.quizReviewDotCorrect
+                                      : styles.quizReviewDotWrong,
+                                  ]}
+                                />
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.quizReviewQText}>
+                                    {idx + 1}. {q.question}
+                                  </Text>
+                                  <Text style={styles.quizReviewAText}>
+                                    Your: {userLabel} • Correct: {correctLabel}
+                                  </Text>
+                                </View>
+                              </View>
+                            );
+                          })}
+                        </View>
+
+                        <View style={styles.quizResultsBtnRow}>
+                          <Pressable style={styles.quizPrimaryBtn} onPress={restartQuiz}>
+                            <Text style={styles.quizPrimaryBtnText}>Try Again</Text>
+                          </Pressable>
+
+                          <Pressable style={styles.quizSecondaryBtn} onPress={resetToDefault}>
+                            <Text style={styles.quizSecondaryBtnText}>
+                              Back to Guidelines
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      /* QUESTION PAGE */
+                      <>
+                        {!currentQuestion ? (
+                          <View style={styles.quizEmptyBox}>
+                            <Text style={styles.quizEmptyText}>
+                              No quiz questions yet for this category.
+                            </Text>
+                            <Pressable style={styles.quizPrimaryBtn} onPress={resetToDefault}>
+                              <Text style={styles.quizPrimaryBtnText}>
+                                Back to Guidelines
+                              </Text>
+                            </Pressable>
+                          </View>
+                        ) : (
+                          <>
+                            <Text style={styles.quizProgressText}>
+                              Question {quizIndex + 1} of {quizQuestions.length}
+                            </Text>
+
+                            <Text style={styles.quizQuestionText}>
+                              {currentQuestion.question}
+                            </Text>
+
+                            <View style={styles.quizGrid}>
+                              {currentQuestion.choices.map((choice, i) => {
+                                const selected = quizSelected === i;
+                                const correct = currentQuestion.answerIndex === i;
+                                const showResult = quizSubmitted;
+
+                                const choiceStyle = [
+                                  styles.quizChoiceCard,
+                                  selected && styles.quizChoiceCardSelected,
+                                  showResult &&
+                                    correct &&
+                                    styles.quizChoiceCardCorrect,
+                                  showResult &&
+                                    selected &&
+                                    !correct &&
+                                    styles.quizChoiceCardWrong,
+                                ];
+
+                                const choiceTextStyle = [
+                                  styles.quizChoiceText,
+                                  showResult &&
+                                    correct &&
+                                    styles.quizChoiceTextCorrect,
+                                  showResult &&
+                                    selected &&
+                                    !correct &&
+                                    styles.quizChoiceTextWrong,
+                                ];
+
+                                return (
+                                  <Pressable
+                                    key={`${currentQuestion.id}-${i}`}
+                                    style={choiceStyle}
+                                    onPress={() => {
+                                      if (quizSubmitted) return;
+                                      setQuizSelected(i);
+                                    }}
+                                  >
+                                    <Text style={choiceTextStyle}>
+                                      {String.fromCharCode(65 + i)}. {choice}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })}
+                            </View>
+
+                            {quizSubmitted ? (
+                              <View style={styles.quizExplainBox}>
+                                <Text style={styles.quizExplainTitle}>Correct Answer:</Text>
+                                <Text style={styles.quizExplainText}>
+                                  {String.fromCharCode(65 + currentQuestion.answerIndex)}.{" "}
+                                  {currentQuestion.choices[currentQuestion.answerIndex]}
+                                </Text>
+
+                                <Text style={styles.quizExplainSub}>
+                                  {currentQuestion.explanation}
+                                </Text>
+                              </View>
+                            ) : null}
+
+                            <View style={styles.quizBtnRow}>
+                              {!quizSubmitted ? (
+                                <Pressable
+                                  style={[
+                                    styles.quizPrimaryBtn,
+                                    quizSelected === null &&
+                                      styles.quizPrimaryBtnDisabled,
+                                  ]}
+                                  disabled={quizSelected === null}
+                                  onPress={handleSubmitQuestion}
+                                >
+                                  <Text style={styles.quizPrimaryBtnText}>Submit</Text>
+                                </Pressable>
+                              ) : (
+                                <Pressable style={styles.quizPrimaryBtn} onPress={handleNext}>
+                                  <Text style={styles.quizPrimaryBtnText}>
+                                    {quizIndex + 1 >= quizQuestions.length
+                                      ? "Finish"
+                                      : "Next"}
+                                  </Text>
+                                </Pressable>
+                              )}
+                            </View>
+                          </>
+                        )}
+                      </>
+                    )}
+                  </View>
+                ) : null}
+
+                {tab === "Logistics" ? (
+                  <Text style={styles.guidelinesTitle}>Logistics</Text>
+                ) : null}
               </View>
-            )}
+            }
+            renderItem={({ item, index }) => {
+              if (tab === "Guidelines") {
+                const step = item as any;
+                return (
+                  <View style={styles.stepRow}>
+                    <View style={styles.stepNumber}>
+                      <Text style={styles.stepNumberText}>{step.step_no}</Text>
+                    </View>
+
+                    <View style={styles.stepContent}>
+                      <Text style={styles.stepShort}>{step.step_short}</Text>
+                      <Text style={styles.stepDesc}>{step.step_description}</Text>
+                    </View>
+                  </View>
+                );
+              }
+
+              const label = item as string;
+              return (
+                <View style={styles.logisticsRow}>
+                  <View style={styles.logisticsBullet}>
+                    <Text style={styles.logisticsBulletText}>{index + 1}</Text>
+                  </View>
+                  <Text style={styles.logisticsText}>{label}</Text>
+                </View>
+              );
+            }}
           />
         )}
       </View>
 
+      {/* TITLE MODAL */}
       <Modal
         transparent
         visible={showTitleModal}
@@ -313,6 +621,37 @@ export default function CategoryPage() {
             </ScrollView>
           </Pressable>
         </Pressable>
+      </Modal>
+
+      {/* IMAGE MODAL */}
+      <Modal
+        transparent
+        visible={showImageModal}
+        animationType="fade"
+        onRequestClose={() => setShowImageModal(false)}
+      >
+        <View style={styles.imageModalRoot}>
+          <Pressable
+            style={styles.imageModalBackdrop}
+            onPress={() => setShowImageModal(false)}
+          />
+
+          <Pressable
+            onPress={() => setShowImageModal(false)}
+            style={styles.imageModalCloseBtn}
+            hitSlop={10}
+          >
+            <Ionicons name="close" size={26} color="#fff" />
+          </Pressable>
+
+          <View style={styles.imageModalContent}>
+            <Image
+              source={imageSource}
+              style={styles.imageModalImage}
+              resizeMode="contain"
+            />
+          </View>
+        </View>
       </Modal>
     </View>
   );

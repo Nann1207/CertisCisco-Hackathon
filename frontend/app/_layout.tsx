@@ -7,6 +7,7 @@ import {
   normalizeLanguagePreference,
   setLanguagePreference,
 } from "../lib/language-preferences";
+import ChatNotificationListener from "../components/ChatNotificationListener";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -151,17 +152,20 @@ export default function RootLayout() {
 
   // default stack (before routing happens)
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="login" />
-      <Stack.Screen
-        name="translate"
-        options={{
-          presentation: "transparentModal",
-          animation: "fade",
-          contentStyle: { backgroundColor: "transparent" },
-        }}
-      />
-    </Stack>
+    <>
+      <ChatNotificationListener />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="login" />
+        <Stack.Screen
+          name="translate"
+          options={{
+            presentation: "transparentModal",
+            animation: "fade",
+            contentStyle: { backgroundColor: "transparent" },
+          }}
+        />
+      </Stack>
+    </>
   );
 }

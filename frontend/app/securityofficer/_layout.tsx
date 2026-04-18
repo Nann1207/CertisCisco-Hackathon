@@ -1,11 +1,14 @@
 import React from "react";
 import { View, StyleSheet } from "react-native";
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import BottomBar from "./components/BottomBar";
 import FloatingChatButton from "./components/FloatingChatButton";
 import AssignmentAlertModal from "./components/AssignmentAlertModal";
 
 export default function Layout() {
+  const pathname = usePathname();
+  const showFloatingChat = pathname !== "/securityofficer/chatbot";
+
   return (
     <View style={styles.root}>
       <View style={styles.content}>
@@ -43,10 +46,10 @@ export default function Layout() {
           <Stack.Screen name="settings" />
           <Stack.Screen name="notifications" />
           <Stack.Screen name="profile" />
+          <Stack.Screen name="chatbot" />
           
         </Stack>
       </View>
-      <AssignmentAlertModal />
       <FloatingChatButton bottomOffset={98} rightOffset={20} />
       <BottomBar />
     </View>
