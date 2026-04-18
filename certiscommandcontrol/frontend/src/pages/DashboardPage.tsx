@@ -64,6 +64,23 @@ export function DashboardPage() {
 
   const anyThreat = useMemo(() => Object.values(tiles).some((t) => t.threat), [tiles]);
 
+  useEffect(() => {
+    if (anyThreat) return;
+    setThreat((prev) => ({
+      ...prev,
+      status: "no_threat",
+      headline: "Currently all CCTV Cameras are detecting no threats.",
+      predictedThreat: "",
+      description: "",
+      editedDescription: "",
+      objects: [],
+      confirmed: null,
+      correctedThreat: "",
+      frames: [],
+      timestamp: new Date().toISOString(),
+    }));
+  }, [anyThreat]);
+
   async function onLogout() {
     await supabase.auth.signOut();
     nav("/");
@@ -107,25 +124,6 @@ export function DashboardPage() {
           confirmed: null,
           correctedThreat: "",
         }));
-      } else {
-        // if no threat for this tile, and no threats overall, reset panel
-        const afterTiles = { ...tiles, [tileId]: { ...tiles[tileId], loading: false, threat: false } };
-        const stillThreat = Object.values(afterTiles).some((t) => t.threat);
-        if (!stillThreat) {
-          setThreat((prev) => ({
-            ...prev,
-            status: "no_threat",
-            headline: "Currently all CCTV Cameras are detecting no threats.",
-            predictedThreat: "",
-            description: "",
-            editedDescription: "",
-            objects: [],
-            confirmed: null,
-            correctedThreat: "",
-            frames: [],
-            timestamp: new Date().toISOString(),
-          }));
-        }
       }
     } catch (e: any) {
       setTiles((prev) => ({ ...prev, [tileId]: { ...prev[tileId], loading: false } }));
