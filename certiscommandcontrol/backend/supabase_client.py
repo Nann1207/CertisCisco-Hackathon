@@ -1,10 +1,12 @@
-from supabase import create_client, Client
+from supabase import create_client, Client, ClientOptions
 
 def get_supabase_client(supabase_url: str, supabase_anon_key: str, user_jwt: str) -> Client:
     # Uses user JWT so RLS can apply (recommended).
-    # The python client supports passing Authorization headers.
+    # For supabase-py v2, pass custom headers via ClientOptions.
     return create_client(
         supabase_url,
         supabase_anon_key,
-        headers={"Authorization": f"Bearer {user_jwt}"}
+        options=ClientOptions(
+            headers={"Authorization": f"Bearer {user_jwt}"}
+        ),
     )

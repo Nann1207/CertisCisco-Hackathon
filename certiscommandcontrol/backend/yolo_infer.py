@@ -33,7 +33,12 @@ class YOLOContext:
             names = r.names
             for b in r.boxes[:10]:
                 cls_id = int(b.cls[0].item())
-                label = names.get(cls_id, str(cls_id))
+                if isinstance(names, dict):
+                    label = names.get(cls_id, str(cls_id))
+                elif isinstance(names, (list, tuple)) and 0 <= cls_id < len(names):
+                    label = str(names[cls_id])
+                else:
+                    label = str(cls_id)
                 c = float(b.conf[0].item())
                 out.append({"label": label, "conf": c, "frame": i})
         cap.release()

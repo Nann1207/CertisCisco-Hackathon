@@ -1,9 +1,11 @@
 import os
 import uuid
+import logging
 from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from postgrest.exceptions import APIError
 
 from settings import Settings
 from supabase_client import get_supabase_client
@@ -13,6 +15,7 @@ from vision_utils import extract_frames_bgr, bgr_to_data_url_jpeg
 from sealion import generate_incident_report
 
 settings = Settings()
+logger = logging.getLogger("uvicorn.error")
 
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(settings.MODEL_DIR, exist_ok=True)
@@ -60,18 +63,44 @@ async def predict(
     # Supabase: fetch CCTV meta + SSO info (NO HARDCODE)
     sb = get_supabase_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, user_jwt)
 
-    cam = sb.table("cctv_cameras").select("id,name,location,coverage,sso_id").eq("id", tile_id).single().execute()
-    cam_data = cam.data if cam else None
+    try:
+        # Preferred lookup for your schema where tile_id matches cctv_cameras.cctvid (e.g. "cctv1")
+        cam_rows = (
+            sb.table("cctv_cameras")
+            .select("id,cctvid,location,coverage")
+            .eq("cctvid", tile_id)
+            .limit(1)
+            .execute()
+        ).data or []
+
+        # Backward-compatible fallback if tile_id is an actual UUID.
+        if not cam_rows:
+            cam_rows = (
+                sb.table("cctv_cameras")
+                .select("id,cctvid,location,coverage")
+                .eq("id", tile_id)
+                .limit(1)
+                .execute()
+            ).data or []
+    except APIError as e:
+        detail = e.json() if callable(getattr(e, "json", None)) else {"message": str(e)}
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Failed to query cctv_cameras. Verify SUPABASE_URL/keys and that table exists in this project.",
+                "supabase": detail,
+            },
+        )
+
+    cam_data = cam_rows[0] if cam_rows else None
     if not cam_data:
         raise HTTPException(status_code=400, detail=f"No CCTV metadata found for tile_id={tile_id}")
 
-    sso = sb.table("sso_roster").select("id,name,role,phone").eq("id", cam_data["sso_id"]).single().execute()
-    sso_data = sso.data if sso else None
-    if not sso_data:
-        sso_data = {"name": "—", "role": "Senior Security Officer", "phone": "—"}
+    # Your current schema does not include sso_id/sso_roster.
+    sso_data = {"name": "—", "role": "Senior Security Officer", "phone": "—"}
 
     cctv_meta = {
-        "cctvName": cam_data.get("name") or tile_id.upper(),
+        "cctvName": cam_data.get("cctvid") or tile_id.upper(),
         "location": cam_data.get("location") or "—",
         "coverage": cam_data.get("coverage") or "—",
     }
@@ -109,6 +138,15 @@ async def predict(
         yolo_objects=yolo_objects,
         frame_data_urls=frames,
         max_completion_tokens=220,
+    )
+
+    logger.info(
+        "predict result tile_id=%s predicted_threat=%s confidence=%.4f threat_detected=%s yolo_objects=%d",
+        tile_id,
+        predicted_threat,
+        confidence,
+        threat_detected,
+        len(yolo_objects),
     )
 
     return {

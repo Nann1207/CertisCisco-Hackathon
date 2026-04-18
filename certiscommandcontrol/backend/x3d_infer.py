@@ -16,8 +16,8 @@ class_to_id = {c: i for i, c in enumerate(ALL_CLASSES)}
 id_to_class = {i: c for c, i in class_to_id.items()}
 
 def kinetics_normalize(x_cthw: torch.Tensor) -> torch.Tensor:
-    mean = torch.tensor([0.45, 0.45, 0.45]).view(3, 1, 1, 1)
-    std  = torch.tensor([0.225, 0.225, 0.225]).view(3, 1, 1, 1)
+    mean = torch.tensor([0.45, 0.45, 0.45], dtype=x_cthw.dtype, device=x_cthw.device).view(3, 1, 1, 1)
+    std  = torch.tensor([0.225, 0.225, 0.225], dtype=x_cthw.dtype, device=x_cthw.device).view(3, 1, 1, 1)
     return (x_cthw - mean) / std
 
 def replace_classifier_x3d(m, num_classes: int):
@@ -36,9 +36,9 @@ def replace_classifier_x3d(m, num_classes: int):
 
 def build_model(model_name: str, checkpoint_path: str, device: str = "cpu"):
     if model_name == "x3d_s":
-        model = x3d_s(pretrained=True)
+        model = x3d_s(pretrained=False)
     elif model_name == "x3d_xs":
-        model = x3d_xs(pretrained=True)
+        model = x3d_xs(pretrained=False)
     else:
         raise ValueError(f"Unsupported X3D_MODEL_NAME: {model_name}")
 
@@ -105,15 +105,27 @@ def predict_multiclip(
         ]
         starts = [max(0, min(s, total - clip_len)) for s in starts]
 
-    logits_sum = None
-    for s in starts:
-        x = clip_tensor_from_frames(frames, s, clip_len, size).unsqueeze(0)
-        dev = next(model.parameters()).device
-        x = x.to(dev)
-        logits = model(x)
-        logits_sum = logits if logits_sum is None else (logits_sum + logits)
+    def _run_on_device(dev: torch.device) -> torch.Tensor:
+        logits_sum = None
+        for s in starts:
+            x = clip_tensor_from_frames(frames, s, clip_len, size).unsqueeze(0)
+            x = x.to(dev)
+            logits = model(x)
+            logits_sum = logits if logits_sum is None else (logits_sum + logits)
+        return logits_sum / len(starts)
 
-    logits_avg = logits_sum / len(starts)
+    dev = next(model.parameters()).device
+    try:
+        logits_avg = _run_on_device(dev)
+    except RuntimeError as e:
+        msg = str(e)
+        if dev.type == "mps" and ("Invalid memory format" in msg or "ChannelsLast3d" in msg):
+            # Some PyTorchVideo/X3D ops on MPS can fail with ChannelsLast3d.
+            # Fallback to CPU to keep inference available.
+            model.to("cpu")
+            logits_avg = _run_on_device(torch.device("cpu"))
+        else:
+            raise
     probs = torch.softmax(logits_avg, dim=1)[0].cpu().numpy()
 
     top_idx = probs.argsort()[::-1][:topk]
