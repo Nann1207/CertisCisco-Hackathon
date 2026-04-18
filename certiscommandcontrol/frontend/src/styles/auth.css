@@ -21,7 +21,7 @@
 /* Logo */
 .authLogoImg {
   width: 220px;
-  margin-bottom: 10px;
+  margin-bottom: 1px;
 }
 
 /* Subtitle */
@@ -90,13 +90,15 @@
   font-size: 16px;
   cursor: pointer;
   margin-top: 10px;
+  color: #ffffff; /* makes text white */
+  font-weight: bold;
 }
 
 .authBtn:hover {
   opacity: 0.9;
 }
 
-/* Error */
+
 .authError {
   color: #ff6b6b;
   font-size: 13px;
