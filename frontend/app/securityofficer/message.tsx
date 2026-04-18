@@ -23,6 +23,9 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { supabase } from "../../lib/supabase";
+import { markChatRead } from "../../lib/chatUnread";
+import { attachProfilePhotoUrls, resolveProfilePhotoUrl } from "../../lib/profilePhotos";
+import { createRealtimeTopic } from "../../lib/realtime";
 import {
   getAvatarColor,
   getAvatarTextColor,
@@ -45,6 +48,7 @@ type ChatMessageProps = {
   avatarColor: string;
   avatarTextColor: string;
   avatarLabel: string;
+  avatarUrl?: string | null;
 };
 
 const IMPORTANT_PREFIX = "[IMPORTANT] ";
@@ -120,6 +124,7 @@ const buildChannelFromProfile = (profile: EmployeeProfile): ChatChannel => {
     lastMessage: "",
     lastTime: "",
     online: false,
+    avatarUrl: profile.avatarUrl ?? null,
     avatarColor,
     avatarTextColor: getAvatarTextColor(avatarColor),
   };
@@ -137,7 +142,11 @@ const Avatar = ({ channel, size = 52 }: { channel: ChatChannel; size?: number })
       },
     ]}
   >
-    <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    {channel.avatarUrl ? (
+      <Image source={{ uri: channel.avatarUrl }} style={styles.avatarImage} />
+    ) : (
+      <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    )}
     {channel.online && <View style={styles.onlineDot} />}
   </View>
 );
@@ -154,11 +163,16 @@ const ChatMessage = ({
   avatarColor,
   avatarTextColor,
   avatarLabel,
+  avatarUrl,
 }: ChatMessageProps) => (
   <View style={[styles.messageRow, isSender ? styles.messageRowSender : styles.messageRowReceiver]}>
     {!isSender && (
       <View style={[styles.messageAvatar, { backgroundColor: avatarColor }]}>
-        <Text style={[styles.messageAvatarText, { color: avatarTextColor }]}>{avatarLabel}</Text>
+        {avatarUrl ? (
+          <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+        ) : (
+          <Text style={[styles.messageAvatarText, { color: avatarTextColor }]}>{avatarLabel}</Text>
+        )}
       </View>
     )}
 
@@ -238,6 +252,7 @@ export default function MessageScreen() {
   const [forwardContacts, setForwardContacts] = useState<ChatChannel[]>([]);
   const [forwardSearch, setForwardSearch] = useState("");
   const [loadingForwardContacts, setLoadingForwardContacts] = useState(false);
+  const lastMarkedReadRef = useRef("");
 
   const scrollToBottom = useCallback((animated = true) => {
     requestAnimationFrame(() => {
@@ -280,7 +295,11 @@ export default function MessageScreen() {
     setCurrentUserId(userId);
 
     const [{ data: profileData, error: profileError }, { data: messagesData, error: messagesError }] = await Promise.all([
-      supabase.from("employees").select("id, first_name, last_name, role").eq("id", channelId).maybeSingle(),
+      supabase
+        .from("employees")
+        .select("id, emp_id, first_name, last_name, role, profile_photo_path")
+        .eq("id", channelId)
+        .maybeSingle(),
       supabase
         .from("messages")
         .select("id, sender_id, receiver_id, text, created_at")
@@ -293,7 +312,8 @@ export default function MessageScreen() {
     }
 
     if (profileData) {
-      setSelectedChannel(buildChannelFromProfile(profileData as EmployeeProfile));
+      const profile = profileData as EmployeeProfile;
+      setSelectedChannel(buildChannelFromProfile({ ...profile, avatarUrl: await resolveProfilePhotoUrl(profile) }));
     } else {
       const avatarColor = getAvatarColor(channelId);
       setSelectedChannel({
@@ -329,10 +349,22 @@ export default function MessageScreen() {
   }, [messages, scrollToBottom]);
 
   useEffect(() => {
+    if (!currentUserId || !channelId || loading) return;
+
+    const markerKey = `${channelId}:${messages.length}:${messages[messages.length - 1]?.id ?? "empty"}`;
+    if (lastMarkedReadRef.current === markerKey) return;
+
+    lastMarkedReadRef.current = markerKey;
+    markChatRead(currentUserId, channelId).catch((error) => {
+      console.error("Error marking chat read:", error);
+    });
+  }, [channelId, currentUserId, loading, messages]);
+
+  useEffect(() => {
     if (!currentUserId || !channelId) return;
 
     const channel = supabase
-      .channel(`chat:${currentUserId}:${channelId}`)
+      .channel(createRealtimeTopic(`chat:${currentUserId}:${channelId}`))
       .on(
         "postgres_changes",
         {
@@ -614,7 +646,7 @@ export default function MessageScreen() {
     ] = await Promise.all([
       supabase
         .from("employees")
-        .select("id, first_name, last_name, role")
+        .select("id, emp_id, first_name, last_name, role, profile_photo_path")
         .order("first_name", { ascending: true }),
       supabase
         .from("messages")
@@ -631,7 +663,7 @@ export default function MessageScreen() {
     const addContact = (contact: ChatChannel) => {
       contactsById.set(contact.id, contact);
     };
-    const profiles = (employeesData || []) as EmployeeProfile[];
+    const profiles = await attachProfilePhotoUrls((employeesData || []) as EmployeeProfile[]);
 
     profiles.forEach((profile) => {
       addContact(buildChannelFromProfile(profile));
@@ -690,11 +722,15 @@ export default function MessageScreen() {
           first_name: row.first_name ?? null,
           last_name: row.last_name ?? null,
           role: "Security Supervisor",
+          profile_photo_path: null,
         } satisfies EmployeeProfile;
       })
     );
 
-    supervisorRows.forEach((profile) => {
+    const supervisorProfiles = await attachProfilePhotoUrls(
+      supervisorRows.filter((profile): profile is NonNullable<typeof profile> => Boolean(profile)) as EmployeeProfile[]
+    );
+    supervisorProfiles.forEach((profile) => {
       if (profile) addContact(buildChannelFromProfile(profile));
     });
 
@@ -706,13 +742,14 @@ export default function MessageScreen() {
     if (missingRecentIds.length > 0) {
       const { data: recentProfiles, error: recentProfilesError } = await supabase
         .from("employees")
-        .select("id, first_name, last_name, role")
+        .select("id, emp_id, first_name, last_name, role, profile_photo_path")
         .in("id", missingRecentIds);
 
       if (recentProfilesError) {
         console.error("Error fetching recent forward profiles:", recentProfilesError);
       } else {
-        ((recentProfiles || []) as EmployeeProfile[]).forEach((profile) => {
+        const recentProfilesWithPhotos = await attachProfilePhotoUrls((recentProfiles || []) as EmployeeProfile[]);
+        recentProfilesWithPhotos.forEach((profile) => {
           addContact(buildChannelFromProfile(profile));
         });
       }
@@ -746,7 +783,7 @@ export default function MessageScreen() {
 
     const { data, error } = await supabase
       .from("employees")
-      .select("id, first_name, last_name, role")
+      .select("id, emp_id, first_name, last_name, role, profile_photo_path")
       .or(`first_name.ilike.%${term}%,last_name.ilike.%${term}%,role.ilike.%${term}%`)
       .order("first_name", { ascending: true })
       .limit(25);
@@ -756,7 +793,7 @@ export default function MessageScreen() {
       return;
     }
 
-    const searchResults = ((data || []) as EmployeeProfile[]).map(buildChannelFromProfile);
+    const searchResults = (await attachProfilePhotoUrls((data || []) as EmployeeProfile[])).map(buildChannelFromProfile);
     if (searchResults.length === 0) return;
 
     setForwardContacts((prev) => {
@@ -884,7 +921,7 @@ export default function MessageScreen() {
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
       <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.replace("/securityofficer/home")} hitSlop={10}>
+        <Pressable style={styles.backButton} onPress={() => router.replace("/securityofficer/messagingChannel")} hitSlop={10}>
           <ChevronLeft size={28} color="#FFFFFF" strokeWidth={2.4} />
         </Pressable>
 
@@ -935,6 +972,7 @@ export default function MessageScreen() {
                 avatarColor={selectedChannel?.avatarColor ?? "#0F2C59"}
                 avatarTextColor={selectedChannel?.avatarTextColor ?? "#FFFFFF"}
                 avatarLabel={avatarLabel}
+                avatarUrl={selectedChannel?.avatarUrl}
               />
             );
           })
@@ -1208,8 +1246,13 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   avatar: {
+    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
   avatarText: {
     fontSize: 17,
@@ -1291,6 +1334,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-end",
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
   messageAvatarText: {
     fontSize: 12,

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import { ChevronLeft, Search } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
@@ -12,6 +12,7 @@ import {
   type ChatMessageRecord,
   type EmployeeProfile,
 } from "../../lib/messageData";
+import { attachProfilePhotoUrls } from "../../lib/profilePhotos";
 
 const Avatar = ({ channel, size = 54 }: { channel: ChatChannel; size?: number }) => (
   <View
@@ -25,7 +26,11 @@ const Avatar = ({ channel, size = 54 }: { channel: ChatChannel; size?: number })
       },
     ]}
   >
-    <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    {channel.avatarUrl ? (
+      <Image source={{ uri: channel.avatarUrl }} style={styles.avatarImage} />
+    ) : (
+      <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    )}
   </View>
 );
 
@@ -39,6 +44,7 @@ const buildContact = (profile: EmployeeProfile): ChatChannel => {
     lastMessage: "Tap to start a conversation",
     lastTime: "",
     online: false,
+    avatarUrl: profile.avatarUrl ?? null,
     avatarColor,
     avatarTextColor: getAvatarTextColor(avatarColor),
   };
@@ -72,7 +78,7 @@ export default function NewMessageScreen() {
     ] = await Promise.all([
       supabase
         .from("employees")
-        .select("id, first_name, last_name, role")
+        .select("id, emp_id, first_name, last_name, role, profile_photo_path")
         .order("first_name", { ascending: true }),
       supabase
         .from("messages")
@@ -95,7 +101,7 @@ export default function NewMessageScreen() {
       console.error("Error fetching shift supervisors:", shiftsError);
     }
 
-    const visibleProfiles = (employeesData || []) as EmployeeProfile[];
+    const visibleProfiles = await attachProfilePhotoUrls((employeesData || []) as EmployeeProfile[]);
     const contactsById = new Map(visibleProfiles.map((profile) => [profile.id, buildContact(profile)]));
 
     if (!contactsById.has(userId)) {
@@ -151,11 +157,15 @@ export default function NewMessageScreen() {
           first_name: row.first_name ?? null,
           last_name: row.last_name ?? null,
           role: "Security Supervisor",
+          profile_photo_path: null,
         } satisfies EmployeeProfile;
       })
     );
 
-    supervisorRows.forEach((profile) => {
+    const supervisorProfiles = await attachProfilePhotoUrls(
+      supervisorRows.filter((profile): profile is NonNullable<typeof profile> => Boolean(profile)) as EmployeeProfile[]
+    );
+    supervisorProfiles.forEach((profile) => {
       if (profile) contactsById.set(profile.id, buildContact(profile));
     });
 
@@ -331,8 +341,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   avatar: {
+    overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
   avatarText: {
     fontSize: 17,

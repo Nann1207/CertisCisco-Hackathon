@@ -8,9 +8,12 @@ export type ChatMessageRecord = {
 
 export type EmployeeProfile = {
   id: string;
+  emp_id?: string | null;
   first_name: string | null;
   last_name: string | null;
   role?: string | null;
+  profile_photo_path?: string | null;
+  avatarUrl?: string | null;
 };
 
 export type ChatChannel = {
@@ -21,6 +24,7 @@ export type ChatChannel = {
   lastTime: string;
   unread?: number;
   online?: boolean;
+  avatarUrl?: string | null;
   avatarColor: string;
   avatarTextColor: string;
 };
