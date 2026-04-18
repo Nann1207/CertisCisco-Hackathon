@@ -1,38 +1,56 @@
+# =========================
+
+# OS
+
+# =========================
+
 .DS_Store
 Thumbs.db
 
+# =========================
 
-backend/.venv/
-backend/__pycache__/
-backend/**/*.pyc
-backend/.pytest_cache/
-backend/.env
+# Python (all backends)
 
+# =========================
 
-frontend/node_modules/
-frontend/.expo/
-frontend/.expo-shared/
-frontend/npm-debug.log*
-frontend/yarn-debug.log*
-frontend/yarn-error.log*
-frontend/.env
+**/.venv/
+**/venv/
+**/**pycache**/
+**/*.pyc
+**/.pytest_cache/
+**/.env
 
+# =========================
 
-frontend/dist/
-frontend/web-build/
+# Node / Frontend (all apps)
 
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# =========================
 
-# dependencies
-node_modules/
+**/node_modules/
+**/.expo/
+**/.expo-shared/
+**/dist/
+**/web-build/
 
-# Expo
+# Logs
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+
+# Expo / React Native
+
+# =========================
+
 .expo/
 dist/
 web-build/
 expo-env.d.ts
 
-# Native
+# Native build files
+
 .kotlin/
 *.orig.*
 *.jks
@@ -42,20 +60,54 @@ expo-env.d.ts
 *.mobileprovision
 
 # Metro
+
 .metro-health-check*
 
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
+# =========================
 
+# Environment & secrets
 
+# =========================
+
+.env
+.env.*
+.env*.local
 *.pem
 
-# local env files
-.env*.local
+# =========================
+
+# TypeScript
+
+# =========================
+
 *.tsbuildinfo
 
-app-example
+# =========================
+
+# Mobile folders
+
+# =========================
+
 /ios
 /android
+
+# =========================
+
+# Project-specific
+
+# =========================
+
+# Existing backend/frontend
+
+backend/.env
+frontend/.env
+
+# New website project
+
+certiscommandcontrol/backend/.env
+certiscommandcontrol/backend/.venv/
+certiscommandcontrol/frontend/.env
+
+# Optional: ignore local test/demo apps
+
+app-example
