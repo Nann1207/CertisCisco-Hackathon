@@ -2,6 +2,7 @@ import React from "react";
 import { View, StyleSheet } from "react-native";
 import { Stack } from "expo-router";
 import BottomBar from "./components/BottomBar";
+import FloatingChatButton from "./components/FloatingChatButton";
 
 export default function Layout() {
   return (
@@ -14,6 +15,9 @@ export default function Layout() {
           <Stack.Screen name="schedule" />
           <Stack.Screen name="shift-details" />
           <Stack.Screen name="clock-in" />
+          <Stack.Screen name="messagingChannel" />
+          <Stack.Screen name="newMessage" />
+          <Stack.Screen name="message" />
           <Stack.Screen name="shift-reports" />
           <Stack.Screen name="id-card" />
           <Stack.Screen name="translate" />
@@ -23,7 +27,7 @@ export default function Layout() {
           
         </Stack>
       </View>
-
+      <FloatingChatButton bottomOffset={98} rightOffset={20} />
       <BottomBar />
     </View>
   );
