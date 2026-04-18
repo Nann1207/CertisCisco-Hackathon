@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import "../styles/auth.css";
 import logo from "../assets/logo.png";
 
+const REQUIRED_ROLE = "Security Supervisor";
 
 export function LoginPage() {
   const nav = useNavigate();
@@ -19,9 +20,28 @@ export function LoginPage() {
     setErr(null);
     setBusy(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
       if (error) throw error;
       if (!data.session) throw new Error("No session returned.");
+
+      const { data: employee, error: employeeError } = await supabase
+        .from("employees")
+        .select("role")
+        .eq("id", data.session.user.id)
+        .maybeSingle();
+
+      if (employeeError) {
+        await supabase.auth.signOut();
+        throw new Error(employeeError.message || "Unable to verify employee role.");
+      }
+
+      if (!employee || employee.role !== REQUIRED_ROLE) {
+        await supabase.auth.signOut();
+        throw new Error("Access denied. Only Security Supervisors can sign in.");
+      }
 
       nav("/dashboard");
     } catch (ex: any) {
