@@ -134,10 +134,13 @@ async def predict(
         api_key=settings.SEA_LION_API_KEY,
         model=settings.SEA_LION_MODEL,
         predicted_threat=predicted_threat,
+        confidence=confidence,
+        threat_detected=threat_detected,
+        topk_predictions=pred["topk"],
         cctv_meta=cctv_meta,
         yolo_objects=yolo_objects,
         frame_data_urls=frames,
-        max_completion_tokens=220,
+        max_completion_tokens=420,
     )
 
     logger.info(

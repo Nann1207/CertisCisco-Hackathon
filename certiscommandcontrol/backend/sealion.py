@@ -7,10 +7,13 @@ async def generate_incident_report(
     api_key: str,
     model: str,
     predicted_threat: str,
+    confidence: float,
+    threat_detected: bool,
+    topk_predictions: List[Dict[str, Any]],
     cctv_meta: Dict[str, Any],
     yolo_objects: List[Dict[str, Any]],
     frame_data_urls: List[str],
-    max_completion_tokens: int = 220,
+    max_completion_tokens: int = 420,
 ) -> str:
     """
     Sends text + (optional) image data URLs to SeaLion chat completions.
@@ -20,20 +23,38 @@ async def generate_incident_report(
     If SeaLion’s endpoint is text-only for your key/model, we degrade gracefully by sending only text.
     """
     system_text = (
-        "You are a security incident analyst for a mall CCTV command center. "
-        "Write a concise, professional incident report. Include: what happened, key cues, uncertainty, "
-        "recommended immediate actions, and a short summary for SMS/dispatch."
+        "You are a senior mall security command analyst creating guidance for officers on the ground. "
+        "Be concise, operational, and safety-first. Use only provided evidence. "
+        "If uncertain, explicitly say so. Do not invent facts, identities, or weapons."
     )
 
-    user_text = {
-        "predicted_threat": predicted_threat,
-        "cctv": cctv_meta,
-        "objects_detected": yolo_objects,
-        "notes": "Frames are extracted from CCTV clip. YOLO detections may include false positives.",
-    }
+    top_objects = sorted(yolo_objects, key=lambda o: float(o.get("conf", 0.0)), reverse=True)[:12]
+    context_text = (
+        "CCTV incident context:\n"
+        f"- Camera: {cctv_meta.get('cctvName', 'Unknown')}\n"
+        f"- Location: {cctv_meta.get('location', 'Unknown')}\n"
+        f"- Coverage: {cctv_meta.get('coverage', 'Unknown')}\n"
+        f"- X3D predicted threat: {predicted_threat}\n"
+        f"- X3D confidence: {confidence:.4f}\n"
+        f"- threat_detected decision: {threat_detected}\n"
+        f"- X3D top-k: {topk_predictions}\n"
+        f"- YOLO detections (top by confidence): {top_objects}\n"
+        "Note: frames are sampled; YOLO may include false positives."
+    )
 
-    
-    content = [{"type": "text", "text": f"{system_text}\n\nContext:\n{user_text}"}]
+    instruction_text = (
+        "Return plain text with these exact section headers:\n"
+        "1) Situation Summary\n"
+        "2) Observed Indicators\n"
+        "3) Immediate Actions (0-2 min)\n"
+        "4) Follow-up Actions (2-10 min)\n"
+        "5) Officer Safety Notes\n"
+        "6) Uncertainty / Data Gaps\n"
+        "7) Dispatch Message (<=240 chars)\n"
+        "Keep each section short and actionable."
+    )
+
+    content = [{"type": "text", "text": f"{system_text}\n\n{context_text}\n\n{instruction_text}"}]
     for url in frame_data_urls[:4]:
         content.append({"type": "image_url", "image_url": {"url": url}})
 
@@ -60,6 +81,21 @@ async def generate_incident_report(
 
     # OpenAI-style shape: choices[0].message.content
     try:
-        return data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"]
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    text_parts.append(part)
+                elif isinstance(part, dict):
+                    t = part.get("text")
+                    if isinstance(t, str) and t.strip():
+                        text_parts.append(t)
+            joined = "\n".join(text_parts).strip()
+            if joined:
+                return joined
+        return str(content)
     except Exception:
         return str(data)

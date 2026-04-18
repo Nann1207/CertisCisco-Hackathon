@@ -96,7 +96,7 @@ export function DashboardPage() {
         setThreat((prev) => ({
           ...prev,
           status: "threat",
-          headline: `Threat detected in ${prev.cctvMeta?.cctvName ?? tileId.toUpperCase()}`,
+          headline: `Threat detected in ${result?.cctv_meta?.cctvName ?? tileId.toUpperCase()}`,
           predictedThreat: predicted,
           description: desc,
           editedDescription: desc,
