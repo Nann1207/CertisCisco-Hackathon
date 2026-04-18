@@ -1,8 +1,9 @@
 import React from "react";
-import { Pressable, StyleSheet, ViewStyle } from "react-native";
+import { Image, Pressable, StyleSheet, ViewStyle } from "react-native";
 import { useRouter } from "expo-router";
-import { Bot } from "lucide-react-native";
 import Svg, { Defs, RadialGradient, Stop, Circle } from "react-native-svg";
+
+const ROBOT_ICON = require("../assets/robot.png");
 
 type Props = {
   bottomOffset?: number;
@@ -19,11 +20,9 @@ export default function FloatingChatButton({
 }: Props) {
   const router = useRouter();
 
-  const iconSize = Math.round(size * 0.70); // scales nicely with the circle
-
   return (
     <Pressable
-      onPress={() => router.push("/(officer)/chatbot")}
+      onPress={() => router.push("/securityofficer/chatbot")}
       style={[
         styles.fab,
         {
@@ -58,8 +57,7 @@ export default function FloatingChatButton({
         <Circle cx={size / 2} cy={size / 2} r={size / 2} fill="url(#grad)" />
       </Svg>
 
-      {/* White bot icon centered */}
-      <Bot size={iconSize} color="#FFFFFF" strokeWidth={2.2} />
+      <Image source={ROBOT_ICON} style={styles.robotIcon} resizeMode="cover" />
     </Pressable>
   );
 }
@@ -79,5 +77,9 @@ const styles = StyleSheet.create({
 
     // ensure gradient is clipped perfectly to circle
     overflow: "hidden",
+  },
+  robotIcon: {
+    width: "100%",
+    height: "100%",
   },
 });
