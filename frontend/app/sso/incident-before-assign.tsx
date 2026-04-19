@@ -16,6 +16,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { BellRing, ChevronLeft, Settings2 } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
+import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { supabase } from "../../lib/supabase";
 
 type IncidentRow = {
@@ -34,8 +35,6 @@ type IncidentRow = {
   active_status: boolean | null;
 };
 
-const INCIDENT_IMAGE_BUCKET = "incident-frames";
-
 export default function SsoIncidentBeforeAssignPage() {
   const router = useRouter();
   const { incidentId } = useLocalSearchParams<{ incidentId?: string }>();
@@ -46,6 +45,7 @@ export default function SsoIncidentBeforeAssignPage() {
   const [showMapModal, setShowMapModal] = useState(false);
   const [modalMapRegion, setModalMapRegion] = useState<Region | null>(null);
   const modalMapRef = useRef<MapView | null>(null);
+  const [cctvUris, setCctvUris] = useState<string[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -100,6 +100,33 @@ export default function SsoIncidentBeforeAssignPage() {
   }, [incidentId]);
 
   useEffect(() => {
+    let alive = true;
+
+    const loadCctvUris = async () => {
+      if (!incident) {
+        if (alive) setCctvUris([]);
+        return;
+      }
+
+      const uris = await resolveIncidentFrameUrls([
+        incident.cctv_image_1_path,
+        incident.cctv_image_2_path,
+        incident.cctv_image_3_path,
+        incident.cctv_image_4,
+      ]);
+
+      if (alive) {
+        setCctvUris(uris);
+      }
+    };
+
+    void loadCctvUris();
+    return () => {
+      alive = false;
+    };
+  }, [incident]);
+
+  useEffect(() => {
     let watcher: Location.LocationSubscription | null = null;
     let active = true;
 
@@ -138,8 +165,6 @@ export default function SsoIncidentBeforeAssignPage() {
     const locationName = (incident?.location_name ?? incident?.location_description ?? "Unknown Location").toString();
     return `${category} AT ${locationName}`;
   }, [incident?.incident_category, incident?.location_description, incident?.location_name]);
-
-  const cctvUris = useMemo(() => extractCctvUris(incident), [incident]);
 
   const onOpenMapModal = () => {
     setModalMapRegion(incidentRegion);
@@ -306,28 +331,6 @@ export default function SsoIncidentBeforeAssignPage() {
       </Modal>
     </SafeAreaView>
   );
-}
-
-function extractCctvUris(incident: IncidentRow | null) {
-  if (!incident) return [] as string[];
-  const raw = [
-    incident.cctv_image_1_path,
-    incident.cctv_image_2_path,
-    incident.cctv_image_3_path,
-    incident.cctv_image_4,
-  ];
-
-  return raw
-    .map((item) => {
-      if (!item) return null;
-      const value = item.trim();
-      if (!value) return null;
-      if (/^https?:\/\//i.test(value)) return value;
-
-      const { data } = supabase.storage.from(INCIDENT_IMAGE_BUCKET).getPublicUrl(value);
-      return data.publicUrl || null;
-    })
-    .filter((item): item is string => Boolean(item));
 }
 
 function clamp(value: number, min: number, max: number) {
