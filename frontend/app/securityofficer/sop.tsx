@@ -63,20 +63,15 @@ export default function SOPPage() {
     <SafeAreaView style={styles.container}>
       {/* HEADER */}
       <View style={styles.header}>
-        <View style={styles.headerRow}>
         <Pressable
-        onPress={() => router.replace("/securityofficer/home")}
-        style={styles.backIcon}
-        hitSlop={10}
+          onPress={() => router.replace("/securityofficer/home")}
+          style={styles.backBtn}
+          hitSlop={10}
         >
-        <Ionicons name="chevron-back" size={24} color="#fff" />
+          <Ionicons name="chevron-back" size={24} color="#fff" />
         </Pressable>
 
-          <Text style={styles.headerTitle}>Service Of Operation</Text>
-
-          {/* spacer to keep title centered */}
-          <View style={styles.rightSpacer} />
-        </View>
+        <Text style={styles.headerTitle}>Service Of Operation</Text>
       </View>
 
       {/* GRID */}
