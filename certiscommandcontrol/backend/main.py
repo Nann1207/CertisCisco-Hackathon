@@ -1,5 +1,7 @@
 import os
 import uuid
+import base64
+import binascii
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
@@ -122,6 +124,96 @@ def get_service_client():
         return None
     SERVICE_SUPABASE_CLIENT = get_supabase_service_client(settings.SUPABASE_URL, service_key)
     return SERVICE_SUPABASE_CLIENT
+
+
+def decode_data_url_bytes(data_url: str) -> Optional[bytes]:
+    if not data_url or not data_url.startswith("data:"):
+        return None
+    _, sep, encoded = data_url.partition(",")
+    if not sep or not encoded:
+        return None
+    try:
+        return base64.b64decode(encoded, validate=False)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def upload_frame_with_fallback(user_client, bucket: str, path: str, payload: bytes) -> bool:
+    try:
+        user_client.storage.from_(bucket).upload(
+            path,
+            payload,
+            {"content-type": "image/jpeg", "upsert": "true"},
+        )
+        return True
+    except Exception as e:
+        service_client = get_service_client()
+        if not service_client:
+            logger.warning("frame upload failed for path=%s: %s", path, e)
+            return False
+        logger.warning("frame upload denied/failed for path=%s; retrying with service role", path)
+        try:
+            service_client.storage.from_(bucket).upload(
+                path,
+                payload,
+                {"content-type": "image/jpeg", "upsert": "true"},
+            )
+            return True
+        except Exception as e2:
+            logger.warning("frame upload failed with service role for path=%s: %s", path, e2)
+            return False
+
+
+def upload_incident_frame_paths(user_client, incident_id: str, frame_urls: List[str]) -> Dict[int, str]:
+    saved_paths: Dict[int, str] = {}
+    bucket = settings.INCIDENT_FRAMES_BUCKET.strip() or "incident-frames"
+
+    for i, frame_url in enumerate(frame_urls[:4], start=1):
+        frame_bytes = decode_data_url_bytes(frame_url)
+        if not frame_bytes:
+            logger.warning("frame %d for incident_id=%s is not a valid data URL; skipping", i, incident_id)
+            continue
+        object_path = f"incidents/{incident_id}/frame_{i}.jpg"
+        if upload_frame_with_fallback(user_client, bucket, object_path, frame_bytes):
+            saved_paths[i] = object_path
+
+    return saved_paths
+
+
+def build_incident_frame_updates(saved_paths: Dict[int, str], frame4_column: str = "cctv_image_4_path") -> Dict[str, Any]:
+    updates: Dict[str, Any] = {}
+    if 1 in saved_paths:
+        updates["cctv_image_1_path"] = saved_paths[1]
+    if 2 in saved_paths:
+        updates["cctv_image_2_path"] = saved_paths[2]
+    if 3 in saved_paths:
+        updates["cctv_image_3_path"] = saved_paths[3]
+    if 4 in saved_paths:
+        updates[frame4_column] = saved_paths[4]
+    return updates
+
+
+def persist_incident_frame_paths(user_client, incident_id: str, saved_paths: Dict[int, str]):
+    if not saved_paths:
+        return
+
+    updates = build_incident_frame_updates(saved_paths, frame4_column="cctv_image_4_path")
+    if not updates:
+        return
+
+    try:
+        update_incident_with_fallback(user_client, incident_id, updates)
+        return
+    except APIError as e:
+        payload = api_error_payload(e)
+        msg = str(payload)
+        if "cctv_image_4_path" not in msg:
+            raise
+
+    logger.warning("incidents.cctv_image_4_path not found; falling back to cctv_image_4")
+    fallback_updates = build_incident_frame_updates(saved_paths, frame4_column="cctv_image_4")
+    if fallback_updates:
+        update_incident_with_fallback(user_client, incident_id, fallback_updates)
 
 
 def insert_incident_with_fallback(user_client, incident_payload: Dict[str, Any], tile_id: str):
@@ -336,8 +428,10 @@ async def confirm_incident(
     edited_description = (payload.edited_description or "").strip()
     corrected_threat = (payload.corrected_threat or "").strip()
     created_new_incident = False
+    frame_urls = payload.frame_urls[:4]
 
     if not incident_id:
+        incident_id = str(uuid.uuid4())
         source_cctvid = (payload.tile_id or payload.cctv_name or "").strip()
         cam_data = None
         if source_cctvid:
@@ -363,9 +457,9 @@ async def confirm_incident(
 
         predicted_for_insert = corrected_threat or (payload.predicted_threat or "").strip() or "Suspicious Person"
         cctvid = (cam_data or {}).get("cctvid") or source_cctvid or None
-        frames = payload.frame_urls[:4]
 
         incident_payload = {
+            "incident_id": incident_id,
             "incident_name": build_incident_name(predicted_for_insert, cctvid or "CCTV"),
             "incident_category": threat_to_incident_category(predicted_for_insert),
             "location_name": (cam_data or {}).get("location_name")
@@ -376,9 +470,6 @@ async def confirm_incident(
             "location_description": (cam_data or {}).get("coverage") or payload.coverage,
             "latitude": (cam_data or {}).get("latitude"),
             "longitude": (cam_data or {}).get("longitude"),
-            "cctv_image_1": frames[0] if len(frames) > 0 else None,
-            "cctv_image_2": frames[1] if len(frames) > 1 else None,
-            "cctv_image_3": frames[2] if len(frames) > 2 else None,
             "prediction_correct": bool(payload.confirmed),
             "active_status": bool(payload.confirmed),
             "cctv_camera_id": (cam_data or {}).get("id"),
@@ -394,7 +485,10 @@ async def confirm_incident(
         try:
             created = insert_incident_with_fallback(sb, incident_payload, source_cctvid or "confirm")
             if created:
-                incident_id = created[0].get("incident_id")
+                incident_id = created[0].get("incident_id") or incident_id
+                created_new_incident = True
+            else:
+                # With RETURNING MINIMAL/RLS an empty representation can still indicate success.
                 created_new_incident = True
         except APIError as e:
             raise HTTPException(
@@ -404,6 +498,16 @@ async def confirm_incident(
 
         if not incident_id:
             raise HTTPException(status_code=500, detail="Incident create succeeded but no incident_id returned")
+
+    if frame_urls and incident_id:
+        saved_paths = upload_incident_frame_paths(sb, incident_id, frame_urls)
+        try:
+            persist_incident_frame_paths(sb, incident_id, saved_paths)
+        except APIError as e:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "Failed to save incident frame paths", "supabase": api_error_payload(e)},
+            )
 
     if created_new_incident:
         return {"ok": True, "incident_id": incident_id, "prediction_correct": bool(payload.confirmed)}
