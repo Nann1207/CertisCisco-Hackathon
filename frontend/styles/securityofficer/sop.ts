@@ -13,19 +13,20 @@ export const styles = StyleSheet.create({
 
   /* HEADER */
   header: {
+    paddingTop: 40,
+    paddingBottom: 12,
     backgroundColor: "#0E2D52",
-    padding: 20,
-    borderBottomLeftRadius: 25,
-    borderBottomRightRadius: 25,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start",
   },
 
   headerTitle: {
     color: "#fff",
-    fontSize: 22,
+    fontSize: 23,
     fontWeight: "700",
-    textAlign: "center",
-    marginBottom: 0, // was 10; remove so the row aligns nicely
-    flex: 1, // lets the title stay centered with back button present
+    marginLeft: 10,
   },
 
   search: {
@@ -95,8 +96,12 @@ export const styles = StyleSheet.create({
   },
 
   backBtn: {
-    color: "#3B82F6",
-    marginBottom: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
   },
 
   titleItem: {
@@ -172,15 +177,5 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 10,
-  },
-
-  backIcon: {
-    marginRight: 10,
-    padding: 5,
-  },
-
-  // NEW: matches backIcon width so the title stays centered
-  rightSpacer: {
-    width: 34, // approx back icon touch area
   },
 });

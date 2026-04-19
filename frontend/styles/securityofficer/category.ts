@@ -80,6 +80,10 @@ export const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
 
+  pillDisabled: {
+    opacity: 0.45,
+  },
+
   pillText: {
     color: "#A0B0C0",
     fontWeight: "600",
@@ -401,7 +405,8 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
     color: "#0E2D52",
-    textAlign: "center",
+    textAlign: "left",
+    alignSelf: "stretch",
     marginBottom: 12,
     paddingHorizontal: 12,
   },
@@ -533,7 +538,9 @@ quizPrimaryBtnText: {
     fontSize: 12,
     color: "#64748B",
     fontWeight: "700",
-    textAlign: "center",
+    textAlign: "left",
+    alignSelf: "stretch",
+    paddingHorizontal: 12,
     marginBottom: 6,
   },
 
