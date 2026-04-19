@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import * as Location from "expo-location";
+import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
@@ -34,6 +35,7 @@ type IncidentRow = {
 	cctv_image_2_path?: string | null;
 	cctv_image_3_path?: string | null;
 	cctv_image_4?: string | null;
+	ai_assessment?: string | null;
 };
 
 type AssignmentGuardRow = {
@@ -43,12 +45,12 @@ type AssignmentGuardRow = {
 };
 
 const NEARBY_DISTANCE_METERS = 120;
-const EARLY_CHECKLIST = [
+const DEFAULT_EARLY_CHECKLIST = [
 	"Acknowledge - Confirm via radio you are responding",
 	"Visual Scan - Watch for suspects blending into the crowd",
 	"Safe Entry - Observe through windows before entering",
 ];
-const SOP_CHECKLIST = [
+const DEFAULT_SOP_CHECKLIST = [
 	"Check for Trauma - Check for shock or injury; call EMS",
 	"Freeze the Scene - Do not let anyone touch the point of contact",
 	"Lock Down - Close doors/gates to preserve the scene",
@@ -59,6 +61,31 @@ const SOP_CHECKLIST = [
 	"Notes - Leave demand notes untouched; cover them",
 	"Log - Record all entry/exit times and names",
 ];
+
+function getDefaultChecklistApiUrl() {
+	const hostUri = (Constants.expoConfig as { hostUri?: string } | null)?.hostUri;
+	const host = hostUri?.split(":")[0] ?? "localhost";
+	return `http://${host}:5001/incident/checklist/generate`;
+}
+
+const INCIDENT_CHECKLIST_API_URL =
+	process.env.EXPO_PUBLIC_INCIDENT_CHECKLIST_API_URL ?? getDefaultChecklistApiUrl();
+
+function normalizeChecklistItems(raw: unknown, fallback: string[], minimumCount: number) {
+	if (!Array.isArray(raw)) return fallback;
+	const normalized = raw
+		.map((item) => {
+			if (typeof item === "string") return item.trim();
+			if (item && typeof item === "object" && "text" in item) {
+				const value = (item as { text?: unknown }).text;
+				return typeof value === "string" ? value.trim() : "";
+			}
+			return "";
+		})
+		.filter((item) => item.length > 0);
+	if (normalized.length < minimumCount) return fallback;
+	return normalized;
+}
 
 export default function CurrentIncidentScreen() {
 	const router = useRouter();
@@ -75,6 +102,9 @@ export default function CurrentIncidentScreen() {
 	const [earlyChecked, setEarlyChecked] = useState<Record<string, true>>({});
 	const [sopChecked, setSopChecked] = useState<Record<string, true>>({});
 	const [testingMode, setTestingMode] = useState(__DEV__);
+	const [earlyChecklist, setEarlyChecklist] = useState<string[]>([]);
+	const [sopChecklist, setSopChecklist] = useState<string[]>([]);
+	const [checklistLoading, setChecklistLoading] = useState(true);
 
 	const [showBackupModal, setShowBackupModal] = useState(false);
 	const [backupCount, setBackupCount] = useState("1");
@@ -132,7 +162,7 @@ export default function CurrentIncidentScreen() {
 			const { data: incidentData, error: incidentError } = await supabase
 				.from("incidents")
 				.select(
-					"id:incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, prediction_correct, cctv_image_1_path, cctv_image_2_path, cctv_image_3_path, cctv_image_4"
+					"id:incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, prediction_correct, cctv_image_1_path, cctv_image_2_path, cctv_image_3_path, cctv_image_4, ai_assessment"
 				)
 				.eq("incident_id", incidentId)
 				.maybeSingle();
@@ -243,6 +273,72 @@ export default function CurrentIncidentScreen() {
 			alive = false;
 		};
 	}, [incident]);
+
+	useEffect(() => {
+		let active = true;
+
+		const generateChecklists = async () => {
+			if (!incident) return;
+			setChecklistLoading(true);
+			setEarlyChecklist([]);
+			setSopChecklist([]);
+
+			try {
+				const response = await fetch(INCIDENT_CHECKLIST_API_URL, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						incident: {
+							incident_id: incident.id,
+							incident_category: incident.incident_category ?? null,
+							location_name: incident.location_name ?? null,
+							location_unit_no: incident.location_unit_no ?? null,
+							location_description: incident.location_description ?? null,
+							ai_assessment: incident.ai_assessment ?? null,
+						},
+					}),
+				});
+
+				const body = (await response.json().catch(() => ({}))) as {
+					early_checklist?: unknown;
+					sop_checklist?: unknown;
+				};
+
+				if (!response.ok) {
+					const errorMessage =
+						typeof (body as { error?: unknown }).error === "string"
+							? (body as { error: string }).error
+							: `Checklist API failed (${response.status})`;
+					throw new Error(errorMessage);
+				}
+
+				if (!active) return;
+
+				setEarlyChecklist(normalizeChecklistItems(body.early_checklist, DEFAULT_EARLY_CHECKLIST, 3));
+				setSopChecklist(normalizeChecklistItems(body.sop_checklist, DEFAULT_SOP_CHECKLIST, 3));
+			} catch (error) {
+				console.warn("[currentIncident] checklist generation fallback:", error);
+				if (!active) return;
+				setEarlyChecklist(DEFAULT_EARLY_CHECKLIST);
+				setSopChecklist(DEFAULT_SOP_CHECKLIST);
+			} finally {
+				if (active) setChecklistLoading(false);
+			}
+		};
+
+		void generateChecklists();
+		return () => {
+			active = false;
+		};
+	}, [incident]);
+
+	useEffect(() => {
+		setEarlyChecked({});
+	}, [earlyChecklist]);
+
+	useEffect(() => {
+		setSopChecked({});
+	}, [sopChecklist]);
 
 	const incidentTitle = useMemo(() => {
 		const category = (incident?.incident_category ?? "Incident").toString();
@@ -533,17 +629,28 @@ export default function CurrentIncidentScreen() {
 									</View>
 								</LinearGradient>
 
-								<Text style={styles.sectionHeader}>Investigation Guidelines</Text>
-								{EARLY_CHECKLIST.map((item) => (
-									<Pressable key={item} style={styles.lineItem} onPress={() => onToggleEarlyChecklist(item)}>
-										<View style={[styles.checkbox, earlyChecked[item] ? styles.checkboxChecked : null]}>
-											{earlyChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
-										</View>
-										<Text style={[styles.lineItemText, earlyChecked[item] ? styles.lineItemTextChecked : null]}>
-											{item}
-										</Text>
+									<Text style={styles.sectionHeader}>Investigation Guidelines</Text>
+								{checklistLoading ? (
+									<Pressable style={[styles.primaryBtn, styles.checklistLoadingBtn]} disabled>
+										<ActivityIndicator color="#FFFFFF" size="small" />
+										<Text style={styles.primaryBtnText}>Loading Checklist...</Text>
 									</Pressable>
-								))}
+								) : (
+									earlyChecklist.map((item, idx) => (
+										<Pressable
+											key={`${item}-${idx}`}
+											style={styles.lineItem}
+											onPress={() => onToggleEarlyChecklist(item)}
+										>
+											<View style={[styles.checkbox, earlyChecked[item] ? styles.checkboxChecked : null]}>
+												{earlyChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
+											</View>
+											<Text style={[styles.lineItemText, earlyChecked[item] ? styles.lineItemTextChecked : null]}>
+												{item}
+											</Text>
+										</Pressable>
+									))
+								)}
 
 								<View style={styles.testingModeRow}>
 									<Text style={styles.testingModeLabel}>Testing Mode</Text>
@@ -580,16 +687,23 @@ export default function CurrentIncidentScreen() {
 								</View>
 
 								<Text style={styles.sectionHeader}>Checklist of SOP Guidelines</Text>
-								{SOP_CHECKLIST.map((item) => (
-									<Pressable key={item} style={styles.lineItem} onPress={() => onToggleChecklist(item)}>
-										<View style={[styles.checkbox, sopChecked[item] ? styles.checkboxChecked : null]}>
-											{sopChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
-										</View>
-										<Text style={[styles.lineItemText, sopChecked[item] ? styles.lineItemTextChecked : null]}>
-											{item}
-										</Text>
+								{checklistLoading ? (
+									<Pressable style={[styles.primaryBtn, styles.checklistLoadingBtn]} disabled>
+										<ActivityIndicator color="#FFFFFF" size="small" />
+										<Text style={styles.primaryBtnText}>Loading Checklist...</Text>
 									</Pressable>
-								))}
+								) : (
+									sopChecklist.map((item, idx) => (
+										<Pressable key={`${item}-${idx}`} style={styles.lineItem} onPress={() => onToggleChecklist(item)}>
+											<View style={[styles.checkbox, sopChecked[item] ? styles.checkboxChecked : null]}>
+												{sopChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
+											</View>
+											<Text style={[styles.lineItemText, sopChecked[item] ? styles.lineItemTextChecked : null]}>
+												{item}
+											</Text>
+										</Pressable>
+									))
+								)}
 
 								<Pressable style={styles.primaryBtn} onPress={() => setShowReportModeModal(true)}>
 									<Text style={styles.primaryBtnText}>Incident Report</Text>
@@ -1102,6 +1216,10 @@ const styles = StyleSheet.create({
 		shadowRadius: 6,
 		shadowOffset: { width: 0, height: 4 },
 		elevation: 2,
+	},
+	checklistLoadingBtn: {
+		alignSelf: "flex-start",
+		marginTop: 2,
 	},
 	primaryBtnText: {
 		fontSize: 15,
