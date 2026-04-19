@@ -229,14 +229,14 @@ export default function Home() {
 
       const { data: todayShiftsRaw, error: todayShiftError } = await supabase
         .from("shifts")
-        .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, officer_id")
+        .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
         .eq("supervisor_id", userId)
         .eq("shift_date", todayISO)
         .order("shift_start", { ascending: true });
 
       const { data: upcomingShiftsRaw, error: upcomingError } = await supabase
         .from("shifts")
-        .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, officer_id")
+        .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
         .eq("supervisor_id", userId)
         .gte("shift_date", todayISO)
         .order("shift_date", { ascending: true })

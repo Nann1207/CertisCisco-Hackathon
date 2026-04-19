@@ -1,10 +1,8 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+import sys
 
-try:
-    from deep_translator import GoogleTranslator
-except Exception:
-    GoogleTranslator = None
+DEEP_TRANSLATOR_IMPORT_ERROR = None
 
 # ✅ ADDED (for quiz generation)
 import os
@@ -29,9 +27,19 @@ LANGUAGE_CODE_MAP = {
     "Chinese": "zh-CN",
 }
 
+def get_google_translator_class():
+    global DEEP_TRANSLATOR_IMPORT_ERROR
+
+    try:
+        from deep_translator import GoogleTranslator
+        DEEP_TRANSLATOR_IMPORT_ERROR = None
+        return GoogleTranslator
+    except Exception as exc:
+        DEEP_TRANSLATOR_IMPORT_ERROR = repr(exc)
+        raise RuntimeError(f"deep_translator import failed: {exc}") from exc
+
 def translate_with_deep_translator(text: str, target_language: str) -> str:
-    if GoogleTranslator is None:
-        raise RuntimeError("deep_translator is not installed.")
+    GoogleTranslator = get_google_translator_class()
 
     try:
         return GoogleTranslator(source="auto", target=target_language).translate(text)
@@ -40,7 +48,19 @@ def translate_with_deep_translator(text: str, target_language: str) -> str:
 
 @app.get("/health")
 def health():
-    return jsonify(status="hello")
+    deep_translator_available = False
+    try:
+        get_google_translator_class()
+        deep_translator_available = True
+    except Exception:
+        deep_translator_available = False
+
+    return jsonify(
+        status="hello",
+        pythonExecutable=sys.executable,
+        deepTranslatorAvailable=deep_translator_available,
+        deepTranslatorImportError=DEEP_TRANSLATOR_IMPORT_ERROR,
+    )
 
 
 @app.post("/translate")

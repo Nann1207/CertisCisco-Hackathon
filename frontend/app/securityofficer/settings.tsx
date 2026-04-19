@@ -18,7 +18,7 @@ import {
 	LanguagePreference,
 	subscribeLanguagePreference,
 } from "../../lib/language-preferences";
-import { translateWithGoogle } from "../../lib/google-translate";
+import { translateText } from "../../lib/translator";
 
 const AVATAR_BUCKET = "profile-photos";
 const USE_SIGNED_URL = true;
@@ -49,7 +49,7 @@ export default function SettingsScreen() {
 
 	const translateForAlert = useCallback(async (value: string) => {
 		if (language === "English") return value;
-		return translateWithGoogle(value, language);
+		return translateText(value, language);
 	}, [language]);
 
 	const showTranslatedAlert = useCallback(async (title: string, message: string) => {

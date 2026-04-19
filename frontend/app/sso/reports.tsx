@@ -10,12 +10,22 @@ import {
 	View,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { ChevronLeft, FileText, MapPin, ShieldCheck } from "lucide-react-native";
+import { ChevronLeft, FileText, MapPin, NotebookPen, ShieldCheck } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
 
+type IncidentRow = {
+	incident_id: string;
+	incident_category?: string | null;
+	location_name?: string | null;
+	location_unit_no?: string | null;
+	location_description?: string | null;
+	created_at?: string | null;
+	active_status?: boolean | null;
+};
+
 type ReportRow = {
-	report_id?: string | null;
+	id?: string | null;
 	incident_id?: string | null;
 	report_type?: string | null;
 	incident_category?: string | null;
@@ -32,6 +42,7 @@ export default function SsoReportsScreen() {
 
 	const [loading, setLoading] = useState(true);
 	const [refreshing, setRefreshing] = useState(false);
+	const [incidents, setIncidents] = useState<IncidentRow[]>([]);
 	const [reports, setReports] = useState<ReportRow[]>([]);
 
 	const load = async (isRefresh = false) => {
@@ -50,9 +61,11 @@ export default function SsoReportsScreen() {
 
 		const { data: incidentRows, error: incidentError } = await supabase
 			.from("incidents")
-			.select("incident_id")
+			.select(
+				"incident_id, incident_category, location_name, location_unit_no, location_description, created_at, active_status"
+			)
 			.eq("supervisor_id", userId)
-			.eq("active_status", false)
+			.order("created_at", { ascending: false })
 			.limit(500);
 
 		if (incidentError) {
@@ -62,7 +75,10 @@ export default function SsoReportsScreen() {
 			return;
 		}
 
-		const incidentIds = ((incidentRows as { incident_id: string }[] | null) ?? [])
+		const nextIncidents = (incidentRows as IncidentRow[] | null) ?? [];
+		setIncidents(nextIncidents);
+
+		const incidentIds = nextIncidents
 			.map((item) => item.incident_id)
 			.filter(Boolean);
 
@@ -76,7 +92,7 @@ export default function SsoReportsScreen() {
 		const { data: reportRows, error: reportError } = await supabase
 			.from("reports")
 			.select(
-				"report_id, incident_id, report_type, incident_category, incident_location, duty_officer_name, supervisor_incharge_name, created_at, handover_time, resolved_time"
+				"id, incident_id, report_type, incident_category, incident_location, duty_officer_name, supervisor_incharge_name, created_at, handover_time, resolved_time"
 			)
 			.in("incident_id", incidentIds)
 			.order("created_at", { ascending: false })
@@ -98,6 +114,16 @@ export default function SsoReportsScreen() {
 		void load();
 	}, []);
 
+	const documentedIncidentIds = useMemo(
+		() => new Set(reports.map((item) => item.incident_id).filter((id): id is string => Boolean(id))),
+		[reports]
+	);
+
+	const pendingReports = useMemo(
+		() => incidents.filter((incident) => !documentedIncidentIds.has(incident.incident_id)),
+		[documentedIncidentIds, incidents]
+	);
+
 	const totalResolved = useMemo(
 		() => reports.filter((item) => (item.report_type ?? "").toLowerCase() === "resolved").length,
 		[reports]
@@ -112,7 +138,7 @@ export default function SsoReportsScreen() {
 				>
 					<ChevronLeft size={24} color="#FFFFFF" strokeWidth={2.6} />
 				</Pressable>
-				<Text style={styles.headerTitle}>Past Reports</Text>
+				<Text style={styles.headerTitle}>Reports</Text>
 			</View>
 
 			{loading ? (
@@ -126,9 +152,15 @@ export default function SsoReportsScreen() {
 				>
 					<View style={styles.summaryCard}>
 						<View style={styles.summaryItem}>
+							<NotebookPen size={18} color="#B45309" />
+							<Text style={[styles.summaryValue, { color: "#B45309" }]}>{pendingReports.length}</Text>
+							<Text style={styles.summaryLabel}>To Be Made</Text>
+						</View>
+						<View style={styles.summaryDivider} />
+						<View style={styles.summaryItem}>
 							<FileText size={18} color="#0E2D52" />
 							<Text style={styles.summaryValue}>{reports.length}</Text>
-							<Text style={styles.summaryLabel}>Total Reports</Text>
+							<Text style={styles.summaryLabel}>Past Reports</Text>
 						</View>
 						<View style={styles.summaryDivider} />
 						<View style={styles.summaryItem}>
@@ -138,11 +170,65 @@ export default function SsoReportsScreen() {
 						</View>
 					</View>
 
+					<Text style={styles.sectionTitle}>Reports To Be Made</Text>
+					{pendingReports.length === 0 ? (
+						<Text style={styles.emptyText}>All incidents already have documentation.</Text>
+					) : (
+						pendingReports.map((incident) => {
+							const location = [
+								incident.location_name?.trim() ?? "",
+								incident.location_unit_no?.trim() ? `#${incident.location_unit_no.trim()}` : "",
+								incident.location_description?.trim() ?? "",
+							]
+								.filter(Boolean)
+								.join(" ");
+
+							const reportType = incident.active_status ? "Handover" : "Resolved";
+
+							return (
+								<View key={`pending-${incident.incident_id}`} style={styles.card}>
+									<View style={styles.cardTopRow}>
+										<View style={[styles.typeBadge, styles.pendingBadge]}>
+											<Text style={styles.typeBadgeText}>{reportType.toUpperCase()}</Text>
+										</View>
+										<Text style={styles.dateText}>{formatDateTime(incident.created_at)}</Text>
+									</View>
+
+									<Text style={styles.titleText}>{incident.incident_category?.trim() || "Incident"}</Text>
+
+									<View style={styles.locationRow}>
+										<MapPin size={14} color="#6B7280" />
+										<Text style={styles.locationText} numberOfLines={2}>
+											{location || "Location unavailable"}
+										</Text>
+									</View>
+
+									<View style={styles.metaRow}>
+										<Text style={styles.metaLabel}>Documentation:</Text>
+										<Text style={styles.metaValue}>
+											{incident.active_status ? "Current incident needs handover/current report." : "Past incident needs final report."}
+										</Text>
+									</View>
+
+									<Pressable
+										style={styles.primaryBtn}
+										onPress={() =>
+											router.push(`/sso/createReport?incidentId=${incident.incident_id}&reportType=${reportType}`)
+										}
+									>
+										<Text style={styles.primaryBtnText}>Create Report</Text>
+									</Pressable>
+								</View>
+							);
+						})
+					)}
+
+					<Text style={styles.sectionTitle}>Past Reports</Text>
 					{reports.length === 0 ? (
 						<Text style={styles.emptyText}>No past reports found.</Text>
 					) : (
 						reports.map((report, index) => (
-							<View key={report.report_id ?? `${report.incident_id ?? "unknown"}-${index}`} style={styles.card}>
+							<View key={report.id ?? `${report.incident_id ?? "unknown"}-${index}`} style={styles.card}>
 								<View style={styles.cardTopRow}>
 									<View style={[styles.typeBadge, getTypeBadgeStyle(report.report_type)]}>
 										<Text style={styles.typeBadgeText}>{(report.report_type ?? "REPORT").toUpperCase()}</Text>
@@ -273,6 +359,12 @@ const styles = StyleSheet.create({
 		fontWeight: "600",
 		marginTop: 4,
 	},
+	sectionTitle: {
+		marginTop: 6,
+		color: "#163A67",
+		fontSize: 22,
+		fontWeight: "800",
+	},
 	card: {
 		borderRadius: 16,
 		backgroundColor: "#FFFFFF",
@@ -299,6 +391,9 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 		fontWeight: "800",
 		letterSpacing: 0.5,
+	},
+	pendingBadge: {
+		backgroundColor: "#B45309",
 	},
 	dateText: {
 		color: "#6B7280",
@@ -339,5 +434,20 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 		fontWeight: "700",
 		flex: 1,
+	},
+	primaryBtn: {
+		marginTop: 12,
+		alignSelf: "flex-end",
+		minHeight: 34,
+		borderRadius: 999,
+		backgroundColor: "#0E2D52",
+		paddingHorizontal: 14,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	primaryBtnText: {
+		color: "#FFFFFF",
+		fontSize: 13,
+		fontWeight: "700",
 	},
 });

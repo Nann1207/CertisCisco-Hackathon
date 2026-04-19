@@ -5,7 +5,7 @@ import {
   LanguagePreference,
   subscribeLanguagePreference,
 } from "../lib/language-preferences";
-import { translateWithGoogle } from "../lib/google-translate";
+import { translateText } from "../lib/translator";
 
 type TranslatedTextProps = TextProps & {
   children?: React.ReactNode;
@@ -109,7 +109,7 @@ export default function TranslatedText({
     }
 
     void (async () => {
-      const nextText = await translateWithGoogle(plainText, language);
+      const nextText = await translateText(plainText, language);
       if (!alive) return;
       setTranslatedText(nextText);
     })();
