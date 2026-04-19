@@ -16,14 +16,14 @@ import {
   View,
 } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { ChevronLeft, Paperclip, Search, Send, Zap } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { supabase } from "../../lib/supabase";
 import Text from "../../components/TranslatedText";
-import { markChatRead } from "../../lib/chatUnread";
+import { getReadStateMap, isMissingChatReadStatesTableError, markChatRead } from "../../lib/chatUnread";
 import { attachProfilePhotoUrls, resolveProfilePhotoUrl } from "../../lib/profilePhotos";
 import { createRealtimeTopic } from "../../lib/realtime";
 import {
@@ -113,6 +113,16 @@ const parseMessageText = (text: string) => {
     attachment: null,
   };
 };
+
+const UnreadBanner = () => (
+  <View style={styles.unreadBannerWrap}>
+    <View style={styles.unreadBannerLine} />
+    <View style={styles.unreadBannerPill}>
+      <Text style={styles.unreadBannerText}>Unread messages</Text>
+    </View>
+    <View style={styles.unreadBannerLine} />
+  </View>
+);
 
 const buildChannelFromProfile = (profile: EmployeeProfile): ChatChannel => {
   const avatarColor = getAvatarColor(profile.id);
@@ -233,12 +243,16 @@ const VideoPlayerBox = ({ uri, style }: { uri: string; style: StyleProp<ViewStyl
 
 export default function MessageScreen() {
   const router = useRouter();
+  const pathname = usePathname();
+  const isSeniorSecurityOfficer = pathname?.startsWith("/sso") ?? false;
+  const baseRoute = isSeniorSecurityOfficer ? "/sso" : "/securityofficer";
   const { channelId } = useLocalSearchParams<{ channelId?: string }>();
   const scrollViewRef = useRef<ScrollView | null>(null);
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<ChatChannel | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
+  const [unreadBannerMessageId, setUnreadBannerMessageId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [importantMode, setImportantMode] = useState(false);
@@ -279,6 +293,7 @@ export default function MessageScreen() {
     }
 
     setLoading(true);
+    setUnreadBannerMessageId(null);
 
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     const userId = sessionData.session?.user.id;
@@ -294,18 +309,31 @@ export default function MessageScreen() {
 
     setCurrentUserId(userId);
 
-    const [{ data: profileData, error: profileError }, { data: messagesData, error: messagesError }] = await Promise.all([
-      supabase
-        .from("employees")
-        .select("id, emp_id, first_name, last_name, role, profile_photo_path")
-        .eq("id", channelId)
-        .maybeSingle(),
-      supabase
-        .from("messages")
-        .select("id, sender_id, receiver_id, text, created_at")
-        .or(`and(sender_id.eq.${userId},receiver_id.eq.${channelId}),and(sender_id.eq.${channelId},receiver_id.eq.${userId})`)
-        .order("created_at", { ascending: true }),
-    ]);
+    const [{ data: profileData, error: profileError }, { data: messagesData, error: messagesError }, readStateResult] =
+      await Promise.all([
+        supabase
+          .from("employees")
+          .select("id, emp_id, first_name, last_name, role, profile_photo_path")
+          .eq("id", channelId)
+          .maybeSingle(),
+        supabase
+          .from("messages")
+          .select("id, sender_id, receiver_id, text, created_at")
+          .or(
+            `and(sender_id.eq.${userId},receiver_id.eq.${channelId}),and(sender_id.eq.${channelId},receiver_id.eq.${userId})`
+          )
+          .order("created_at", { ascending: true }),
+        getReadStateMap(userId).then(
+          (readStateMap) => ({ readStateMap, error: null as unknown }),
+          (error) => ({ readStateMap: new Map<string, string>(), error })
+        ),
+      ]);
+
+    if (readStateResult.error && !isMissingChatReadStatesTableError(readStateResult.error)) {
+      console.error("Error fetching chat read state:", readStateResult.error);
+    }
+
+    const lastReadAt = readStateResult.readStateMap.get(channelId) ?? null;
 
     if (profileError) {
       console.error("Error fetching chat profile:", profileError);
@@ -332,7 +360,22 @@ export default function MessageScreen() {
       console.error("Error fetching messages:", messagesError);
       setMessages([]);
     } else {
-      setMessages((messagesData || []) as ChatMessageRecord[]);
+      const loadedMessages = (messagesData || []) as ChatMessageRecord[];
+      const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : null;
+
+      let boundaryMessageId: string | null = null;
+      for (const msg of loadedMessages) {
+        const isIncoming = msg.sender_id === channelId && msg.receiver_id === userId;
+        if (!isIncoming) continue;
+
+        if (!lastReadTime || new Date(msg.created_at).getTime() > lastReadTime) {
+          boundaryMessageId = msg.id;
+          break;
+        }
+      }
+
+      setUnreadBannerMessageId(boundaryMessageId);
+      setMessages(loadedMessages);
     }
 
     setLoading(false);
@@ -341,6 +384,7 @@ export default function MessageScreen() {
   useEffect(() => {
     setMessages([]);
     setInput("");
+    setUnreadBannerMessageId(null);
     loadChat();
   }, [loadChat]);
 
@@ -921,7 +965,11 @@ export default function MessageScreen() {
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
       <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.replace("/securityofficer/messagingChannel")} hitSlop={10}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => router.replace(`${baseRoute}/messagingChannel`)}
+          hitSlop={10}
+        >
           <ChevronLeft size={28} color="#FFFFFF" strokeWidth={2.4} />
         </Pressable>
 
@@ -959,21 +1007,23 @@ export default function MessageScreen() {
             const { displayText, isImportant, attachment } = parseMessageText(msg.text);
 
             return (
-              <ChatMessage
-                key={msg.id}
-                rawText={msg.text}
-                text={displayText}
-                time={formatTime(msg.created_at)}
-                isSender={msg.sender_id === currentUserId}
-                isImportant={isImportant}
-                attachment={attachment}
-                onOpenAttachment={setViewingAttachment}
-                onForwardMessage={openForwardSheet}
-                avatarColor={selectedChannel?.avatarColor ?? "#0F2C59"}
-                avatarTextColor={selectedChannel?.avatarTextColor ?? "#FFFFFF"}
-                avatarLabel={avatarLabel}
-                avatarUrl={selectedChannel?.avatarUrl}
-              />
+              <React.Fragment key={msg.id}>
+                {msg.id === unreadBannerMessageId ? <UnreadBanner /> : null}
+                <ChatMessage
+                  rawText={msg.text}
+                  text={displayText}
+                  time={formatTime(msg.created_at)}
+                  isSender={msg.sender_id === currentUserId}
+                  isImportant={isImportant}
+                  attachment={attachment}
+                  onOpenAttachment={setViewingAttachment}
+                  onForwardMessage={openForwardSheet}
+                  avatarColor={selectedChannel?.avatarColor ?? "#0F2C59"}
+                  avatarTextColor={selectedChannel?.avatarTextColor ?? "#FFFFFF"}
+                  avatarLabel={avatarLabel}
+                  avatarUrl={selectedChannel?.avatarUrl}
+                />
+              </React.Fragment>
             );
           })
         )}
@@ -1308,6 +1358,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 24,
     paddingBottom: 28,
+  },
+  unreadBannerWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginVertical: 12,
+  },
+  unreadBannerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "rgba(17,24,39,0.18)",
+  },
+  unreadBannerPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(17,24,39,0.06)",
+    marginHorizontal: 10,
+  },
+  unreadBannerText: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "700",
   },
   emptyText: {
     color: "#9CA3AF",

@@ -1,6 +1,5 @@
 import {
   View,
-  Text,
   Pressable,
   ActivityIndicator,
   FlatList,
@@ -14,6 +13,7 @@ import { supabase } from "../../lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import YoutubePlayer from "react-native-youtube-iframe";
 import { styles } from "../../styles/securityofficer/category";
+import Text from "../../components/TranslatedText";
 
 type QuizQuestion = {
   id: string;
@@ -28,10 +28,13 @@ export default function CategoryPage() {
   // If your IP changes, update it.
   const BACKEND_URL = "http://192.168.1.14:5001";
 
-  const { category } = useLocalSearchParams();
+  const { category, tab: tabParam, title: titleParam } = useLocalSearchParams();
   const router = useRouter();
 
   const slug = category as string;
+  const tabParamValue = Array.isArray(tabParam) ? tabParam[0] : tabParam;
+  const titleParamValue = Array.isArray(titleParam) ? titleParam[0] : titleParam;
+  const initialTab = tabParamValue?.toString().toLowerCase() === "logistics" ? "Logistics" : "Guidelines";
 
   const categoryMap: Record<string, string> = {
     "fire-evacuation": "Fire & Evacuation",
@@ -128,7 +131,7 @@ export default function CategoryPage() {
   const [quizShowResults, setQuizShowResults] = useState(false);
 
   const resetToDefault = () => {
-    setTab("Guidelines");
+    setTab(initialTab as "Guidelines" | "Logistics");
     setMediaTab("Images");
 
     setQuizIndex(0);
@@ -182,6 +185,19 @@ export default function CategoryPage() {
   }, [slug]);
 
   useEffect(() => {
+    if (tabParamValue?.toString().toLowerCase() === "logistics") {
+      setTab("Logistics");
+    }
+  }, [tabParamValue]);
+
+  useEffect(() => {
+    const requested = titleParamValue?.toString();
+    if (!requested) return;
+    if (!titles.includes(requested)) return;
+    setSelectedTitle(requested);
+  }, [titleParamValue, titles]);
+
+  useEffect(() => {
     fetchTitles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -207,7 +223,12 @@ export default function CategoryPage() {
     setTitles(uniqueTitles);
 
     if (uniqueTitles.length > 0) {
-      setSelectedTitle(uniqueTitles[0]);
+      const requested = titleParamValue?.toString();
+      if (requested && uniqueTitles.includes(requested)) {
+        setSelectedTitle(requested);
+      } else {
+        setSelectedTitle(uniqueTitles[0]);
+      }
     }
   };
 
