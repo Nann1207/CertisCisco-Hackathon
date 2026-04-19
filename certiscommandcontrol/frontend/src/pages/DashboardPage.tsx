@@ -121,6 +121,7 @@ export function DashboardPage() {
           timestamp: new Date().toISOString(),
           frames: result?.frames ?? [],
           cctvMeta: result?.cctv_meta ?? prev.cctvMeta,
+          sso: result?.sso ?? prev.sso,
           confirmed: null,
           correctedThreat: "",
         }));
