@@ -10,3 +10,8 @@ def get_supabase_client(supabase_url: str, supabase_anon_key: str, user_jwt: str
             headers={"Authorization": f"Bearer {user_jwt}"}
         ),
     )
+
+
+def get_supabase_service_client(supabase_url: str, service_role_key: str) -> Client:
+    # Uses service role key and bypasses RLS.
+    return create_client(supabase_url, service_role_key)

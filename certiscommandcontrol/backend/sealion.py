@@ -17,46 +17,79 @@ async def generate_incident_report(
 ) -> str:
     """
     Sends text + (optional) image data URLs to SeaLion chat completions.
-
-    Note: Many chat APIs accept multi-modal content as:
-      {"type":"text","text":"..."} and {"type":"image_url","image_url":{"url":"data:image/jpeg;base64,..."}}
-    If SeaLion’s endpoint is text-only for your key/model, we degrade gracefully by sending only text.
     """
+
+    # 🔥 STRONGER SYSTEM PROMPT
     system_text = (
-        "You are a senior mall security command analyst creating guidance for officers on the ground. "
-        "Be concise, operational, and safety-first. Use only provided evidence. "
-        "If uncertain, explicitly say so. Do not invent facts, identities, or weapons."
+        "You are a senior mall security command centre analyst issuing real-time instructions to ground officers. "
+        "Your role is to interpret CCTV observations and provide clear, direct, and actionable guidance. "
+        "Focus only on what is visible and operationally relevant. "
+        "Do NOT mention AI systems, models, confidence scores, or technical analysis. "
+        "Do NOT be repetitive or verbose. Avoid unnecessary uncertainty language. "
+        "Do NOT speculate beyond the evidence. "
+        "Write in a concise, command-style tone suitable for radio communication."
     )
 
-    top_objects = sorted(yolo_objects, key=lambda o: float(o.get("conf", 0.0)), reverse=True)[:12]
+    # Sort and limit detections
+    top_objects = sorted(
+        yolo_objects,
+        key=lambda o: float(o.get("conf", 0.0)),
+        reverse=True
+    )[:12]
+
+    # 🔥 IMPROVED CONTEXT (with your added rule)
     context_text = (
         "CCTV incident context:\n"
         f"- Camera: {cctv_meta.get('cctvName', 'Unknown')}\n"
         f"- Location: {cctv_meta.get('location', 'Unknown')}\n"
         f"- Coverage: {cctv_meta.get('coverage', 'Unknown')}\n"
-        f"- X3D predicted threat: {predicted_threat}\n"
-        f"- X3D confidence: {confidence:.4f}\n"
-        f"- threat_detected decision: {threat_detected}\n"
-        f"- X3D top-k: {topk_predictions}\n"
-        f"- YOLO detections (top by confidence): {top_objects}\n"
-        "Note: frames are sampled; YOLO may include false positives."
+        f"- Detected scenario: {predicted_threat}\n"
+        f"- Additional classification signals: {topk_predictions}\n"
+        f"- YOLO detections (sorted by relevance): {top_objects}\n"
+        "Note: Focus on the most relevant detections only. Ignore low-importance objects like furniture unless directly related to the situation. "
+        "Frames are sampled; rely on consistent visual indicators."
     )
 
+    # 🔥 STRONGER INSTRUCTIONS
     instruction_text = (
-        "Return plain text with these exact section headers:\n"
+        "Generate a structured incident report for responding officers.\n\n"
+
+        "Use these exact section headers:\n"
         "1) Situation Summary\n"
-        "2) Observed Indicators\n"
-        "3) Immediate Actions (0-2 min)\n"
-        "4) Follow-up Actions (2-10 min)\n"
+        "2) Key Observations\n"
+        "3) Immediate Actions \n"
+        "4) Follow-up Actions \n"
         "5) Officer Safety Notes\n"
-        "6) Uncertainty / Data Gaps\n"
-        "7) Dispatch Message (<=240 chars)\n"
-        "Keep each section short and actionable."
+        "6) Dispatch Message\n\n"
+
+        "Guidelines:\n"
+        "- Be clear, specific, and operational.\n"
+        "- Use short, direct, command-style sentences.\n"
+        "- Describe individuals using observable traits only (clothing, movement, position).\n"
+        "- Include location context and direction of movement.\n"
+        "- Focus on what officers need to DO immediately.\n"
+        "- Do NOT mention confidence levels, probabilities, or system limitations.\n"
+        "- Avoid unnecessary uncertainty language.\n"
+        "- If no clear threat is visible, state 'No immediate threat observed' and provide monitoring instructions.\n"
+        "- Keep all sections concise and actionable.\n\n"
+
+        "Output must be plain text only. No markdown, no bullet symbols."
     )
 
-    content = [{"type": "text", "text": f"{system_text}\n\n{context_text}\n\n{instruction_text}"}]
+    # Combine content
+    content = [
+        {
+            "type": "text",
+            "text": f"{system_text}\n\n{context_text}\n\n{instruction_text}"
+        }
+    ]
+
+    # Attach up to 4 frames
     for url in frame_data_urls[:4]:
-        content.append({"type": "image_url", "image_url": {"url": url}})
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": url}
+        })
 
     payload = {
         "model": model,
@@ -79,7 +112,7 @@ async def generate_incident_report(
         r.raise_for_status()
         data = r.json()
 
-    # OpenAI-style shape: choices[0].message.content
+    # Parse response
     try:
         content = data["choices"][0]["message"]["content"]
         if isinstance(content, str):

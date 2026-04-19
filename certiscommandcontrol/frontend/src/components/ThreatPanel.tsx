@@ -1,19 +1,33 @@
 export type ThreatState = {
     status: "no_threat" | "threat" | "error";
+    incidentId: string | null;
+    sourceTileId?: string | null;
     headline: string;
     predictedThreat: string;
     description: string;
     editedDescription: string;
     objects: { label: string; conf: number }[];
     cctvMeta: null | { cctvName: string; location: string; coverage: string };
-    sso: { name: string; role: string; phone: string };
+    sso: { id?: string | null; shift_id?: string | null; name: string; role: string; phone: string };
     confirmed: null | boolean;
     correctedThreat: string;
     timestamp: string;
     frames: string[]; // base64 urls or image urls
+    submitting?: boolean;
+    submitMessage?: string;
   };
   
-  export function ThreatPanel({ state }: { state: ThreatState }) {
+  export function ThreatPanel({
+    state,
+    onEditedDescriptionChange,
+    onConfirmSend,
+    onFalseAlarm,
+  }: {
+    state: ThreatState;
+    onEditedDescriptionChange: (value: string) => void;
+    onConfirmSend: () => void;
+    onFalseAlarm: () => void;
+  }) {
     return (
       <div className="panelCard">
         <div className="panelTitle">Incident Console</div>
@@ -48,9 +62,14 @@ export type ThreatState = {
               <div className="k">Timestamp</div>
               <div className="v">{new Date(state.timestamp).toLocaleString()}</div>
             </div>
-  
+
             <div className="panelTextareaLabel">AI description (editable)</div>
-            <textarea className="panelTextarea" value={state.editedDescription} readOnly />
+            <textarea
+              className="panelTextarea"
+              value={state.editedDescription}
+              onChange={(e) => onEditedDescriptionChange(e.target.value)}
+              readOnly={state.status !== "threat" || Boolean(state.submitting)}
+            />
   
             <div className="panelSectionTitle" style={{ marginTop: 14 }}>Objects (YOLO context)</div>
             <div className="chips">
@@ -84,11 +103,24 @@ export type ThreatState = {
             <div className="panelNote">
               Confirmation + edits will be submitted with 3–4 frames for incident logging.
             </div>
-  
+
             <div className="panelButtons">
-              <button className="btnPrimary" disabled>Confirm & Send</button>
-              <button className="btnGhost" disabled>Mark False Alarm</button>
+              <button
+                className="btnPrimary"
+                onClick={onConfirmSend}
+                disabled={state.status !== "threat" || Boolean(state.submitting)}
+              >
+                {state.submitting ? "Sending..." : "Confirm & Send"}
+              </button>
+              <button
+                className="btnGhost"
+                onClick={onFalseAlarm}
+                disabled={state.status !== "threat" || Boolean(state.submitting)}
+              >
+                Mark False Alarm
+              </button>
             </div>
+            {state.submitMessage ? <div className="panelNote">{state.submitMessage}</div> : null}
           </div>
         </div>
   
