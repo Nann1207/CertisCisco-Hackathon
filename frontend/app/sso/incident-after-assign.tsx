@@ -89,6 +89,7 @@ export default function SsoIncidentAfterAssignPage() {
   const [cctvUris, setCctvUris] = useState<string[]>([]);
 
   const addBackupPulse = useRef(new Animated.Value(0)).current;
+  const channelNonceRef = useRef(0);
 
   useEffect(() => {
     if (!backupAttentionActive) {
@@ -208,8 +209,10 @@ export default function SsoIncidentAfterAssignPage() {
   useEffect(() => {
     if (!incidentId) return;
 
+    channelNonceRef.current += 1;
+
     const channel = supabase
-      .channel(`sso-incident-after-${incidentId}`)
+      .channel(`sso-incident-after-${incidentId}-${channelNonceRef.current}`)
       .on(
         "postgres_changes",
         {
@@ -853,7 +856,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     marginTop: 12,
     color: "#0E2D52",
-    fontSize: 13,
+    fontSize: 16,
     lineHeight: 22,
     fontWeight: "700",
   },
@@ -868,8 +871,8 @@ const styles = StyleSheet.create({
     minHeight: 78,
   },
   assessmentText: {
-    color: "#2C4B6E",
-    fontSize: 13,
+    color: "#000000",
+    fontSize: 16,
     lineHeight: 18,
     fontWeight: "400",
   },
@@ -905,7 +908,7 @@ const styles = StyleSheet.create({
   assignedOfficerName: {
     marginTop: 6,
     color: "#243B53",
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "700",
     textAlign: "center",
     width: "100%",

@@ -72,6 +72,12 @@ type SupervisorName = {
   last_name: string | null;
 };
 
+type ShiftWindow = {
+  shiftDate: string;
+  shiftStart: string;
+  shiftEnd: string;
+};
+
 type ExistingAssignedOfficer = {
   officerId: string;
   officerName: string;
@@ -192,8 +198,19 @@ export default function SsoAddBackupPage() {
         return;
       }
 
+      const shiftRows = ((rows as ShiftOfficerRow[] | null) ?? []);
+      const currentShift = selectCurrentShiftWindow(shiftRows);
+      const sourceRows = currentShift
+        ? shiftRows.filter(
+            (row) =>
+              row.shift_date === currentShift.shiftDate &&
+              row.shift_start === currentShift.shiftStart &&
+              row.shift_end === currentShift.shiftEnd
+          )
+        : shiftRows;
+
       const normalized = (
-        await Promise.all(((rows as ShiftOfficerRow[] | null) ?? []).map(async (row) => {
+        await Promise.all((sourceRows.length > 0 ? sourceRows : shiftRows).map(async (row) => {
           const employee = Array.isArray(row.employees) ? row.employees[0] : row.employees;
           if (!row.officer_id || !employee?.id) return null;
 
@@ -419,7 +436,7 @@ export default function SsoAddBackupPage() {
                       </View>
                       <View style={styles.shiftMeta}>
                         <Text style={styles.shiftMetaLabel}>Shift Time</Text>
-                        <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftStart, officer.shiftEnd)}</Text>
+                        <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftDate, officer.shiftStart, officer.shiftEnd)}</Text>
                       </View>
                     </View>
 
@@ -544,13 +561,70 @@ function formatDate(isoDate: string) {
   });
 }
 
-function formatTimeRange(startISO: string, endISO: string) {
+function formatTimeRange(shiftDate: string, startISO: string, endISO: string) {
+  const start = formatShiftTime(shiftDate, startISO);
+  const end = formatShiftTime(shiftDate, endISO);
+  return `${start} - ${end}`;
+}
+
+function formatShiftTime(shiftDate: string, shiftValue: string) {
   const opts: Intl.DateTimeFormatOptions = {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: DISPLAY_TIME_ZONE,
   };
-  return `${new Date(startISO).toLocaleTimeString([], opts)} - ${new Date(endISO).toLocaleTimeString([], opts)}`;
+
+  const ts = parseShiftTimestamp(shiftDate, shiftValue);
+  if (ts === null) return "--:--";
+  return new Date(ts).toLocaleTimeString([], opts);
+}
+
+function selectCurrentShiftWindow(rows: ShiftOfficerRow[]): ShiftWindow | null {
+  if (rows.length === 0) return null;
+
+  const now = Date.now();
+  for (const row of rows) {
+    const start = parseShiftTimestamp(row.shift_date, row.shift_start);
+    const end = parseShiftTimestamp(row.shift_date, row.shift_end);
+    if (start === null || end === null) continue;
+    if (now >= start && now <= end) {
+      return {
+        shiftDate: row.shift_date,
+        shiftStart: row.shift_start,
+        shiftEnd: row.shift_end,
+      };
+    }
+  }
+
+  const slotCounts = new Map<string, { count: number; slot: ShiftWindow }>();
+  for (const row of rows) {
+    const key = `${row.shift_date}|${row.shift_start}|${row.shift_end}`;
+    const existing = slotCounts.get(key);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+    slotCounts.set(key, {
+      count: 1,
+      slot: { shiftDate: row.shift_date, shiftStart: row.shift_start, shiftEnd: row.shift_end },
+    });
+  }
+
+  const winner = Array.from(slotCounts.values()).sort((a, b) => b.count - a.count)[0];
+  return winner?.slot ?? null;
+}
+
+function parseShiftTimestamp(shiftDate: string, shiftValue: string) {
+  const raw = shiftValue?.trim();
+  if (!raw) return null;
+
+  const direct = new Date(raw);
+  if (Number.isFinite(direct.getTime())) return direct.getTime();
+
+  const combined = new Date(`${shiftDate}T${raw}`);
+  if (Number.isFinite(combined.getTime())) return combined.getTime();
+
+  return null;
 }
 
 const styles = StyleSheet.create({
@@ -623,7 +697,7 @@ const styles = StyleSheet.create({
   assignedOfficerName: {
     marginTop: 4,
     color: "#4B5563",
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "700",
     textAlign: "center",
   },
@@ -685,14 +759,14 @@ const styles = StyleSheet.create({
   },
   profileName: {
     color: "#000000",
-    fontSize: 12,
+    fontSize: 16,
     lineHeight: 16,
     fontWeight: "700",
   },
   profileRole: {
     marginTop: 1,
     color: "#7C7C7C",
-    fontSize: 10,
+    fontSize: 12,
     lineHeight: 13,
     fontWeight: "700",
   },

@@ -727,14 +727,14 @@ const styles = StyleSheet.create({
   },
   profileName: {
     color: "#000000",
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 16,
+    lineHeight: 17,
     fontWeight: "700",
   },
   profileRole: {
     color: "#7C7C7C",
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 14,
+    lineHeight: 14,
     fontWeight: "700",
   },
   badgesCol: {

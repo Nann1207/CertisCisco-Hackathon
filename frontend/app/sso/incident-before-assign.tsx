@@ -353,7 +353,7 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: 11,
-    paddingTop: 10,
+    paddingTop: 40,
     paddingBottom: 14,
     backgroundColor: "#0E2D52",
     flexDirection: "row",
@@ -444,7 +444,7 @@ const styles = StyleSheet.create({
   },
   assessmentTitle: {
     marginTop: 12,
-    fontSize: 13,
+    fontSize: 16,
     lineHeight: 22,
     fontWeight: "800",
     color: "#0E2D52",
@@ -460,8 +460,8 @@ const styles = StyleSheet.create({
     minHeight: 139,
   },
   assessmentText: {
-    color: "#2C4B6E",
-    fontSize: 13,
+    color: "#000000",
+    fontSize: 16,
     lineHeight: 18,
   },
   dispatchFloatingArea: {
