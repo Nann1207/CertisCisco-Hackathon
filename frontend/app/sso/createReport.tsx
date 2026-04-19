@@ -85,6 +85,12 @@ export default function SsoCreateReportScreen() {
   }, [routeReportType]);
 
   useEffect(() => {
+    if (reportType === "Resolved" && handoverInstructions) {
+      setHandoverInstructions("");
+    }
+  }, [handoverInstructions, reportType]);
+
+  useEffect(() => {
     let alive = true;
 
     const loadData = async () => {
@@ -338,16 +344,20 @@ export default function SsoCreateReportScreen() {
                 style={[styles.textArea, styles.largeTextArea]}
               />
 
-              <Text style={styles.label}>Handover Instructions:</Text>
-              <TextInput
-                value={handoverInstructions}
-                onChangeText={setHandoverInstructions}
-                placeholder="Enter instructions for next officer"
-                placeholderTextColor="#9CA3AF"
-                multiline
-                textAlignVertical="top"
-                style={styles.textArea}
-              />
+              {reportType === "Handover" ? (
+                <>
+                  <Text style={styles.label}>Handover Instructions:</Text>
+                  <TextInput
+                    value={handoverInstructions}
+                    onChangeText={setHandoverInstructions}
+                    placeholder="Enter instructions for next officer"
+                    placeholderTextColor="#9CA3AF"
+                    multiline
+                    textAlignVertical="top"
+                    style={styles.textArea}
+                  />
+                </>
+              ) : null}
 
               <Text style={styles.label}>Supervisor Incharge Name:</Text>
               <FieldBox value={securitySupervisorName} />
@@ -454,7 +464,7 @@ const styles = StyleSheet.create({
   },
   headerRow: {
     paddingHorizontal: 14,
-    paddingTop: 10,
+    paddingTop: 40,
     paddingBottom: 8,
     flexDirection: "row",
     alignItems: "center",

@@ -13,10 +13,12 @@ import {
 } from "react-native";
 import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import * as Location from "expo-location";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { BellRing, ChevronLeft, ClipboardPen, PhoneCall, Settings2 } from "lucide-react-native";
+import { BellRing, Check, ChevronLeft, ClipboardPen, PhoneCall } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
+import { getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
 import { supabase } from "../../lib/supabase";
 
 type IncidentRow = {
@@ -45,6 +47,7 @@ type AssignmentRow = Record<string, unknown> & {
 
 type EmployeeRow = {
   id: string;
+  emp_id?: string | null;
   first_name: string | null;
   last_name: string | null;
   role: string | null;
@@ -56,7 +59,7 @@ type AssignedOfficer = {
   officerId: string;
   officerName: string;
   role: string;
-  profilePhotoPath: string | null;
+  profilePhotoUrl: string | null;
 };
 
 type BackupRequestDetails = {
@@ -268,10 +271,15 @@ export default function SsoIncidentAfterAssignPage() {
   );
 
   const incidentTitle = useMemo(() => {
-    const category = (incident?.incident_category ?? "Incident").toString();
-    const locationName = (incident?.location_name ?? incident?.location_description ?? "Unknown Location").toString();
-    return `${category} AT ${locationName}`;
+    const category = (incident?.incident_category ?? "Incident").toString().trim();
+    const locationName = (incident?.location_name ?? incident?.location_description ?? "Unknown Location").toString().trim();
+    return `${category} AT ${locationName}`.toUpperCase();
   }, [incident?.incident_category, incident?.location_description, incident?.location_name]);
+
+  const locationLabel = useMemo(() => {
+    const unit = incident?.location_unit_no?.trim();
+    return unit ? `#${unit}` : "Unit Pending";
+  }, [incident?.location_unit_no]);
 
   const addBackupScale = addBackupPulse.interpolate({
     inputRange: [0, 1],
@@ -334,8 +342,8 @@ export default function SsoIncidentAfterAssignPage() {
   if (loading) {
     return (
       <SafeAreaView style={styles.root}>
-        <View style={styles.centeredWrap}>
-          <ActivityIndicator color="#123A67" />
+        <View style={styles.loaderWrap}>
+          <ActivityIndicator color="#FFFFFF" />
         </View>
       </SafeAreaView>
     );
@@ -344,7 +352,7 @@ export default function SsoIncidentAfterAssignPage() {
   if (!incident) {
     return (
       <SafeAreaView style={styles.root}>
-        <View style={styles.centeredWrap}>
+        <View style={styles.loaderWrap}>
           <Text style={styles.emptyText}>Incident is unavailable.</Text>
           <Pressable style={styles.primaryBtn} onPress={() => router.replace("/sso/home")}>
             <Text style={styles.primaryBtnText}>Back to Home</Text>
@@ -356,48 +364,56 @@ export default function SsoIncidentAfterAssignPage() {
 
   return (
     <SafeAreaView style={styles.root}>
-      <View style={styles.header}>
-        <Pressable
-          style={styles.iconBtn}
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/sso/home"))}
-        >
-          <ChevronLeft size={24} color="#FFFFFF" />
-        </Pressable>
-        <Text style={styles.headerTitle}>Incident Information</Text>
-        <Pressable style={styles.iconBtn}>
-          <Settings2 size={22} color="#FFFFFF" />
-        </Pressable>
+      <View style={styles.topPanel}>
+        <View style={styles.header}>
+          <Pressable
+            style={styles.iconBtn}
+            onPress={() => (router.canGoBack() ? router.back() : router.replace("/sso/home"))}
+          >
+            <ChevronLeft size={24} color="#FFFFFF" />
+          </Pressable>
+          <Text style={styles.headerTitle}>Incident Information</Text>
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.card}>
+      <View style={styles.bodyPanel}>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <Text style={styles.incidentTitle}>{incidentTitle}</Text>
-          <Text style={styles.unitText}>
-            {incident.location_unit_no?.trim() ? `#${incident.location_unit_no?.trim()}` : "Unit Pending"}
-          </Text>
+          <Text style={styles.unitText}>{locationLabel}</Text>
 
-          <MapView style={styles.map} initialRegion={incidentRegion} onPress={onOpenMapModal}>
-            {incident.latitude && incident.longitude ? (
-              <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
-            ) : null}
-            {currentCoords ? <Marker coordinate={currentCoords} title="You" pinColor="#2563EB" /> : null}
-            {currentCoords && incident.latitude && incident.longitude ? (
-              <Polyline
-                coordinates={[currentCoords, { latitude: incident.latitude, longitude: incident.longitude }]}
-                strokeColor="#D7263D"
-                strokeWidth={3}
-              />
-            ) : null}
-          </MapView>
+          <Pressable style={styles.mapCard} onPress={onOpenMapModal}>
+            <MapView style={styles.map} initialRegion={incidentRegion}>
+              {incident.latitude && incident.longitude ? (
+                <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
+              ) : null}
+              {currentCoords ? <Marker coordinate={currentCoords} title="You" pinColor="#2563EB" /> : null}
+              {currentCoords && incident.latitude && incident.longitude ? (
+                <Polyline
+                  coordinates={[currentCoords, { latitude: incident.latitude, longitude: incident.longitude }]}
+                  strokeColor="#D7263D"
+                  strokeWidth={3}
+                  lineDashPattern={[8, 6]}
+                />
+              ) : null}
+            </MapView>
+          </Pressable>
 
           <View style={styles.cctvRow}>
             {cctvUris.length > 0 ? (
-              cctvUris.slice(0, 3).map((uri, idx) => <Image key={`${uri}-${idx}`} source={{ uri }} style={styles.cctvImage} />)
+              cctvUris.slice(0, 3).map((uri, idx) => (
+                <Image key={`${uri}-${idx}`} source={{ uri }} style={styles.cctvImage} />
+              ))
             ) : (
               <>
-                <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 1</Text></View>
-                <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 2</Text></View>
-                <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 3</Text></View>
+                <View style={styles.cctvPlaceholder}>
+                  <Text style={styles.cctvPlaceholderText}>CCTV 1</Text>
+                </View>
+                <View style={styles.cctvPlaceholder}>
+                  <Text style={styles.cctvPlaceholderText}>CCTV 2</Text>
+                </View>
+                <View style={styles.cctvPlaceholder}>
+                  <Text style={styles.cctvPlaceholderText}>CCTV 3</Text>
+                </View>
               </>
             )}
           </View>
@@ -405,30 +421,36 @@ export default function SsoIncidentAfterAssignPage() {
           <View style={styles.actionRowTop}>
             <Animated.View style={backupAttentionActive ? { transform: [{ scale: addBackupScale }] } : null}>
               <Pressable style={[styles.actionChip, styles.actionChipWarm]} onPress={onOpenAddBackup}>
-                <BellRing size={16} color="#991B1B" />
+                <BellRing size={16} color="#9C2222" />
                 <Text style={styles.actionChipWarmText}>Add Backup</Text>
               </Pressable>
             </Animated.View>
 
             <Pressable style={[styles.actionChip, styles.actionChipBlue]} onPress={() => router.push("/sso/phonecalls")}>
-              <PhoneCall size={16} color="#587493" />
+              <PhoneCall size={16} color="#5A6E85" />
               <Text style={styles.actionChipBlueText}>CCO</Text>
             </Pressable>
           </View>
 
-          <Text style={styles.assessmentTitle}>AI Assessment Report</Text>
+          <View style={styles.sectionDivider} />
+
+          <Text style={styles.sectionLabel}>AI Assessment Report</Text>
           <View style={styles.assessmentBox}>
             <Text style={styles.assessmentText}>{incident.ai_assessment?.trim() || "No AI assessment available."}</Text>
           </View>
 
-          <Text style={styles.assignedTitle}>Assigned Officers</Text>
-          <View style={styles.assignedRow}>
+          <Text style={styles.sectionLabel}>Assigned Officers</Text>
+          <View style={styles.assignedStrip}>
             {assignedOfficers.length > 0 ? (
               assignedOfficers.map((officer) => (
                 <View key={officer.assignmentId} style={styles.assignedOfficerItem}>
-                  <OfficerAvatar profilePhotoPath={officer.profilePhotoPath} officerName={officer.officerName} />
-                  <Text style={styles.assignedOfficerName} numberOfLines={1}>{officer.officerName}</Text>
-                  <Text style={styles.assignedOfficerRole} numberOfLines={1}>{officer.role}</Text>
+                  <OfficerAvatar profilePhotoUrl={officer.profilePhotoUrl} officerName={officer.officerName} />
+                  <Text style={styles.assignedOfficerName} numberOfLines={1}>
+                    {officer.officerName}
+                  </Text>
+                  <Text style={styles.assignedOfficerRole} numberOfLines={1}>
+                    {officer.role}
+                  </Text>
                 </View>
               ))
             ) : (
@@ -436,20 +458,31 @@ export default function SsoIncidentAfterAssignPage() {
             )}
           </View>
 
-          <Pressable style={styles.reportBtn} onPress={() => { void onSubmitIncidentReport(); }}>
-            <ClipboardPen size={20} color="#FFFFFF" />
-            <Text style={styles.reportBtnText}>Incident Report</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
+          <View style={styles.footerActionArea}>
+            <LinearGradient
+              colors={["rgba(255,255,255,0)", "rgba(255,255,255,0.45)", "#FFFFFF"]}
+              locations={[0.15, 0.45, 0.82]}
+              style={styles.footerGlow}
+            />
+
+            <Pressable style={styles.reportBtn} onPress={() => { void onSubmitIncidentReport(); }}>
+              <ClipboardPen size={19} color="#FFFFFF" />
+              <Text style={styles.reportBtnText}>Incident Report</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </View>
 
       <Modal visible={showBackupRequestModal} transparent animationType="fade" onRequestClose={() => {}}>
         <View style={styles.requestBackdrop}>
           <View style={styles.requestCard}>
             <Text style={styles.requestTitle}>REQUEST BACKUP</Text>
-            <Text style={styles.requestSubText}>{backupRequestDetails?.reason || "Your officers requested additional backup support."}</Text>
+            <Text style={styles.requestSubText}>
+              {backupRequestDetails?.reason || "Your officers requested additional backup support."}
+            </Text>
             <Text style={styles.requestNameText}>
-              {(backupRequestDetails?.requesterName || "Assigned Officer")} request {backupRequestDetails?.requestedCount ?? 1} officer(s) for backup
+              {(backupRequestDetails?.requesterName || "Assigned Officer")} request{" "}
+              {backupRequestDetails?.requestedCount ?? 1} officer(s) for backup
             </Text>
             <Text style={styles.requestAttentionText}>Please attend to request immediately</Text>
 
@@ -545,33 +578,34 @@ async function refreshAssignedOfficers(
   if (officerIds.length > 0) {
     const { data: employeeRows } = await supabase
       .from("employees")
-      .select("id, first_name, last_name, role, profile_photo_path")
+      .select("id, emp_id, first_name, last_name, role, profile_photo_path")
       .in("id", officerIds);
 
-    employeeMap = new Map(
-      ((employeeRows as EmployeeRow[] | null) ?? []).map((row) => [row.id, row])
-    );
+    employeeMap = new Map(((employeeRows as EmployeeRow[] | null) ?? []).map((row) => [row.id, row]));
   }
 
-  const assigned = rows
-    .map((row, index) => {
-      const officerId = typeof row.officer_id === "string" ? row.officer_id : null;
-      if (!officerId) return null;
+  const assigned = (
+    await Promise.all(
+      rows.map(async (row, index) => {
+        const officerId = typeof row.officer_id === "string" ? row.officer_id : null;
+        if (!officerId) return null;
 
-      const employee = employeeMap.get(officerId) ?? null;
-      const fallbackName = `${(employee?.first_name ?? "").trim()} ${(employee?.last_name ?? "").trim()}`.trim();
-      const officerNameRaw = typeof row.officer_name === "string" ? row.officer_name.trim() : "";
-      const officerName = officerNameRaw || fallbackName || "Assigned Officer";
+        const employee = employeeMap.get(officerId) ?? null;
+        const fallbackName = `${(employee?.first_name ?? "").trim()} ${(employee?.last_name ?? "").trim()}`.trim();
+        const officerNameRaw = typeof row.officer_name === "string" ? row.officer_name.trim() : "";
+        const officerName = officerNameRaw || fallbackName || "Assigned Officer";
+        const profilePhotoUrl = await getProfilePhotoUrlFromPath(employee?.profile_photo_path ?? null);
 
-      return {
-        assignmentId: typeof row.assignment_id === "string" ? row.assignment_id : `${officerId}-${index}`,
-        officerId,
-        officerName,
-        role: employee?.role?.trim() || "Security Officer",
-        profilePhotoPath: employee?.profile_photo_path ?? null,
-      } satisfies AssignedOfficer;
-    })
-    .filter((item): item is AssignedOfficer => Boolean(item));
+        return {
+          assignmentId: typeof row.assignment_id === "string" ? row.assignment_id : `${officerId}-${index}`,
+          officerId,
+          officerName,
+          role: employee?.role?.trim() || "Security Officer",
+          profilePhotoUrl,
+        } satisfies AssignedOfficer;
+      })
+    )
+  ).filter((item): item is AssignedOfficer => Boolean(item));
 
   setAssignedOfficers(assigned);
 
@@ -586,7 +620,8 @@ async function refreshAssignedOfficers(
     );
 
     if (!requested) return false;
-    const assignmentId = typeof row.assignment_id === "string" ? row.assignment_id : `${row.officer_id ?? "officer"}-${index}`;
+    const assignmentId =
+      typeof row.assignment_id === "string" ? row.assignment_id : `${row.officer_id ?? "officer"}-${index}`;
     return !acknowledgedRequestIds.has(assignmentId);
   });
 
@@ -613,8 +648,7 @@ async function refreshAssignedOfficers(
     const reason = String(reasonRaw ?? "").trim();
 
     const requesterNameRaw =
-      (typeof pendingRequest.officer_name === "string" ? pendingRequest.officer_name : "") ||
-      "Assigned Officer";
+      (typeof pendingRequest.officer_name === "string" ? pendingRequest.officer_name : "") || "Assigned Officer";
 
     setBackupRequestDetails({
       assignmentId,
@@ -630,9 +664,9 @@ async function refreshAssignedOfficers(
   setBackupRequestDetails(null);
 }
 
-function OfficerAvatar({ profilePhotoPath, officerName }: { profilePhotoPath: string | null; officerName: string }) {
-  if (profilePhotoPath && /^https?:\/\//i.test(profilePhotoPath)) {
-    return <Image source={{ uri: profilePhotoPath }} style={styles.assignedAvatar} />;
+function OfficerAvatar({ profilePhotoUrl, officerName }: { profilePhotoUrl: string | null; officerName: string }) {
+  if (profilePhotoUrl) {
+    return <Image source={{ uri: profilePhotoUrl }} style={styles.assignedAvatar} />;
   }
 
   const initials = officerName
@@ -654,22 +688,42 @@ function clamp(value: number, min: number, max: number) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#ECEDEF" },
-  centeredWrap: {
+  root: {
     flex: 1,
-    justifyContent: "center",
+    backgroundColor: "#0E2D52",
+  },
+  loaderWrap: {
+    flex: 1,
     alignItems: "center",
-    gap: 10,
+    justifyContent: "center",
+    gap: 12,
   },
   emptyText: {
+    color: "#FFFFFF",
     fontSize: 15,
-    color: "#475569",
+    fontWeight: "600",
+  },
+  primaryBtn: {
+    minHeight: 42,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  topPanel: {
+    backgroundColor: "#0E2D52",
+    paddingBottom: 2,
   },
   header: {
     paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 12,
-    backgroundColor: "#133762",
+    paddingTop: 40,
+    paddingBottom: 6,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -678,60 +732,72 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
   headerTitle: {
-    fontSize: 36,
-    fontWeight: "700",
+    flex: 1,
+    marginHorizontal: 10,
     color: "#FFFFFF",
+    fontSize: 24,
+    lineHeight: 22,
+    fontWeight: "600",
+  },
+  bodyPanel: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    overflow: "hidden",
   },
   scrollContent: {
-    paddingHorizontal: 10,
-    paddingBottom: 24,
-  },
-  card: {
-    backgroundColor: "#EFF0F1",
-    borderRadius: 24,
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    paddingBottom: 14,
-    borderLeftWidth: 8,
-    borderLeftColor: "#6589BD",
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 32,
   },
   incidentTitle: {
-    fontSize: 34,
-    lineHeight: 39,
-    fontWeight: "900",
-    color: "#163A67",
-    textTransform: "uppercase",
+    color: "#0E2D52",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
+    textAlign: "center",
   },
   unitText: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#0059D6",
-    marginBottom: 8,
+    marginTop: 4,
+    color: "#0062FF",
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  mapCard: {
+    marginTop: 10,
+    borderRadius: 18,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#D9E2EC",
   },
   map: {
-    height: 130,
-    borderRadius: 10,
-    overflow: "hidden",
+    height: 214,
+    width: "100%",
   },
   cctvRow: {
     marginTop: 8,
     flexDirection: "row",
-    gap: 4,
+    gap: 8,
   },
   cctvImage: {
     flex: 1,
-    height: 90,
-    borderRadius: 6,
+    height: 103,
+    borderRadius: 10,
+    backgroundColor: "#D7DEE8",
   },
   cctvPlaceholder: {
     flex: 1,
-    height: 90,
-    borderRadius: 6,
+    height: 103,
+    borderRadius: 10,
     backgroundColor: "#D7DEE8",
     alignItems: "center",
     justifyContent: "center",
@@ -744,125 +810,154 @@ const styles = StyleSheet.create({
   actionRowTop: {
     marginTop: 10,
     flexDirection: "row",
-    alignItems: "center",
     gap: 8,
   },
   actionChip: {
-    minHeight: 36,
-    borderRadius: 18,
+    minHeight: 30,
+    borderRadius: 999,
     paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
     borderWidth: 1,
+    shadowColor: "#0E2D52",
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   actionChipWarm: {
-    backgroundColor: "#FFE9E2",
-    borderColor: "#F4C2B3",
+    backgroundColor: "#FFEBDD",
+    borderColor: "rgba(160,176,192,0.4)",
   },
   actionChipWarmText: {
-    color: "#B42318",
-    fontSize: 20,
-    fontWeight: "800",
+    color: "#9C2222",
+    fontSize: 11,
+    fontWeight: "700",
   },
   actionChipBlue: {
-    backgroundColor: "#E6F3FF",
-    borderColor: "#BAD9F2",
+    backgroundColor: "#EEF7FF",
+    borderColor: "rgba(160,176,192,0.4)",
   },
   actionChipBlueText: {
-    color: "#587493",
-    fontSize: 20,
-    fontWeight: "800",
+    color: "#5A6E85",
+    fontSize: 11,
+    fontWeight: "700",
   },
-  assessmentTitle: {
+  sectionDivider: {
     marginTop: 12,
-    fontSize: 28,
-    fontWeight: "800",
-    color: "#163A67",
+    height: 4,
+    backgroundColor: "#F1F1F1",
+    borderRadius: 999,
+  },
+  sectionLabel: {
+    marginTop: 12,
+    color: "#0E2D52",
+    fontSize: 13,
+    lineHeight: 22,
+    fontWeight: "700",
   },
   assessmentBox: {
-    marginTop: 6,
-    borderRadius: 10,
+    marginTop: 4,
+    borderRadius: 8,
     borderWidth: 2,
-    borderColor: "#5F9BD3",
-    backgroundColor: "#D4DDE2",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    minHeight: 98,
+    borderColor: "#5B9AC2",
+    backgroundColor: "#E9F2F5",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 78,
   },
   assessmentText: {
-    color: "#2F4E73",
-    fontSize: 19,
-    lineHeight: 28,
+    color: "#2C4B6E",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "400",
   },
-  assignedTitle: {
-    marginTop: 12,
-    color: "#163A67",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  assignedRow: {
-    marginTop: 8,
+  assignedStrip: {
+    marginTop: 4,
     flexDirection: "row",
-    alignItems: "flex-start",
     flexWrap: "wrap",
-    gap: 10,
+    gap: 12,
+    minHeight: 86,
   },
   assignedOfficerItem: {
-    width: 90,
+    width: 84,
     alignItems: "center",
   },
   assignedAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: "#CBD5E1",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
   },
   assignedAvatarFallback: {
-    justifyContent: "center",
     alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "#0E2D52",
   },
   assignedAvatarInitials: {
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "800",
   },
   assignedOfficerName: {
-    marginTop: 4,
-    color: "#374151",
-    fontSize: 12,
+    marginTop: 6,
+    color: "#243B53",
+    fontSize: 11,
     fontWeight: "700",
     textAlign: "center",
+    width: "100%",
   },
   assignedOfficerRole: {
+    marginTop: 1,
     color: "#6B7280",
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "600",
     textAlign: "center",
+    width: "100%",
   },
   emptyAssignedText: {
     color: "#6B7280",
     fontSize: 13,
     fontWeight: "600",
   },
+  footerActionArea: {
+    marginTop: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 74,
+  },
+  footerGlow: {
+    position: "absolute",
+    left: -18,
+    right: -18,
+    top: -10,
+    bottom: -8,
+  },
   reportBtn: {
-    marginTop: 16,
-    alignSelf: "center",
-    minHeight: 42,
-    borderRadius: 22,
+    minHeight: 40,
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
     backgroundColor: "#0E2D52",
+    borderWidth: 1,
+    borderColor: "rgba(160,176,192,0.4)",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    shadowColor: "#0E2D52",
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   reportBtnText: {
     color: "#FFFFFF",
-    fontSize: 24,
-    fontWeight: "800",
+    fontSize: 14,
+    fontWeight: "700",
   },
   requestBackdrop: {
     flex: 1,
@@ -927,19 +1022,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 16,
     fontWeight: "900",
-  },
-  primaryBtn: {
-    minHeight: 42,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-    backgroundColor: "#123A67",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  primaryBtnText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
   },
   modalWrap: {
     flex: 1,
