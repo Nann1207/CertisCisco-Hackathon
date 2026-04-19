@@ -68,6 +68,19 @@ type UpcomingShift = {
   } | null;
 };
 
+type ActiveIncidentAssignmentRow = {
+  assignment_id: string;
+  active_status: boolean | null;
+  incidents:
+    | {
+        incident_id: string;
+      }
+    | {
+        incident_id: string;
+      }[]
+    | null;
+};
+
 export default function Home() {
   const router = useRouter();
   const { clockedInShiftId, clockedInAt } = useLocalSearchParams<{
@@ -261,6 +274,14 @@ export default function Home() {
         .order("shift_start", { ascending: true })
         .limit(5);
 
+      const { data: activeAssignmentsRaw, error: activeAssignmentError } = await supabase
+        .from("incident_assignments")
+        .select("assignment_id, active_status, incidents(incident_id)")
+        .eq("officer_id", userId)
+        .eq("active_status", true)
+        .order("assigned_at", { ascending: false })
+        .limit(200);
+
       const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? [])
         .filter((shiftItem: any) => !shiftItem.completion_status)
         .map((shiftItem: any) => {
@@ -297,8 +318,8 @@ export default function Home() {
         };
       });
 
-      if (todayShiftError || upcomingError) {
-        setLoadError("Unable to load shifts right now.");
+      if (todayShiftError || upcomingError || activeAssignmentError) {
+        setLoadError("Unable to load home data right now.");
       }
 
       if (!upcomingError && (upcomingShiftsRaw?.length ?? 0) === 0) {
@@ -325,9 +346,22 @@ export default function Home() {
         }
       }
 
-      // 4) Incidents: STRICT rule = no shift => no incidents section
-      // Since incidents table is not ready yet, keep it simple:
-      const incidentText = todayShiftData.length > 0 ? "No incidents for today" : null;
+      const activeAssignments = (activeAssignmentsRaw as ActiveIncidentAssignmentRow[] | null) ?? [];
+      const activeIncidentIds = new Set(
+        activeAssignments
+          .map((row) => {
+            const incident = Array.isArray(row.incidents) ? row.incidents[0] : row.incidents;
+            return incident?.incident_id ?? null;
+          })
+          .filter((id): id is string => Boolean(id))
+      );
+
+      const incidentText =
+        activeIncidentIds.size > 0
+          ? `${activeIncidentIds.size} active incident${activeIncidentIds.size > 1 ? "s" : ""} require attention`
+          : todayShiftData.length > 0
+            ? "No incidents for today"
+            : null;
 
       if (!alive) return;
 
@@ -617,7 +651,7 @@ export default function Home() {
         </View>
       )}
 
-      {todayShift && todayIncidentSummary && (
+      {todayIncidentSummary && (
         <>
           <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}> 
             <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
