@@ -9,6 +9,7 @@ except Exception:
 # ✅ ADDED (for quiz generation)
 import os
 import json
+import random
 import requests
 from dotenv import load_dotenv
 
@@ -200,12 +201,19 @@ Rules:
         if not isinstance(explanation, str):
             explanation = str(explanation)
 
+        cleaned_choices = [c.strip() for c in choices]
+        correct_choice = cleaned_choices[int(answer_index)]
+
+        shuffled_choices = cleaned_choices[:]
+        random.shuffle(shuffled_choices)
+        shuffled_answer_index = shuffled_choices.index(correct_choice)
+
         normalized_questions.append(
             {
                 "id": str(qid),
                 "question": question.strip(),
-                "choices": [c.strip() for c in choices],
-                "answerIndex": int(answer_index),
+                "choices": shuffled_choices,
+                "answerIndex": shuffled_answer_index,
                 "explanation": explanation.strip(),
             }
         )

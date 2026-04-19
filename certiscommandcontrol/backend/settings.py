@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     SUPABASE_URL: str
     SUPABASE_ANON_KEY: str
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    INCIDENT_FRAMES_BUCKET: str = "incident-frames"
 
     SEA_LION_API_KEY: str
     SEA_LION_MODEL: str = "aisingapore/Gemma-SEA-LION-v4-27B-IT"

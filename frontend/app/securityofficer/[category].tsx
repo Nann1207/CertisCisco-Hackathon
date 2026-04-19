@@ -324,6 +324,17 @@ export default function CategoryPage() {
     setQuizSubmitted(false);
   };
 
+  const openLogistics = () => {
+    setTab("Logistics");
+    setMediaTab("Images");
+    setQuizIndex(0);
+    setQuizSelected(null);
+    setQuizSubmitted(false);
+    setQuizAnswers({});
+    setQuizShowResults(false);
+    setQuizError(null);
+  };
+
   return (
     <View style={styles.container}>
       {/* 🔵 HEADER */}
@@ -370,16 +381,13 @@ export default function CategoryPage() {
           </Pressable>
 
           <Pressable
-            style={[styles.pill, tab === "Logistics" && styles.pillActive]}
-            onPress={() => {
-              setTab("Logistics");
-              setMediaTab("Images");
-              setQuizIndex(0);
-              setQuizSelected(null);
-              setQuizSubmitted(false);
-              setQuizAnswers({});
-              setQuizShowResults(false);
-            }}
+            style={[
+              styles.pill,
+              tab === "Logistics" && styles.pillActive,
+              isQuizMode && styles.pillDisabled,
+            ]}
+            disabled={isQuizMode}
+            onPress={openLogistics}
           >
             <Text
               style={[
@@ -652,17 +660,16 @@ export default function CategoryPage() {
                       <>
                         {!currentQuestion ? (
                           <View style={styles.quizEmptyBox}>
-                            <Text style={styles.quizEmptyText}>
-                              No quiz questions yet for this category.
-                            </Text>
-                            <Pressable
-                              style={styles.quizPrimaryBtn}
-                              onPress={resetToDefault}
-                            >
-                              <Text style={styles.quizPrimaryBtnText}>
-                                Back to Guidelines
-                              </Text>
-                            </Pressable>
+                            {!quizLoading ? (
+                              <Pressable
+                                style={styles.quizPrimaryBtn}
+                                onPress={generateQuiz}
+                              >
+                                <Text style={styles.quizPrimaryBtnText}>
+                                  Try Again
+                                </Text>
+                              </Pressable>
+                            ) : null}
                           </View>
                         ) : (
                           <>

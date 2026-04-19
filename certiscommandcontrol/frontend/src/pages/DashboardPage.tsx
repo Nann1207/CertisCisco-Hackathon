@@ -5,7 +5,7 @@ import { CCTVTile } from "../components/CCTVTile";
 import type { TileState } from "../components/CCTVTile";
 import { ThreatPanel } from "../components/ThreatPanel";
 import type { ThreatState } from "../components/ThreatPanel";
-import { uploadVideoForTile } from "../lib/api";
+import { confirmIncident, uploadVideoForTile } from "../lib/api";
 import logo from "../assets/logo.png";
 
 const TILE_IDS = ["cctv1", "cctv2", "cctv3", "cctv4"] as const;
@@ -25,6 +25,8 @@ export function DashboardPage() {
 
   const [threat, setThreat] = useState<ThreatState>({
     status: "no_threat",
+    incidentId: null,
+    sourceTileId: null,
     headline: "Currently all CCTV Cameras are detecting no threats.",
     predictedThreat: "",
     description: "",
@@ -36,6 +38,8 @@ export function DashboardPage() {
     editedDescription: "",
     timestamp: new Date().toISOString(),
     frames: [],
+    submitting: false,
+    submitMessage: "",
   });
 
   useEffect(() => {
@@ -69,6 +73,8 @@ export function DashboardPage() {
     setThreat((prev) => ({
       ...prev,
       status: "no_threat",
+      incidentId: null,
+      sourceTileId: null,
       headline: "Currently all CCTV Cameras are detecting no threats.",
       predictedThreat: "",
       description: "",
@@ -78,6 +84,8 @@ export function DashboardPage() {
       correctedThreat: "",
       frames: [],
       timestamp: new Date().toISOString(),
+      submitting: false,
+      submitMessage: "",
     }));
   }, [anyThreat]);
 
@@ -113,6 +121,8 @@ export function DashboardPage() {
         setThreat((prev) => ({
           ...prev,
           status: "threat",
+          incidentId: result?.incident_id ?? null,
+          sourceTileId: tileId,
           headline: `Threat detected in ${result?.cctv_meta?.cctvName ?? tileId.toUpperCase()}`,
           predictedThreat: predicted,
           description: desc,
@@ -121,8 +131,11 @@ export function DashboardPage() {
           timestamp: new Date().toISOString(),
           frames: result?.frames ?? [],
           cctvMeta: result?.cctv_meta ?? prev.cctvMeta,
+          sso: result?.sso ?? prev.sso,
           confirmed: null,
           correctedThreat: "",
+          submitting: false,
+          submitMessage: "",
         }));
       }
     } catch (e: any) {
@@ -147,6 +160,8 @@ export function DashboardPage() {
     setThreat((prev) => ({
       ...prev,
       status: "no_threat",
+      incidentId: null,
+      sourceTileId: null,
       headline: "Currently all CCTV Cameras are detecting no threats.",
       predictedThreat: "",
       description: "",
@@ -156,7 +171,71 @@ export function DashboardPage() {
       correctedThreat: "",
       frames: [],
       timestamp: new Date().toISOString(),
+      submitting: false,
+      submitMessage: "",
     }));
+  }
+
+  function onEditedDescriptionChange(value: string) {
+    setThreat((prev) => ({ ...prev, editedDescription: value }));
+  }
+
+  async function submitConfirmation(confirmed: boolean) {
+    const snapshot = threat;
+    setThreat((prev) => ({ ...prev, submitting: true, submitMessage: "" }));
+
+    try {
+      const result = await confirmIncident({
+        apiUrl,
+        accessToken,
+        incidentId: snapshot.incidentId ?? undefined,
+        tileId: snapshot.sourceTileId ?? snapshot.cctvMeta?.cctvName,
+        confirmed,
+        predictedThreat: snapshot.predictedThreat,
+        cctvName: snapshot.cctvMeta?.cctvName,
+        locationName: snapshot.cctvMeta?.location,
+        coverage: snapshot.cctvMeta?.coverage,
+        frameUrls: snapshot.frames,
+        yoloObjects: snapshot.objects,
+        supervisorId: snapshot.sso.id ?? null,
+        shiftId: snapshot.sso.shift_id ?? null,
+        correctedThreat: confirmed ? undefined : snapshot.correctedThreat || snapshot.predictedThreat,
+        editedDescription: snapshot.editedDescription,
+      });
+
+      setThreat((prev) => ({
+        ...prev,
+        incidentId: result?.incident_id ?? prev.incidentId,
+        submitting: false,
+        confirmed,
+        status: confirmed ? prev.status : "no_threat",
+        submitMessage: confirmed ? "Incident confirmed and saved." : "Marked as false alarm and closed.",
+      }));
+
+      if (!confirmed) {
+        setTiles((prev) => ({
+          ...prev,
+          cctv1: { ...prev.cctv1, threat: false },
+          cctv2: { ...prev.cctv2, threat: false },
+          cctv3: { ...prev.cctv3, threat: false },
+          cctv4: { ...prev.cctv4, threat: false },
+        }));
+      }
+    } catch (e: any) {
+      setThreat((prev) => ({
+        ...prev,
+        submitting: false,
+        submitMessage: e?.message ?? "Failed to submit confirmation.",
+      }));
+    }
+  }
+
+  async function onConfirmSend() {
+    await submitConfirmation(true);
+  }
+
+  async function onFalseAlarm() {
+    await submitConfirmation(false);
   }
 
   return (
@@ -198,7 +277,12 @@ export function DashboardPage() {
         </section>
 
         <aside className="rightPanel">
-          <ThreatPanel state={threat} />
+          <ThreatPanel
+            state={threat}
+            onEditedDescriptionChange={onEditedDescriptionChange}
+            onConfirmSend={onConfirmSend}
+            onFalseAlarm={onFalseAlarm}
+          />
         </aside>
       </main>
     </div>
