@@ -296,9 +296,10 @@ def threat_to_incident_category(predicted_threat: str) -> str:
     return "Suspicious Person"
 
 
-def build_incident_name(predicted_threat: str, cctvid: str) -> str:
-    label = (predicted_threat or "incident").replace("_", " ").strip().title()
-    return f"{label} detected on {cctvid}"
+def build_incident_name(incident_category: str, location_name: str) -> str:
+    category = (incident_category or "Suspicious Person").strip()
+    location = (location_name or "Unknown").strip() or "Unknown"
+    return f"{category} Threat at {location}"
 
 
 def select_active_supervisor(
@@ -456,16 +457,20 @@ async def confirm_incident(
                 logger.warning("camera lookup failed during confirm create: %s", e)
 
         predicted_for_insert = corrected_threat or (payload.predicted_threat or "").strip() or "Suspicious Person"
+        incident_category = threat_to_incident_category(predicted_for_insert)
+        incident_location_name = (
+            (cam_data or {}).get("location_name")
+            or (cam_data or {}).get("main_location")
+            or payload.location_name
+            or "Unknown"
+        )
         cctvid = (cam_data or {}).get("cctvid") or source_cctvid or None
 
         incident_payload = {
             "incident_id": incident_id,
-            "incident_name": build_incident_name(predicted_for_insert, cctvid or "CCTV"),
-            "incident_category": threat_to_incident_category(predicted_for_insert),
-            "location_name": (cam_data or {}).get("location_name")
-            or (cam_data or {}).get("main_location")
-            or payload.location_name
-            or "Unknown",
+            "incident_name": build_incident_name(incident_category, incident_location_name),
+            "incident_category": incident_category,
+            "location_name": incident_location_name,
             "location_unit_no": (cam_data or {}).get("location"),
             "location_description": (cam_data or {}).get("coverage") or payload.coverage,
             "latitude": (cam_data or {}).get("latitude"),
@@ -522,6 +527,9 @@ async def confirm_incident(
 
     if corrected_threat:
         updates["predicted_threat"] = corrected_threat
+        updates["incident_category"] = threat_to_incident_category(corrected_threat)
+        if payload.location_name:
+            updates["incident_name"] = build_incident_name(updates["incident_category"], payload.location_name)
 
     if not payload.confirmed:
         updates["threat_detected"] = False
