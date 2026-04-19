@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import * as Location from "expo-location";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { BellRing, ChevronLeft, Settings2 } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
@@ -25,12 +26,15 @@ type IncidentRow = {
   location_description: string | null;
   latitude: number | null;
   longitude: number | null;
-  cctv_image_1: string | null;
-  cctv_image_2: string | null;
-  cctv_image_3: string | null;
+  cctv_image_1_path: string | null;
+  cctv_image_2_path: string | null;
+  cctv_image_3_path: string | null;
+  cctv_image_4: string | null;
   ai_assessment: string | null;
   active_status: boolean | null;
 };
+
+const INCIDENT_IMAGE_BUCKET = "incident-frames";
 
 export default function SsoIncidentBeforeAssignPage() {
   const router = useRouter();
@@ -71,7 +75,7 @@ export default function SsoIncidentBeforeAssignPage() {
       const { data, error } = await supabase
         .from("incidents")
         .select(
-          "incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, cctv_image_1, cctv_image_2, cctv_image_3, ai_assessment, active_status"
+          "incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, cctv_image_1_path, cctv_image_2_path, cctv_image_3_path, cctv_image_4, ai_assessment, active_status"
         )
         .eq("incident_id", incidentId)
         .eq("supervisor_id", userId)
@@ -199,56 +203,63 @@ export default function SsoIncidentBeforeAssignPage() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.card}>
-          <Text style={styles.incidentTitle}>{incidentTitle}</Text>
-          <Text style={styles.unitText}>
-            {incident.location_unit_no?.trim() ? `#${incident.location_unit_no?.trim()}` : "Unit Pending"}
-          </Text>
+      <View style={styles.bodyPanel}>
+        <View style={styles.leftRail} />
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.card}>
+            <Text style={styles.incidentTitle}>{incidentTitle}</Text>
+            <Text style={styles.unitText}>
+              {incident.location_unit_no?.trim() ? `#${incident.location_unit_no?.trim()}` : "#B2-05/06/07/08"}
+            </Text>
 
-          <MapView style={styles.map} initialRegion={incidentRegion} onPress={onOpenMapModal}>
-            {incident.latitude && incident.longitude ? (
-              <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
-            ) : null}
-            {currentCoords ? <Marker coordinate={currentCoords} title="You" pinColor="#2563EB" /> : null}
-            {currentCoords && incident.latitude && incident.longitude ? (
-              <Polyline
-                coordinates={[currentCoords, { latitude: incident.latitude, longitude: incident.longitude }]}
-                strokeColor="#D7263D"
-                strokeWidth={3}
-              />
-            ) : null}
-          </MapView>
-          <Pressable style={styles.mapHint} onPress={onOpenMapModal}>
-            <Text style={styles.mapHintText}>Tap map to open navigation view</Text>
-          </Pressable>
+            <MapView style={styles.map} initialRegion={incidentRegion} onPress={onOpenMapModal}>
+              {incident.latitude && incident.longitude ? (
+                <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
+              ) : null}
+              {currentCoords ? <Marker coordinate={currentCoords} title="You" pinColor="#2563EB" /> : null}
+              {currentCoords && incident.latitude && incident.longitude ? (
+                <Polyline
+                  coordinates={[currentCoords, { latitude: incident.latitude, longitude: incident.longitude }]}
+                  strokeColor="#D7263D"
+                  strokeWidth={3}
+                />
+              ) : null}
+            </MapView>
 
-          <View style={styles.cctvRow}>
-            {cctvUris.length > 0 ? (
-              cctvUris.slice(0, 3).map((uri, idx) => <Image key={`${uri}-${idx}`} source={{ uri }} style={styles.cctvImage} />)
-            ) : (
-              <>
-                <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 1</Text></View>
-                <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 2</Text></View>
-                <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 3</Text></View>
-              </>
-            )}
+            <View style={styles.cctvRow}>
+              {cctvUris.length > 0 ? (
+                cctvUris.slice(0, 3).map((uri, idx) => <Image key={`${uri}-${idx}`} source={{ uri }} style={styles.cctvImage} />)
+              ) : (
+                <>
+                  <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 1</Text></View>
+                  <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 2</Text></View>
+                  <View style={styles.cctvPlaceholder}><Text style={styles.cctvPlaceholderText}>CCTV 3</Text></View>
+                </>
+              )}
+            </View>
+
+            <Text style={styles.assessmentTitle}>AI Assessment Report</Text>
+            <View style={styles.assessmentBox}>
+              <Text style={styles.assessmentText}>{incident.ai_assessment?.trim() || "No AI assessment available."}</Text>
+            </View>
+
+            <Pressable
+              style={styles.dispatchBtnWrap}
+              onPress={() => router.push(`/sso/assign-officer?incidentId=${incident.incident_id}`)}
+            >
+              <LinearGradient
+                colors={["#F00707", "#680002"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.dispatchBtn}
+              >
+                <BellRing size={30} color="#FFFFFF" strokeWidth={2.8} />
+                <Text style={styles.dispatchBtnText}>Dispatch Officers Now</Text>
+              </LinearGradient>
+            </Pressable>
           </View>
-
-          <Text style={styles.assessmentTitle}>AI Assessment Report</Text>
-          <View style={styles.assessmentBox}>
-            <Text style={styles.assessmentText}>{incident.ai_assessment?.trim() || "No AI assessment available."}</Text>
-          </View>
-
-          <Pressable
-            style={styles.dispatchBtn}
-            onPress={() => router.push(`/sso/assign-officer?incidentId=${incident.incident_id}`)}
-          >
-            <BellRing size={22} color="#FFFFFF" />
-            <Text style={styles.dispatchBtnText}>Dispatch Officers Now</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       <Modal visible={showMapModal} animationType="slide" onRequestClose={() => setShowMapModal(false)}>
         <View style={styles.modalWrap}>
@@ -299,8 +310,24 @@ export default function SsoIncidentBeforeAssignPage() {
 
 function extractCctvUris(incident: IncidentRow | null) {
   if (!incident) return [] as string[];
-  const raw = [incident.cctv_image_1, incident.cctv_image_2, incident.cctv_image_3];
-  return raw.filter((item): item is string => Boolean(item && item.startsWith("http")));
+  const raw = [
+    incident.cctv_image_1_path,
+    incident.cctv_image_2_path,
+    incident.cctv_image_3_path,
+    incident.cctv_image_4,
+  ];
+
+  return raw
+    .map((item) => {
+      if (!item) return null;
+      const value = item.trim();
+      if (!value) return null;
+      if (/^https?:\/\//i.test(value)) return value;
+
+      const { data } = supabase.storage.from(INCIDENT_IMAGE_BUCKET).getPublicUrl(value);
+      return data.publicUrl || null;
+    })
+    .filter((item): item is string => Boolean(item));
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -308,7 +335,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#ECEDEF" },
+  root: { flex: 1, backgroundColor: "#0E2D52" },
   centeredWrap: {
     flex: 1,
     justifyContent: "center",
@@ -320,10 +347,10 @@ const styles = StyleSheet.create({
     color: "#475569",
   },
   header: {
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 12,
-    backgroundColor: "#133762",
+    paddingHorizontal: 11,
+    paddingTop: 10,
+    paddingBottom: 14,
+    backgroundColor: "#0E2D52",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -332,73 +359,75 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
   headerTitle: {
-    fontSize: 36,
-    fontWeight: "700",
+    fontSize: 24,
+    lineHeight: 22,
+    fontWeight: "600",
     color: "#FFFFFF",
   },
+  bodyPanel: {
+    flex: 1,
+    backgroundColor: "#F6F6F7",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    marginTop: 2,
+    overflow: "hidden",
+  },
+  leftRail: {
+    position: "absolute",
+    left: 8,
+    top: 16,
+    bottom: 112,
+    width: 7,
+    borderRadius: 14,
+    backgroundColor: "#5074A6",
+  },
   scrollContent: {
-    paddingHorizontal: 10,
-    paddingBottom: 24,
+    paddingHorizontal: 22,
+    paddingTop: 16,
+    paddingBottom: 112,
   },
   card: {
-    backgroundColor: "#EFF0F1",
-    borderRadius: 24,
-    paddingHorizontal: 10,
-    paddingTop: 8,
-    paddingBottom: 14,
-    borderLeftWidth: 8,
-    borderLeftColor: "#6589BD",
+    backgroundColor: "transparent",
   },
   incidentTitle: {
-    fontSize: 34,
-    lineHeight: 39,
-    fontWeight: "900",
-    color: "#163A67",
+    fontSize: 20,
+    lineHeight: 22,
+    fontWeight: "700",
+    color: "#0E2D52",
     textTransform: "uppercase",
   },
   unitText: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#0059D6",
-    marginBottom: 8,
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 22,
+    fontWeight: "700",
+    color: "#0062FF",
+    marginBottom: 6,
   },
   map: {
-    height: 130,
-    borderRadius: 10,
+    height: 129,
+    borderRadius: 0,
     overflow: "hidden",
   },
-  mapHint: {
-    marginTop: 6,
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    backgroundColor: "#E7EDF6",
-  },
-  mapHintText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#274C77",
-  },
   cctvRow: {
-    marginTop: 8,
+    marginTop: 0,
     flexDirection: "row",
-    gap: 4,
+    gap: 0,
   },
   cctvImage: {
     flex: 1,
-    height: 90,
-    borderRadius: 6,
+    height: 103,
   },
   cctvPlaceholder: {
     flex: 1,
-    height: 90,
-    borderRadius: 6,
+    height: 103,
     backgroundColor: "#D7DEE8",
     alignItems: "center",
     justifyContent: "center",
@@ -410,47 +439,49 @@ const styles = StyleSheet.create({
   },
   assessmentTitle: {
     marginTop: 12,
-    fontSize: 28,
+    fontSize: 13,
+    lineHeight: 22,
     fontWeight: "800",
-    color: "#163A67",
+    color: "#0E2D52",
   },
   assessmentBox: {
-    marginTop: 6,
-    borderRadius: 10,
+    marginTop: 0,
+    borderRadius: 8,
     borderWidth: 2,
-    borderColor: "#5F9BD3",
-    backgroundColor: "#D4DDE2",
-    paddingHorizontal: 12,
+    borderColor: "#5B9AC2",
+    backgroundColor: "#E9F2F5",
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    minHeight: 98,
+    minHeight: 139,
   },
   assessmentText: {
-    color: "#2F4E73",
-    fontSize: 19,
-    lineHeight: 28,
+    color: "#2C4B6E",
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  dispatchBtnWrap: {
+    marginTop: 18,
+    alignSelf: "center",
+    borderRadius: 111,
+    shadowColor: "#FF0202",
+    shadowOpacity: 0.6,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 15.7,
+    elevation: 10,
   },
   dispatchBtn: {
-    marginTop: 20,
-    alignSelf: "center",
-    minHeight: 56,
-    paddingHorizontal: 22,
-    borderRadius: 30,
-    backgroundColor: "#D60000",
+    height: 78,
+    width: 322,
+    borderRadius: 111,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    shadowColor: "#D60000",
-    shadowOpacity: 0.35,
-    shadowOffset: { width: 0, height: 8 },
-    shadowRadius: 14,
-    elevation: 10,
-    borderWidth: 2,
-    borderColor: "#F2D7D7",
   },
   dispatchBtnText: {
     color: "#FFFFFF",
-    fontSize: 34,
+    fontSize: 20,
+    lineHeight: 22,
     fontWeight: "800",
   },
   primaryBtn: {

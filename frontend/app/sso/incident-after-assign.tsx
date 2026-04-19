@@ -26,12 +26,15 @@ type IncidentRow = {
   location_description: string | null;
   latitude: number | null;
   longitude: number | null;
-  cctv_image_1: string | null;
-  cctv_image_2: string | null;
-  cctv_image_3: string | null;
+  cctv_image_1_path: string | null;
+  cctv_image_2_path: string | null;
+  cctv_image_3_path: string | null;
+  cctv_image_4: string | null;
   ai_assessment: string | null;
   active_status: boolean | null;
 };
+
+const INCIDENT_IMAGE_BUCKET = "incident-frames";
 
 type AssignmentRow = Record<string, unknown> & {
   assignment_id?: string;
@@ -57,6 +60,13 @@ type AssignedOfficer = {
   profilePhotoPath: string | null;
 };
 
+type BackupRequestDetails = {
+  assignmentId: string;
+  requesterName: string;
+  requestedCount: number;
+  reason: string;
+};
+
 export default function SsoIncidentAfterAssignPage() {
   const router = useRouter();
   const { incidentId } = useLocalSearchParams<{ incidentId?: string }>();
@@ -72,7 +82,8 @@ export default function SsoIncidentAfterAssignPage() {
 
   const [showBackupRequestModal, setShowBackupRequestModal] = useState(false);
   const [backupAttentionActive, setBackupAttentionActive] = useState(false);
-  const [backupAcknowledged, setBackupAcknowledged] = useState(false);
+  const [acknowledgedBackupRequestIds, setAcknowledgedBackupRequestIds] = useState<Set<string>>(new Set());
+  const [backupRequestDetails, setBackupRequestDetails] = useState<BackupRequestDetails | null>(null);
 
   const addBackupPulse = useRef(new Animated.Value(0)).current;
 
@@ -131,7 +142,7 @@ export default function SsoIncidentAfterAssignPage() {
       const { data: incidentData, error: incidentError } = await supabase
         .from("incidents")
         .select(
-          "incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, cctv_image_1, cctv_image_2, cctv_image_3, ai_assessment, active_status"
+          "incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, cctv_image_1_path, cctv_image_2_path, cctv_image_3_path, cctv_image_4, ai_assessment, active_status"
         )
         .eq("incident_id", incidentId)
         .eq("supervisor_id", userId)
@@ -146,7 +157,14 @@ export default function SsoIncidentAfterAssignPage() {
       }
 
       setIncident(incidentData as IncidentRow);
-      await refreshAssignedOfficers(incidentId, !backupAcknowledged, setAssignedOfficers, setShowBackupRequestModal, setBackupAttentionActive);
+      await refreshAssignedOfficers(
+        incidentId,
+        acknowledgedBackupRequestIds,
+        setAssignedOfficers,
+        setShowBackupRequestModal,
+        setBackupAttentionActive,
+        setBackupRequestDetails
+      );
       setLoading(false);
     };
 
@@ -155,7 +173,7 @@ export default function SsoIncidentAfterAssignPage() {
     return () => {
       alive = false;
     };
-  }, [backupAcknowledged, incidentId]);
+  }, [acknowledgedBackupRequestIds, incidentId]);
 
   useEffect(() => {
     if (!incidentId) return;
@@ -173,10 +191,11 @@ export default function SsoIncidentAfterAssignPage() {
         async () => {
           await refreshAssignedOfficers(
             incidentId,
-            !backupAcknowledged,
+            acknowledgedBackupRequestIds,
             setAssignedOfficers,
             setShowBackupRequestModal,
-            setBackupAttentionActive
+            setBackupAttentionActive,
+            setBackupRequestDetails
           );
         }
       )
@@ -185,7 +204,7 @@ export default function SsoIncidentAfterAssignPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [backupAcknowledged, incidentId]);
+  }, [acknowledgedBackupRequestIds, incidentId]);
 
   useEffect(() => {
     let watcher: Location.LocationSubscription | null = null;
@@ -403,15 +422,24 @@ export default function SsoIncidentAfterAssignPage() {
         <View style={styles.requestBackdrop}>
           <View style={styles.requestCard}>
             <Text style={styles.requestTitle}>REQUEST BACKUP</Text>
-            <Text style={styles.requestSubText}>Your officers requested additional backup support.</Text>
+            <Text style={styles.requestSubText}>{backupRequestDetails?.reason || "Your officers requested additional backup support."}</Text>
+            <Text style={styles.requestNameText}>
+              {(backupRequestDetails?.requesterName || "Assigned Officer")} request {backupRequestDetails?.requestedCount ?? 1} officer(s) for backup
+            </Text>
             <Text style={styles.requestAttentionText}>Please attend to request immediately</Text>
 
             <Pressable
               style={styles.requestAcknowledgeBtn}
               onPress={() => {
                 setShowBackupRequestModal(false);
-                setBackupAcknowledged(true);
                 setBackupAttentionActive(true);
+                if (backupRequestDetails?.assignmentId) {
+                  setAcknowledgedBackupRequestIds((prev) => {
+                    const next = new Set(prev);
+                    next.add(backupRequestDetails.assignmentId);
+                    return next;
+                  });
+                }
               }}
             >
               <Text style={styles.requestAcknowledgeText}>{"I ACKNOWLEDGE\nTHIS REQUEST"}</Text>
@@ -469,10 +497,11 @@ export default function SsoIncidentAfterAssignPage() {
 
 async function refreshAssignedOfficers(
   incidentId: string,
-  shouldTriggerBackupModal: boolean,
+  acknowledgedRequestIds: Set<string>,
   setAssignedOfficers: (value: AssignedOfficer[]) => void,
   setShowBackupRequestModal: (value: boolean) => void,
-  setBackupAttentionActive: (value: boolean) => void
+  setBackupAttentionActive: (value: boolean) => void,
+  setBackupRequestDetails: (value: BackupRequestDetails | null) => void
 ) {
   const { data: assignmentData } = await supabase
     .from("incident_assignments")
@@ -521,21 +550,59 @@ async function refreshAssignedOfficers(
 
   setAssignedOfficers(assigned);
 
-  const hasBackupRequest = rows.some((row) => {
+  const pendingRequest = rows.find((row, index) => {
     const dynamic = row as Record<string, unknown>;
-    return Boolean(
+    const requested = Boolean(
       dynamic.backup_requested ??
         dynamic.request_backup ??
         dynamic.backup_request ??
         dynamic.request_additional_officers ??
         dynamic.needs_backup
     );
+
+    if (!requested) return false;
+    const assignmentId = typeof row.assignment_id === "string" ? row.assignment_id : `${row.officer_id ?? "officer"}-${index}`;
+    return !acknowledgedRequestIds.has(assignmentId);
   });
 
-  if (hasBackupRequest && shouldTriggerBackupModal) {
+  if (pendingRequest) {
+    const dynamic = pendingRequest as Record<string, unknown>;
+    const assignmentId =
+      typeof pendingRequest.assignment_id === "string"
+        ? pendingRequest.assignment_id
+        : `${pendingRequest.officer_id ?? "officer"}-request`;
+
+    const countRaw =
+      dynamic.backup_requested_count ??
+      dynamic.request_backup_count ??
+      dynamic.requested_officer_count ??
+      dynamic.backup_count ??
+      1;
+    const requestedCount = Math.max(1, Number.parseInt(String(countRaw), 10) || 1);
+
+    const reasonRaw =
+      dynamic.backup_reason ??
+      dynamic.request_backup_reason ??
+      dynamic.backup_request_reason ??
+      "";
+    const reason = String(reasonRaw ?? "").trim();
+
+    const requesterNameRaw =
+      (typeof pendingRequest.officer_name === "string" ? pendingRequest.officer_name : "") ||
+      "Assigned Officer";
+
+    setBackupRequestDetails({
+      assignmentId,
+      requesterName: requesterNameRaw,
+      requestedCount,
+      reason,
+    });
     setShowBackupRequestModal(true);
     setBackupAttentionActive(true);
+    return;
   }
+
+  setBackupRequestDetails(null);
 }
 
 function OfficerAvatar({ profilePhotoPath, officerName }: { profilePhotoPath: string | null; officerName: string }) {
@@ -559,8 +626,24 @@ function OfficerAvatar({ profilePhotoPath, officerName }: { profilePhotoPath: st
 
 function extractCctvUris(incident: IncidentRow | null) {
   if (!incident) return [] as string[];
-  const raw = [incident.cctv_image_1, incident.cctv_image_2, incident.cctv_image_3];
-  return raw.filter((item): item is string => Boolean(item && item.startsWith("http")));
+  const raw = [
+    incident.cctv_image_1_path,
+    incident.cctv_image_2_path,
+    incident.cctv_image_3_path,
+    incident.cctv_image_4,
+  ];
+
+  return raw
+    .map((item) => {
+      if (!item) return null;
+      const value = item.trim();
+      if (!value) return null;
+      if (/^https?:\/\//i.test(value)) return value;
+
+      const { data } = supabase.storage.from(INCIDENT_IMAGE_BUCKET).getPublicUrl(value);
+      return data.publicUrl || null;
+    })
+    .filter((item): item is string => Boolean(item));
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -808,6 +891,14 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontSize: 15,
     fontWeight: "700",
+  },
+  requestNameText: {
+    marginTop: 14,
+    color: "#111827",
+    textAlign: "center",
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: "900",
   },
   requestAttentionText: {
     marginTop: 12,

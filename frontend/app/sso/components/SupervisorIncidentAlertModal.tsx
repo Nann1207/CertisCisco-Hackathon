@@ -196,13 +196,16 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
           end={{ x: 0.95, y: 1 }}
           style={styles.card}
         >
-          <Text style={styles.cardTitle}>REQUEST BACKUP</Text>
+          <Text style={styles.cardTitle}>NEW INCIDENT ASSIGNED</Text>
           <Text style={styles.subtleText}>You are now in charge of this incident as supervisor.</Text>
 
           <Text style={styles.incidentTitle}>{activeIncident?.title ?? "NEW INCIDENT"}</Text>
           <Text style={styles.locationText}>{activeIncident?.locationText ?? "Location Pending"}</Text>
 
-          <Text style={styles.warningText}>Quickly assign security officers to this incident.</Text>
+          <Text style={styles.warningText}>
+            Quickly assign security officers{"\n"}
+            to this incident.
+        </Text>
 
           <Pressable style={styles.ackButton} onPress={() => { void onAcknowledge(); }}>
             <Text style={styles.ackButtonText}>{"I ACKNOWLEDGE\nTHIS ASSIGNMENT"}</Text>
@@ -233,13 +236,12 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     color: "#10345F",
-    fontSize: 36,
+    fontSize: 26,
     fontWeight: "900",
     textAlign: "center",
-    lineHeight: 40,
+    lineHeight: 34,
   },
   subtleText: {
-    marginTop: 6,
     color: "#6B7280",
     textAlign: "center",
     fontSize: 14,
