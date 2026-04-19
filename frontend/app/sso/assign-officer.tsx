@@ -9,12 +9,15 @@ import {
   StyleSheet,
   View,
 } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CheckCircle2, ChevronLeft, Clock3, CircleX } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
 
 const DISPLAY_TIME_ZONE = "Asia/Singapore";
+const AVATAR_BUCKET = "profile-photos";
+const AVATAR_SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 type ShiftOfficerRow = {
   shift_id: string;
@@ -56,6 +59,7 @@ type CandidateOfficer = {
   lastName: string | null;
   role: string | null;
   profilePhotoPath: string | null;
+  profilePhotoUrl: string | null;
   hasActiveAssignment: boolean;
   alreadyAssignedToIncident: boolean;
 };
@@ -143,32 +147,49 @@ export default function SsoAssignOfficerPage() {
         return;
       }
 
-      const normalized = ((rows as ShiftOfficerRow[] | null) ?? [])
-        .map((row) => {
-          const employee = Array.isArray(row.employees) ? row.employees[0] : row.employees;
-          if (!row.officer_id || !employee?.id) return null;
+      const normalized: CandidateOfficer[] = [];
+      for (const row of ((rows as ShiftOfficerRow[] | null) ?? [])) {
+        const employee = Array.isArray(row.employees) ? row.employees[0] : row.employees;
+        if (!row.officer_id || !employee?.id) continue;
 
-          return {
-            officerId: row.officer_id,
-            shiftId: row.shift_id,
-            shiftDate: row.shift_date,
-            shiftStart: row.shift_start,
-            shiftEnd: row.shift_end,
-            clockinTime: row.clockin_time,
-            clockoutTime: row.clockout_time,
-            completionStatus: row.completion_status,
-            firstName: employee.first_name,
-            lastName: employee.last_name,
-            role: employee.role,
-            profilePhotoPath: employee.profile_photo_path,
-            hasActiveAssignment: false,
-            alreadyAssignedToIncident: false,
-          } satisfies CandidateOfficer;
-        })
-        .filter((item): item is CandidateOfficer => Boolean(item));
+        normalized.push({
+          officerId: row.officer_id,
+          shiftId: row.shift_id,
+          shiftDate: row.shift_date,
+          shiftStart: row.shift_start,
+          shiftEnd: row.shift_end,
+          clockinTime: row.clockin_time,
+          clockoutTime: row.clockout_time,
+          completionStatus: row.completion_status,
+          firstName: employee.first_name,
+          lastName: employee.last_name,
+          role: employee.role,
+          profilePhotoPath: employee.profile_photo_path,
+          profilePhotoUrl: null,
+          hasActiveAssignment: false,
+          alreadyAssignedToIncident: false,
+        });
+      }
+
+      const avatarPathCache = new Map<string, Promise<string | null>>();
+      const getAvatarUrl = (rawPath: string | null) => {
+        if (!rawPath?.trim()) return Promise.resolve(null);
+        const key = rawPath.trim();
+        if (!avatarPathCache.has(key)) {
+          avatarPathCache.set(key, resolveAvatarUrlFromPath(key));
+        }
+        return avatarPathCache.get(key) ?? Promise.resolve(null);
+      };
+
+      const normalizedWithAvatars: CandidateOfficer[] = await Promise.all(
+        normalized.map(async (item) => ({
+          ...item,
+          profilePhotoUrl: await getAvatarUrl(item.profilePhotoPath),
+        }))
+      );
 
       const uniqueByOfficer = new Map<string, CandidateOfficer>();
-      for (const row of normalized) {
+      for (const row of normalizedWithAvatars) {
         if (!uniqueByOfficer.has(row.officerId)) {
           uniqueByOfficer.set(row.officerId, row);
         }
@@ -324,100 +345,111 @@ export default function SsoAssignOfficerPage() {
         <Text style={styles.headerTitle}>Assign Officer</Text>
       </View>
 
-      {loading ? (
-        <View style={styles.loaderWrap}>
-          <ActivityIndicator color="#0E2D52" />
-        </View>
-      ) : (
-        <ScrollView contentContainerStyle={styles.content}>
-          {rankedCandidates.length === 0 ? (
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyText}>No officers found for your current shift.</Text>
-            </View>
-          ) : (
-            rankedCandidates.map(({ officer, clockStatus, availabilityStatus, fullName }) => {
-              const isSelected = selectedOfficerIds.has(officer.officerId);
-              const canAssign =
-                availabilityStatus.tone === "green" &&
-                !officer.alreadyAssignedToIncident;
+      <View style={styles.bodyPanel}>
+        {loading ? (
+          <View style={styles.loaderWrap}>
+            <ActivityIndicator color="#0E2D52" />
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.content}>
+            {rankedCandidates.length === 0 ? (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyText}>No officers found for your current shift.</Text>
+              </View>
+            ) : (
+              rankedCandidates.map(({ officer, clockStatus, availabilityStatus, fullName }) => {
+                const isSelected = selectedOfficerIds.has(officer.officerId);
+                const canAssign =
+                  availabilityStatus.tone === "green" &&
+                  !officer.alreadyAssignedToIncident;
 
-              return (
-                <View key={officer.officerId} style={styles.card}>
-                  <View style={styles.topRow}>
-                    <View style={styles.profileRow}>
-                      <ProfileAvatar profilePhotoPath={officer.profilePhotoPath} fullName={fullName} />
-                      <View style={styles.profileTextCol}>
-                        <Text style={styles.profileName}>{fullName}</Text>
-                        <Text style={styles.profileRole}>{officer.role ?? "Security Officer"}</Text>
+                return (
+                  <View key={officer.officerId} style={styles.card}>
+                    <View style={styles.topRow}>
+                      <View style={styles.profileRow}>
+                        <ProfileAvatar profilePhotoUri={officer.profilePhotoUrl} fullName={fullName} />
+                        <View style={styles.profileTextCol}>
+                          <Text style={styles.profileName}>{fullName}</Text>
+                          <Text style={styles.profileRole}>{officer.role ?? "Security Officer"}</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.badgesCol}>
+                        <StatusBadge label={clockStatus.label} tone={clockStatus.tone} />
+                        <StatusBadge label={availabilityStatus.label} tone={availabilityStatus.tone} />
                       </View>
                     </View>
 
-                    <View style={styles.badgesCol}>
-                      <StatusBadge label={clockStatus.label} tone={clockStatus.tone} />
-                      <StatusBadge label={availabilityStatus.label} tone={availabilityStatus.tone} />
+                    <View style={styles.shiftRow}>
+                      <View style={styles.shiftCol}>
+                        <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
+                        <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftStart, officer.shiftEnd)}</Text>
+                      </View>
+
+                      <Text style={styles.arrowText}>{"<---->"}</Text>
+
+                      <View style={[styles.shiftCol, styles.shiftColRight]}>
+                        <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
+                        <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftStart, officer.shiftEnd)}</Text>
+                      </View>
                     </View>
-                  </View>
 
-                  <View style={styles.shiftRow}>
-                    <View style={styles.shiftCol}>
-                      <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
-                      <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftStart, officer.shiftEnd)}</Text>
-                    </View>
-
-                    <Text style={styles.arrowText}>{"<---->"}</Text>
-
-                    <View style={[styles.shiftCol, styles.shiftColRight]}>
-                      <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
-                      <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftStart, officer.shiftEnd)}</Text>
-                    </View>
-                  </View>
-
-                  <Pressable
-                    style={[
-                      styles.assignBtn,
-                      isSelected ? styles.assignBtnSelected : null,
-                      !canAssign ? styles.assignBtnDisabled : null,
-                    ]}
-                    disabled={!canAssign}
-                    onPress={() => onToggleAssign(officer, canAssign)}
-                  >
-                    <Text
+                    <Pressable
                       style={[
-                        styles.assignBtnText,
-                        isSelected ? styles.assignBtnTextSelected : null,
-                        !canAssign ? styles.assignBtnTextDisabled : null,
+                        styles.assignBtn,
+                        isSelected ? styles.assignBtnSelected : null,
+                        !canAssign ? styles.assignBtnDisabled : null,
                       ]}
+                      disabled={!canAssign}
+                      onPress={() => onToggleAssign(officer, canAssign)}
                     >
-                      {officer.alreadyAssignedToIncident
-                        ? "Already Assigned"
-                        : isSelected
-                          ? "Assigning"
-                          : "Assign Incident"}
-                    </Text>
-                  </Pressable>
-                </View>
-              );
-            })
-          )}
+                      <Text
+                        style={[
+                          styles.assignBtnText,
+                          isSelected ? styles.assignBtnTextSelected : null,
+                          !canAssign ? styles.assignBtnTextDisabled : null,
+                        ]}
+                      >
+                        {officer.alreadyAssignedToIncident
+                          ? "Already Assigned"
+                          : isSelected
+                            ? "Assigning"
+                            : "Assign Incident"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                );
+              })
+            )}
 
-          <Pressable
-            style={[styles.confirmBtn, (selectedCount === 0 || saving) ? styles.confirmBtnDisabled : null]}
-            disabled={selectedCount === 0 || saving}
-            onPress={() => {
-              void onConfirm();
-            }}
-          >
-            <Text style={styles.confirmBtnText}>{saving ? "Assigning..." : "CONFIRM"}</Text>
-          </Pressable>
-        </ScrollView>
-      )}
+            <Pressable
+              style={[styles.confirmBtnWrap, (selectedCount === 0 || saving) ? styles.confirmBtnDisabled : null]}
+              disabled={selectedCount === 0 || saving}
+              onPress={() => {
+                void onConfirm();
+              }}
+            >
+              <LinearGradient
+                colors={["#FF6A45", "#7C0002"]}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={styles.confirmBtn}
+              >
+                <Text style={styles.confirmBtnText}>{saving ? "Assigning..." : "CONFIRM"}</Text>
+              </LinearGradient>
+            </Pressable>
+          </ScrollView>
+        )}
+      </View>
     </SafeAreaView>
   );
 }
 
-function ProfileAvatar({ profilePhotoPath, fullName }: { profilePhotoPath: string | null; fullName: string }) {
-  if (profilePhotoPath && /^https?:\/\//i.test(profilePhotoPath)) {
-    return <Image source={{ uri: profilePhotoPath }} style={styles.avatar} />;
+function ProfileAvatar({ profilePhotoUri, fullName }: { profilePhotoUri: string | null; fullName: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (profilePhotoUri && !failed) {
+    return <Image source={{ uri: profilePhotoUri }} style={styles.avatar} onError={() => setFailed(true)} />;
   }
 
   const initials = fullName
@@ -489,15 +521,39 @@ function formatTimeRange(startISO: string, endISO: string) {
   return `${new Date(startISO).toLocaleTimeString([], opts)} - ${new Date(endISO).toLocaleTimeString([], opts)}`;
 }
 
+async function resolveAvatarUrlFromPath(rawPath: string) {
+  const trimmed = rawPath.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+
+  let normalizedPath = trimmed.replace(/^\/+/, "");
+  if (normalizedPath.startsWith(`${AVATAR_BUCKET}/`)) {
+    normalizedPath = normalizedPath.slice(AVATAR_BUCKET.length + 1);
+  }
+
+  if (!normalizedPath) return null;
+
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from(AVATAR_BUCKET)
+    .createSignedUrl(normalizedPath, AVATAR_SIGNED_URL_TTL_SECONDS);
+
+  if (!signedError && signedData?.signedUrl) {
+    return signedData.signedUrl;
+  }
+
+  const { data: publicData } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(normalizedPath);
+  return publicData.publicUrl || null;
+}
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: "#EDEDED",
+    backgroundColor: "#0E2D52",
   },
   header: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 11,
     paddingTop: 40,
-    paddingBottom: 12,
+    paddingBottom: 14,
     backgroundColor: "#0E2D52",
     flexDirection: "row",
     alignItems: "center",
@@ -506,15 +562,25 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 10,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "rgba(255,255,255,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
     alignItems: "center",
     justifyContent: "center",
   },
   headerTitle: {
     marginLeft: 10,
-    fontSize: 38,
-    fontWeight: "800",
+    fontSize: 24,
+    lineHeight: 22,
+    fontWeight: "600",
     color: "#FFFFFF",
+  },
+  bodyPanel: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    overflow: "hidden",
   },
   loaderWrap: {
     flex: 1,
@@ -522,14 +588,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   content: {
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 28,
-    gap: 10,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 112,
+    gap: 14,
   },
   emptyWrap: {
-    borderRadius: 14,
-    backgroundColor: "#FFFFFF",
+    borderRadius: 21,
+    backgroundColor: "#FAFAFA",
     padding: 16,
   },
   emptyText: {
@@ -539,17 +605,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   card: {
-    borderRadius: 20,
+    borderRadius: 21,
     backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#D8D8D8",
-    paddingHorizontal: 14,
-    paddingTop: 14,
-    paddingBottom: 12,
+    paddingHorizontal: 12,
+    paddingTop: 11,
+    paddingBottom: 10,
     shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 7,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 11.1,
+    shadowOffset: { width: 0, height: 2 },
     elevation: 5,
   },
   topRow: {
@@ -564,9 +628,9 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: "#CBD5E1",
   },
   avatarFallback: {
@@ -576,50 +640,53 @@ const styles = StyleSheet.create({
   },
   avatarInitials: {
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "800",
   },
   profileTextCol: {
-    marginLeft: 10,
+    marginLeft: 8,
   },
   profileName: {
-    color: "#111827",
-    fontSize: 22,
-    fontWeight: "800",
+    color: "#000000",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
   },
   profileRole: {
-    color: "#6B7280",
-    fontSize: 14,
-    fontWeight: "600",
+    color: "#7C7C7C",
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "700",
   },
   badgesCol: {
     gap: 6,
     alignItems: "flex-end",
   },
   statusBadge: {
-    minHeight: 24,
-    borderRadius: 999,
-    paddingHorizontal: 10,
+    minHeight: 21,
+    borderRadius: 11,
+    paddingHorizontal: 8,
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 4,
   },
   badgeGreen: {
-    backgroundColor: "#266B26",
+    backgroundColor: "#225518",
   },
   badgeRed: {
-    backgroundColor: "#A30B0B",
+    backgroundColor: "#920507",
   },
   badgeGray: {
-    backgroundColor: "#6B7280",
+    backgroundColor: "#7C7C7C",
   },
   statusBadgeText: {
     color: "#FFFFFF",
-    fontSize: 13,
-    fontWeight: "800",
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "700",
   },
   shiftRow: {
-    marginTop: 10,
+    marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -632,49 +699,52 @@ const styles = StyleSheet.create({
   },
   shiftDate: {
     color: "#374151",
-    fontSize: 14,
+    fontSize: 10,
+    lineHeight: 13,
     fontWeight: "700",
   },
   shiftTime: {
     color: "#4B5563",
-    fontSize: 12,
+    fontSize: 10,
+    lineHeight: 13,
     fontWeight: "600",
-    marginTop: 2,
+    marginTop: 0,
   },
   arrowText: {
-    marginHorizontal: 10,
+    marginHorizontal: 8,
     color: "#9CA3AF",
-    fontWeight: "800",
-    fontSize: 16,
+    fontWeight: "700",
+    fontSize: 11,
   },
   assignBtn: {
     alignSelf: "center",
-    minWidth: 176,
-    height: 42,
-    borderRadius: 24,
-    backgroundColor: "#2A2C31",
+    width: 140,
+    height: 32,
+    borderRadius: 20,
+    backgroundColor: "#2B2B2B",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 16,
-    marginTop: 14,
+    paddingHorizontal: 10,
+    marginTop: 10,
   },
   assignBtnDisabled: {
     backgroundColor: "#9CA3AF",
   },
   assignBtnSelected: {
-    backgroundColor: "#8A1FDF",
-    borderWidth: 2,
-    borderColor: "#C29BFF",
-    shadowColor: "#9F5CFF",
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 10,
+    backgroundColor: "#9300D7",
+    borderWidth: 3,
+    borderColor: "#C773FF",
+    shadowColor: "#000000",
+    shadowOpacity: 0.25,
+    shadowRadius: 6.3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 6,
   },
   assignBtnText: {
     color: "#FFFFFF",
-    fontSize: 20,
-    fontWeight: "800",
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: "700",
   },
   assignBtnTextSelected: {
     color: "#FFFFFF",
@@ -682,28 +752,32 @@ const styles = StyleSheet.create({
   assignBtnTextDisabled: {
     color: "#E5E7EB",
   },
-  confirmBtn: {
-    marginTop: 18,
+  confirmBtnWrap: {
+    marginTop: 8,
     alignSelf: "center",
-    width: "74%",
-    height: 56,
-    borderRadius: 30,
-    backgroundColor: "#D83821",
+    borderRadius: 999,
+    shadowColor: "#000000",
+    shadowOpacity: 0.25,
+    shadowRadius: 4.8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 8,
+  },
+  confirmBtn: {
+    width: 294,
+    height: 50,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#DC3A22",
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 8,
+    borderWidth: 1,
+    borderColor: "rgba(160,176,192,0.4)",
   },
   confirmBtnDisabled: {
     opacity: 0.5,
   },
   confirmBtnText: {
     color: "#FFFFFF",
-    fontSize: 40,
-    fontWeight: "900",
-    lineHeight: 44,
+    fontSize: 24,
+    fontWeight: "700",
+    lineHeight: 30,
   },
 });
