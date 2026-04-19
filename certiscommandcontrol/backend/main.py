@@ -151,8 +151,25 @@ def insert_incident_with_fallback(user_client, incident_payload: Dict[str, Any],
 
 def update_incident_with_fallback(user_client, incident_id: str, updates: Dict[str, Any]):
     try:
-        return (
+        updated = (
             user_client.table("incidents")
+            .update(updates)
+            .eq("incident_id", incident_id)
+            .execute()
+        ).data or []
+        if updated:
+            return updated
+
+        # Row-level policies can yield an empty representation even when the row exists.
+        service_client = get_service_client()
+        if not service_client:
+            return []
+        logger.warning(
+            "incident update returned no rows for incident_id=%s; retrying with service role",
+            incident_id,
+        )
+        return (
+            service_client.table("incidents")
             .update(updates)
             .eq("incident_id", incident_id)
             .execute()
@@ -318,6 +335,7 @@ async def confirm_incident(
     incident_id = str(payload.incident_id or "").strip() or None
     edited_description = (payload.edited_description or "").strip()
     corrected_threat = (payload.corrected_threat or "").strip()
+    created_new_incident = False
 
     if not incident_id:
         source_cctvid = (payload.tile_id or payload.cctv_name or "").strip()
@@ -377,6 +395,7 @@ async def confirm_incident(
             created = insert_incident_with_fallback(sb, incident_payload, source_cctvid or "confirm")
             if created:
                 incident_id = created[0].get("incident_id")
+                created_new_incident = True
         except APIError as e:
             raise HTTPException(
                 status_code=500,
@@ -385,6 +404,9 @@ async def confirm_incident(
 
         if not incident_id:
             raise HTTPException(status_code=500, detail="Incident create succeeded but no incident_id returned")
+
+    if created_new_incident:
+        return {"ok": True, "incident_id": incident_id, "prediction_correct": bool(payload.confirmed)}
 
     updates: Dict[str, Any] = {
         "prediction_correct": bool(payload.confirmed),

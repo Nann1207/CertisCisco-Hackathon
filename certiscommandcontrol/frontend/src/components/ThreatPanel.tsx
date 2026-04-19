@@ -108,9 +108,9 @@ export type ThreatState = {
               <button
                 className="btnPrimary"
                 onClick={onConfirmSend}
-                disabled={state.status !== "threat" || Boolean(state.submitting)}
+                disabled={state.status !== "threat" || Boolean(state.submitting) || state.confirmed === true}
               >
-                {state.submitting ? "Sending..." : "Confirm & Send"}
+                {state.submitting ? "Sending..." : state.confirmed === true ? "Sent" : "Confirm & Send"}
               </button>
               <button
                 className="btnGhost"
