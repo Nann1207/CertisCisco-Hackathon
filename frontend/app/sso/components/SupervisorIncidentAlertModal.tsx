@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import Text from "../../../components/TranslatedText";
@@ -24,6 +25,8 @@ type SupervisorIncidentAlertModalProps = {
   supervisorId?: string | null;
 };
 
+const STORAGE_KEY_PREFIX = "supervisor_incident_acknowledged_ids";
+
 export default function SupervisorIncidentAlertModal({ supervisorId = null }: SupervisorIncidentAlertModalProps) {
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
@@ -33,6 +36,10 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
   const acknowledgedIdsRef = useRef<Set<string>>(new Set());
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const storageKey = useMemo(() => {
+    if (!userId) return null;
+    return `${STORAGE_KEY_PREFIX}:${userId}`;
+  }, [userId]);
 
   const stopVibration = () => {
     Vibration.cancel();
@@ -59,6 +66,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     if (prunedAckSet.size !== ackSet.size) {
       acknowledgedIdsRef.current = prunedAckSet;
       setAcknowledgedIds(prunedAckSet);
+      await AsyncStorage.setItem(`${STORAGE_KEY_PREFIX}:${activeUserId}`, JSON.stringify(Array.from(prunedAckSet)));
     }
 
     const effectiveAckSet = prunedAckSet.size !== ackSet.size ? prunedAckSet : ackSet;
@@ -87,11 +95,15 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
 
     if (supervisorId) {
       setUserId(supervisorId);
-      const ids = new Set<string>();
-      acknowledgedIdsRef.current = ids;
-      setAcknowledgedIds(ids);
-      setLoading(false);
-      void fetchActiveIncidents(supervisorId, ids);
+      void (async () => {
+        const key = `${STORAGE_KEY_PREFIX}:${supervisorId}`;
+        const stored = await AsyncStorage.getItem(key);
+        const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
+        acknowledgedIdsRef.current = ids;
+        setAcknowledgedIds(ids);
+        setLoading(false);
+        await fetchActiveIncidents(supervisorId, ids);
+      })();
       return () => {
         alive = false;
         stopVibration();
@@ -111,9 +123,12 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
         return;
       }
 
-      const ids = new Set<string>();
+      const key = `${STORAGE_KEY_PREFIX}:${currentUserId}`;
+      const stored = await AsyncStorage.getItem(key);
+      const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
 
       if (!alive) return;
+      acknowledgedIdsRef.current = ids;
       setAcknowledgedIds(ids);
       await fetchActiveIncidents(currentUserId, ids);
       if (alive) setLoading(false);
@@ -134,7 +149,9 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
         return;
       }
 
-      const ids = new Set<string>();
+      const key = `${STORAGE_KEY_PREFIX}:${nextUserId}`;
+      const stored = await AsyncStorage.getItem(key);
+      const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
       acknowledgedIdsRef.current = ids;
       setAcknowledgedIds(ids);
       await fetchActiveIncidents(nextUserId, ids);
@@ -188,6 +205,10 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     next.add(activeIncident.incidentId);
     acknowledgedIdsRef.current = next;
     setAcknowledgedIds(next);
+
+    if (storageKey) {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
+    }
 
     setVisible(false);
     stopVibration();

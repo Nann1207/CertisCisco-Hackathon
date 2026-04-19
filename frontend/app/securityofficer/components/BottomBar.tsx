@@ -14,23 +14,22 @@ import {
 
 type Tab = {
   key: string;
-  href: string;
   Icon: any;
 };
 
-
-
 const TABS: Tab[] = [
-  { key: "home", href: "/securityofficer/home", Icon: Home },
-  { key: "reports", href: "/securityofficer/reports", Icon: NotebookPen },
-  { key: "phonecalls", href: "/securityofficer/phonecalls", Icon: PhoneCall },
-  { key: "services", href: "/securityofficer/messagingChannel", Icon: MessageCircleMore }, 
-  { key: "sop", href: "/securityofficer/sop", Icon: ListChecks },
+  { key: "home", Icon: Home },
+  { key: "reports", Icon: NotebookPen },
+  { key: "phonecalls", Icon: PhoneCall },
+  { key: "services", Icon: MessageCircleMore },
+  { key: "sop", Icon: ListChecks },
 ];
 
 export default function BottomBar() {
   const router = useRouter();
   const pathname = usePathname();
+  const isSeniorSecurityOfficer = pathname?.startsWith("/sso") ?? false;
+  const baseRoute = isSeniorSecurityOfficer ? "/sso" : "/securityofficer";
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -128,11 +127,22 @@ export default function BottomBar() {
   return (
     <View style={styles.wrap}>
       <View style={styles.bar}>
-        {TABS.map(({ key, href, Icon }) => {
+        {TABS.map(({ key, Icon }) => {
+          const href =
+            key === "home"
+              ? `${baseRoute}/home`
+              : key === "reports"
+                ? `${baseRoute}/reports`
+                : key === "phonecalls"
+                  ? `${baseRoute}/phonecalls`
+                  : key === "services"
+                    ? `${baseRoute}/messagingChannel`
+                    : `${baseRoute}/sop`;
+
           const active =
             pathname === href ||
             (key === "services" &&
-              (pathname === "/securityofficer/message" || pathname === "/securityofficer/messagingChannel"));
+              (pathname === `${baseRoute}/message` || pathname === `${baseRoute}/messagingChannel`));
 
           return (
             <Pressable
