@@ -555,13 +555,13 @@ export default function CurrentIncidentScreen() {
 									</Pressable>
 								</View>
 
-									{!canMarkArrived ? (
+									{!canMarkArrived && (
 										<Text style={styles.distanceHint}>
 											{distanceMeters === null
 												? "Enable GPS to detect distance to incident."
 												: `Move nearer to incident (${Math.round(distanceMeters)}m away).`}
 										</Text>
-									) : null}
+									)}
 							</>
 						) : (
 							<>
