@@ -27,6 +27,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { styles } from "../../styles/securityofficer/home.styles";
 import ServicesModal from "./components/services";
+import SupervisorIncidentAlertModal from "./components/SupervisorIncidentAlertModal";
 
 const DISPLAY_TIME_ZONE = "Asia/Singapore";
 const AVATAR_BUCKET = "profile-photos";
@@ -65,6 +66,11 @@ type UpcomingShift = {
   supervisor_id: string | null;
 };
 
+type ActiveIncidentRow = {
+  incident_id: string;
+  active_status: boolean | null;
+};
+
 export default function Home() {
   const router = useRouter();
   const { clockedInShiftId, clockedInAt } = useLocalSearchParams<{
@@ -74,6 +80,7 @@ export default function Home() {
   const { width } = useWindowDimensions();
 
   const [loading, setLoading] = useState(true);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [todayShifts, setTodayShifts] = useState<Shift[]>([]);
   const [todayIncidentSummary, setTodayIncidentSummary] = useState<string | null>(null);
@@ -191,6 +198,9 @@ export default function Home() {
 
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       const userId = sessionData.session?.user.id;
+      if (userId) {
+        setAuthUserId(userId);
+      }
 
       if (sessionError || !userId) {
         if (alive) setLoadError("Unable to load user session.");
@@ -233,6 +243,14 @@ export default function Home() {
         .order("shift_start", { ascending: true })
         .limit(5);
 
+      const { data: activeIncidentsRaw, error: activeIncidentError } = await supabase
+        .from("incidents")
+        .select("incident_id, active_status")
+        .eq("supervisor_id", userId)
+        .eq("active_status", true)
+        .order("created_at", { ascending: false })
+        .limit(50);
+
       const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? [])
         .filter((shiftItem: any) => !shiftItem.completion_status)
         .map((shiftItem: any) => ({
@@ -263,7 +281,7 @@ export default function Home() {
           supervisor_id: shiftItem.supervisor_id ?? null,
         }));
 
-      if (todayShiftError || upcomingError) {
+      if (todayShiftError || upcomingError || activeIncidentError) {
         setLoadError("Unable to load shifts right now.");
       }
 
@@ -290,7 +308,15 @@ export default function Home() {
         }
       }
 
-      const incidentText = todayShiftData.length > 0 ? "No incidents for today" : null;
+      const activeIncidents = ((activeIncidentsRaw as ActiveIncidentRow[] | null) ?? []).filter(
+        (incident) => Boolean(incident.incident_id)
+      );
+      const incidentText =
+        activeIncidents.length > 0
+          ? `${activeIncidents.length} active incident${activeIncidents.length > 1 ? "s" : ""} require assignment`
+          : todayShiftData.length > 0
+            ? "No incidents for today"
+            : null;
 
       if (!alive) return;
 
@@ -680,6 +706,7 @@ export default function Home() {
       </Modal>
 
       <ServicesModal visible={showServices} onClose={() => setShowServices(false)} />
+      <SupervisorIncidentAlertModal supervisorId={authUserId} />
     </View>
   );
 }

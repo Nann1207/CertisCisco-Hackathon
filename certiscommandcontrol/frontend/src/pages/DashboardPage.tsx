@@ -16,6 +16,7 @@ export function DashboardPage() {
   const apiUrl = import.meta.env.VITE_API_URL as string;
 
   const [accessToken, setAccessToken] = useState<string>("");
+  const [currentUserId, setCurrentUserId] = useState<string>("");
   const [tiles, setTiles] = useState<Record<string, TileState>>({
     cctv1: { label: "CCTV 1", threat: false },
     cctv2: { label: "CCTV 2", threat: false },
@@ -63,6 +64,7 @@ export function DashboardPage() {
       }
 
       setAccessToken(data.session.access_token);
+      setCurrentUserId(data.session.user.id);
     })();
   }, [nav]);
 
@@ -197,7 +199,7 @@ export function DashboardPage() {
         coverage: snapshot.cctvMeta?.coverage,
         frameUrls: snapshot.frames,
         yoloObjects: snapshot.objects,
-        supervisorId: snapshot.sso.id ?? null,
+        supervisorId: currentUserId || snapshot.sso.id || null,
         shiftId: snapshot.sso.shift_id ?? null,
         correctedThreat: confirmed ? undefined : snapshot.correctedThreat || snapshot.predictedThreat,
         editedDescription: snapshot.editedDescription,

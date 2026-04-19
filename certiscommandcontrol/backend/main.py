@@ -2,6 +2,7 @@ import os
 import uuid
 import base64
 import binascii
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
@@ -306,10 +307,11 @@ def select_active_supervisor(
     sb,
     cctv_row: Dict[str, Any],
 ) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    lookup_client = get_service_client() or sb
     now_iso = datetime.now(timezone.utc).isoformat()
 
     active_shifts = (
-        sb.table("shifts")
+        lookup_client.table("shifts")
         .select("shift_id,supervisor_id,shift_date,shift_start,shift_end,location")
         .lte("shift_start", now_iso)
         .gte("shift_end", now_iso)
@@ -318,7 +320,7 @@ def select_active_supervisor(
     ).data or []
 
     upcoming_shifts = (
-        sb.table("shifts")
+        lookup_client.table("shifts")
         .select("shift_id,supervisor_id,shift_date,shift_start,shift_end,location")
         .gte("shift_start", now_iso)
         .not_.is_("supervisor_id", "null")
@@ -328,7 +330,7 @@ def select_active_supervisor(
     ).data or []
 
     recent_shifts = (
-        sb.table("shifts")
+        lookup_client.table("shifts")
         .select("shift_id,supervisor_id,shift_date,shift_start,shift_end,location")
         .lte("shift_end", now_iso)
         .not_.is_("supervisor_id", "null")
@@ -350,7 +352,7 @@ def select_active_supervisor(
         return select_fallback_supervisor(sb), None
 
     employees = (
-        sb.table("employees")
+        lookup_client.table("employees")
         .select("id,emp_id,first_name,last_name,role,phone")
         .in_("id", supervisor_ids)
         .execute()
@@ -362,14 +364,14 @@ def select_active_supervisor(
         if normalize_text(e.get("role")) in ALLOWED_SUPERVISOR_ROLES
     }
     if not supervisors_by_id:
-        return select_fallback_supervisor(sb), None
+        return select_fallback_supervisor(lookup_client), None
 
     for group in (active_shifts, upcoming_shifts, recent_shifts):
         supervisor, shift = choose_supervisor_from_shift_group(group, location_candidates, supervisors_by_id)
         if supervisor:
             return supervisor, shift
 
-    return select_fallback_supervisor(sb), None
+    return select_fallback_supervisor(lookup_client), None
 
 
 def select_fallback_supervisor(sb) -> Optional[Dict[str, Any]]:
@@ -389,6 +391,21 @@ def require_auth(authorization: Optional[str]) -> str:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     return authorization.split(" ", 1)[1].strip()
+
+
+def get_jwt_subject(token: str) -> Optional[str]:
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return None
+        payload_b64 = parts[1]
+        padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+        payload_json = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
+        payload = json.loads(payload_json)
+        sub = payload.get("sub")
+        return str(sub) if sub else None
+    except (ValueError, json.JSONDecodeError, binascii.Error):
+        return None
 
 # Load models once at startup (CPU)
 import torch
@@ -423,6 +440,7 @@ async def confirm_incident(
     authorization: Optional[str] = Header(default=None),
 ):
     user_jwt = require_auth(authorization)
+    requester_user_id = get_jwt_subject(user_jwt)
     sb = get_supabase_client(settings.SUPABASE_URL, settings.SUPABASE_ANON_KEY, user_jwt)
 
     incident_id = str(payload.incident_id or "").strip() or None
@@ -480,7 +498,7 @@ async def confirm_incident(
             "cctv_camera_id": (cam_data or {}).get("id"),
             "cctvid": cctvid,
             "shift_id": payload.shift_id,
-            "supervisor_id": payload.supervisor_id,
+            "supervisor_id": payload.supervisor_id or requester_user_id,
             "predicted_threat": predicted_for_insert,
             "threat_confidence": None,
             "threat_detected": bool(payload.confirmed),

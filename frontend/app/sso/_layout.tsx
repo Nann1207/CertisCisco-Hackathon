@@ -12,6 +12,11 @@ export default function Layout() {
           <Stack.Screen name="home" />
           <Stack.Screen name="reports" />
           <Stack.Screen name="incidents" />
+          <Stack.Screen name="incident-before-assign" />
+          <Stack.Screen name="assign-officer" />
+          <Stack.Screen name="incident-after-assign" />
+          <Stack.Screen name="add-backup" />
+          <Stack.Screen name="createReport" />
           <Stack.Screen name="upcoming-shift-details" />
           <Stack.Screen name="shift-details" />
           <Stack.Screen name="clock-in" />

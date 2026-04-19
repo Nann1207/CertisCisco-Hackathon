@@ -29,10 +29,13 @@ type IncidentRow = {
 	latitude?: number | null;
 	longitude?: number | null;
 	prediction_correct?: boolean | null;
-	cctv_image_1?: string | null;
-	cctv_image_2?: string | null;
-	cctv_image_3?: string | null;
+	cctv_image_1_path?: string | null;
+	cctv_image_2_path?: string | null;
+	cctv_image_3_path?: string | null;
+	cctv_image_4?: string | null;
 };
+
+const INCIDENT_IMAGE_BUCKET = "incident-frames";
 
 type AssignmentGuardRow = {
 	assignment_id: string;
@@ -129,7 +132,7 @@ export default function CurrentIncidentScreen() {
 			const { data: incidentData, error: incidentError } = await supabase
 				.from("incidents")
 				.select(
-					"id:incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, prediction_correct, cctv_image_1, cctv_image_2, cctv_image_3"
+					"id:incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, prediction_correct, cctv_image_1_path, cctv_image_2_path, cctv_image_3_path, cctv_image_4"
 				)
 				.eq("incident_id", incidentId)
 				.maybeSingle();
@@ -266,9 +269,83 @@ export default function CurrentIncidentScreen() {
 		await Linking.openURL(tel);
 	};
 
-	const onConfirmBackup = () => {
+	const onConfirmBackup = async () => {
+		if (!incident?.id || !currentUserId) {
+			setShowBackupModal(false);
+			Alert.alert("Backup Request Failed", "Unable to identify your active incident assignment.");
+			return;
+		}
+
+		const requestedCount = Number.parseInt(backupCount, 10);
+		const sanitizedCount = Number.isFinite(requestedCount) ? Math.max(1, requestedCount) : 1;
+		const reason = backupReason.trim();
+		const requestedAt = new Date().toISOString();
+
+		const { data: assignment } = await supabase
+			.from("incident_assignments")
+			.select("assignment_id")
+			.eq("incident_id", incident.id)
+			.eq("officer_id", currentUserId)
+			.eq("active_status", true)
+			.limit(1)
+			.maybeSingle<{ assignment_id: string }>();
+
+		const assignmentId = assignment?.assignment_id;
+		if (!assignmentId) {
+			setShowBackupModal(false);
+			Alert.alert("Backup Request Failed", "No active assignment was found for your account.");
+			return;
+		}
+
+		const candidatePayloads: Array<Record<string, unknown>> = [
+			{
+				backup_requested: true,
+				backup_requested_count: sanitizedCount,
+				backup_reason: reason || null,
+				backup_requested_at: requestedAt,
+			},
+			{
+				request_backup: true,
+				request_backup_count: sanitizedCount,
+				request_backup_reason: reason || null,
+				request_backup_at: requestedAt,
+			},
+			{
+				needs_backup: true,
+				requested_officer_count: sanitizedCount,
+				backup_reason: reason || null,
+				backup_requested_at: requestedAt,
+			},
+		];
+
+		let requestSaved = false;
+		for (const payload of candidatePayloads) {
+			const { error } = await supabase
+				.from("incident_assignments")
+				.update(payload)
+				.eq("assignment_id", assignmentId)
+				.eq("officer_id", currentUserId)
+				.eq("active_status", true);
+
+			if (!error) {
+				requestSaved = true;
+				break;
+			}
+		}
+
 		setShowBackupModal(false);
-		Alert.alert("Backup Requested", `Requested ${backupCount} officer(s).`);
+		setBackupReason("");
+		setBackupCount("1");
+
+		if (requestSaved) {
+			Alert.alert("Backup Requested", `Requested ${sanitizedCount} officer(s).`);
+			return;
+		}
+
+		Alert.alert(
+			"Backup Request Logged",
+			"Backup request could not be persisted to database columns. Please ask your supervisor directly while schema updates are pending."
+		);
 	};
 
 	const onOpenMapModal = () => {
@@ -646,8 +723,24 @@ export default function CurrentIncidentScreen() {
 
 function extractCctvUris(incident: IncidentRow | null) {
 	if (!incident) return [] as string[];
-	const raw = [incident.cctv_image_1, incident.cctv_image_2, incident.cctv_image_3];
-	return raw.filter((item): item is string => Boolean(item && item.startsWith("http")));
+	const raw = [
+		incident.cctv_image_1_path,
+		incident.cctv_image_2_path,
+		incident.cctv_image_3_path,
+		incident.cctv_image_4,
+	];
+
+	return raw
+		.map((item) => {
+			if (!item) return null;
+			const value = item.trim();
+			if (!value) return null;
+			if (/^https?:\/\//i.test(value)) return value;
+
+			const { data } = supabase.storage.from(INCIDENT_IMAGE_BUCKET).getPublicUrl(value);
+			return data.publicUrl || null;
+		})
+		.filter((item): item is string => Boolean(item));
 }
 
 function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
