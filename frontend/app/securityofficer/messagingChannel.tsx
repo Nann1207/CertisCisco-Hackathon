@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { usePathname, useRouter } from "expo-router";
 import { ChevronLeft, MessageCirclePlus, Search } from "lucide-react-native";
@@ -22,6 +22,7 @@ import {
   type ChatMessageRecord,
   type EmployeeProfile,
 } from "../../lib/messageData";
+import { attachProfilePhotoUrls } from "../../lib/profilePhotos";
 
 const IMPORTANT_PREFIX = "[IMPORTANT] ";
 const ATTACHMENT_PREFIX = "[ATTACHMENT] ";
@@ -55,7 +56,11 @@ const Avatar = ({ channel, size = 54 }: { channel: ChatChannel; size?: number })
       },
     ]}
   >
-    <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    {channel.avatarUrl ? (
+      <Image source={{ uri: channel.avatarUrl }} style={[styles.avatarImage, { borderRadius: size / 2 }]} resizeMode="cover" />
+    ) : (
+      <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    )}
     {channel.online && <View style={styles.onlineDot} />}
   </View>
 );
@@ -111,6 +116,7 @@ export default function MessagingChannelScreen() {
           lastTime: formatMessageTime(latestMessage.created_at),
           unread: unreadCountsByParticipant.get(participantId) ?? 0,
           online: false,
+          avatarUrl: profile?.avatarUrl ?? null,
           avatarColor,
           avatarTextColor: getAvatarTextColor(avatarColor),
         };
@@ -203,7 +209,7 @@ export default function MessagingChannelScreen() {
 
     const { data: profilesData, error: profilesError } = await supabase
       .from("employees")
-      .select("id, first_name, last_name, role")
+      .select("id, emp_id, first_name, last_name, role, profile_photo_path")
       .in("id", participantIds);
 
     if (profilesError) {
@@ -211,7 +217,15 @@ export default function MessagingChannelScreen() {
     }
 
     const profiles = (profilesData || []) as EmployeeProfile[];
-    const baseChannels = buildChannels(messages, userId, profiles, unreadCountsByParticipant);
+    let profilesWithPhotos: EmployeeProfile[] = profiles;
+
+    try {
+      profilesWithPhotos = await attachProfilePhotoUrls(profiles);
+    } catch (error) {
+      console.warn("Unable to resolve profile photos for message channels:", error);
+    }
+
+    const baseChannels = buildChannels(messages, userId, profilesWithPhotos, unreadCountsByParticipant);
 
     // Ensure "Current Supervisor" can be messaged even when there's no chat history yet.
     if (showCurrentSupervisorSection && supervisorId) {
@@ -237,6 +251,7 @@ export default function MessagingChannelScreen() {
 
         const name = resolvedSupervisorName.trim() ? resolvedSupervisorName : "Current Supervisor";
         const avatarColor = getAvatarColor(supervisorId);
+        const supervisorAvatarUrl = supervisorProfile?.avatarUrl ?? null;
 
         baseChannels.unshift({
           id: supervisorId,
@@ -246,6 +261,7 @@ export default function MessagingChannelScreen() {
           lastTime: "",
           unread: 0,
           online: false,
+          avatarUrl: supervisorAvatarUrl,
           avatarColor,
           avatarTextColor: getAvatarTextColor(avatarColor),
         });
@@ -516,6 +532,10 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 17,
     fontWeight: "800",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
   onlineDot: {
     position: "absolute",

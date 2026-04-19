@@ -20,8 +20,8 @@ export const getProfilePhotoUrlFromPath = async (rawPath?: string | null) => {
 
   if (USE_SIGNED_URL) {
     const { data, error } = await supabase.storage.from(AVATAR_BUCKET).createSignedUrl(path, 60 * 60);
-    if (error) return null;
-    return data?.signedUrl ?? null;
+    if (!error && data?.signedUrl) return data.signedUrl;
+    // Fallback to public URL (works when bucket/object is public).
   }
 
   const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
