@@ -16,8 +16,9 @@ import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import * as Location from "expo-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ChevronLeft, Settings2 } from "lucide-react-native";
+import { ChevronLeft } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
+import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { supabase } from "../../lib/supabase";
 
 type IncidentRow = {
@@ -34,8 +35,6 @@ type IncidentRow = {
 	cctv_image_3_path?: string | null;
 	cctv_image_4?: string | null;
 };
-
-const INCIDENT_IMAGE_BUCKET = "incident-frames";
 
 type AssignmentGuardRow = {
 	assignment_id: string;
@@ -84,6 +83,7 @@ export default function CurrentIncidentScreen() {
 	const [showMapModal, setShowMapModal] = useState(false);
 	const [modalMapRegion, setModalMapRegion] = useState<Region | null>(null);
 	const modalMapRef = useRef<MapView | null>(null);
+	const [cctvUris, setCctvUris] = useState<string[]>([]);
 
 	useEffect(() => {
 		let alive = true;
@@ -217,6 +217,33 @@ export default function CurrentIncidentScreen() {
 		);
 	}, [currentCoords, incident?.latitude, incident?.longitude]);
 
+	useEffect(() => {
+		let alive = true;
+
+		const loadCctvUris = async () => {
+			if (!incident) {
+				if (alive) setCctvUris([]);
+				return;
+			}
+
+			const uris = await resolveIncidentFrameUrls([
+				incident.cctv_image_1_path,
+				incident.cctv_image_2_path,
+				incident.cctv_image_3_path,
+				incident.cctv_image_4,
+			]);
+
+			if (alive) {
+				setCctvUris(uris);
+			}
+		};
+
+		void loadCctvUris();
+		return () => {
+			alive = false;
+		};
+	}, [incident]);
+
 	const incidentTitle = useMemo(() => {
 		const category = (incident?.incident_category ?? "Incident").toString();
 		const locationName = (incident?.location_name ?? incident?.location_description ?? "Unknown Location").toString();
@@ -233,7 +260,6 @@ export default function CurrentIncidentScreen() {
 		[incident?.latitude, incident?.longitude]
 	);
 
-	const cctvUris = useMemo(() => extractCctvUris(incident), [incident]);
 	const canMarkArrived =
 		testingMode || (distanceMeters !== null && distanceMeters <= NEARBY_DISTANCE_METERS);
 
@@ -297,7 +323,7 @@ export default function CurrentIncidentScreen() {
 			return;
 		}
 
-		const candidatePayloads: Array<Record<string, unknown>> = [
+		const candidatePayloads: Record<string, unknown>[] = [
 			{
 				backup_requested: true,
 				backup_requested_count: sanitizedCount,
@@ -377,7 +403,7 @@ export default function CurrentIncidentScreen() {
 		return (
 			<SafeAreaView style={styles.root}>
 				<View style={styles.loadingWrap}>
-					<ActivityIndicator color="#123A67" />
+					<ActivityIndicator color="#FFFFFF" />
 				</View>
 			</SafeAreaView>
 		);
@@ -398,182 +424,203 @@ export default function CurrentIncidentScreen() {
 
 	return (
 		<SafeAreaView style={styles.root}>
-			<View style={styles.header}>
-				<Pressable
-					style={styles.iconBtn}
-					onPress={() =>
-						router.canGoBack() ? router.back() : router.replace("/securityofficer/incidents")
-					}
-				>
-					<ChevronLeft size={24} color="#FFFFFF" />
-				</Pressable>
-				<Text style={styles.headerTitle}>Incident Information</Text>
-				<Pressable style={styles.iconBtn}>
-					<Settings2 size={22} color="#FFFFFF" />
-				</Pressable>
+			<View style={styles.topPanel}>
+				<View style={styles.header}>
+					<Pressable
+						style={styles.iconBtn}
+						onPress={() =>
+							router.canGoBack() ? router.back() : router.replace("/securityofficer/incidents")
+						}
+					>
+						<ChevronLeft size={24} color="#FFFFFF" />
+					</Pressable>
+					<Text style={styles.headerTitle}>Incident Information</Text>
+				</View>
 			</View>
 
-			<ScrollView contentContainerStyle={styles.scrollContent}>
-				<View style={styles.card}>
-					<Text style={styles.incidentTitle}>{incidentTitle}</Text>
-					<Text style={styles.unitText}>
-						{incident.location_unit_no?.trim() ? `#${incident.location_unit_no?.trim()}` : "Unit Pending"}
-					</Text>
+			<View style={styles.bodyPanel}>
+				<View style={styles.leftRail} />
+				<ScrollView
+					contentContainerStyle={[
+						styles.scrollContent,
+						!isArrived ? styles.scrollContentWithFloatingArrivedBtn : null,
+					]}
+					showsVerticalScrollIndicator={false}
+				>
+					<View style={styles.card}>
+						<Text style={styles.incidentTitle}>{incidentTitle}</Text>
+						<Text style={styles.unitText}>
+							{incident.location_unit_no?.trim() ? `#${incident.location_unit_no?.trim()}` : "Unit Pending"}
+						</Text>
 
-					<MapView style={styles.map} initialRegion={incidentRegion} onPress={onOpenMapModal}>
-						{incident.latitude && incident.longitude ? (
-							<Marker
-								coordinate={{ latitude: incident.latitude, longitude: incident.longitude }}
-								title="Incident"
-							/>
-						) : null}
-						{currentCoords ? (
-							<Marker coordinate={currentCoords} title="You" pinColor="#2563EB" />
-						) : null}
-						{currentCoords && incident.latitude && incident.longitude ? (
-							<Polyline
-								coordinates={[
-									currentCoords,
-									{ latitude: incident.latitude, longitude: incident.longitude },
-								]}
-								strokeColor="#D7263D"
-								strokeWidth={3}
-							/>
-						) : null}
-					</MapView>
-					<Pressable style={styles.mapHint} onPress={onOpenMapModal}>
-						<Text style={styles.mapHintText}>Tap map to open navigation view</Text>
-					</Pressable>
+						<Pressable style={styles.mapCard} onPress={onOpenMapModal}>
+							<MapView style={styles.map} initialRegion={incidentRegion} onPress={onOpenMapModal}>
+								{incident.latitude && incident.longitude ? (
+									<Marker
+										coordinate={{ latitude: incident.latitude, longitude: incident.longitude }}
+										title="Incident"
+									/>
+								) : null}
+								{currentCoords ? (
+									<Marker coordinate={currentCoords} title="You" pinColor="#2563EB" />
+								) : null}
+								{currentCoords && incident.latitude && incident.longitude ? (
+									<Polyline
+										coordinates={[
+											currentCoords,
+											{ latitude: incident.latitude, longitude: incident.longitude },
+										]}
+										strokeColor="#D7263D"
+										strokeWidth={3}
+									/>
+								) : null}
+							</MapView>
+						</Pressable>
+						<Pressable style={styles.mapHint} onPress={onOpenMapModal}>
+							<Text style={styles.mapHintText}>Tap map to open navigation view</Text>
+						</Pressable>
 
-					<View style={styles.cctvRow}>
-						{cctvUris.length > 0 ? (
-							cctvUris.slice(0, 3).map((uri, idx) => (
-								<Image key={`${uri}-${idx}`} source={{ uri }} style={styles.cctvImage} />
-							))
+						<View style={styles.cctvRow}>
+							{cctvUris.length > 0 ? (
+								cctvUris.slice(0, 3).map((uri, idx) => (
+									<Image key={`${uri}-${idx}`} source={{ uri }} style={styles.cctvImage} />
+								))
+							) : (
+								<>
+									<View style={styles.cctvPlaceholder}>
+										<Text style={styles.cctvPlaceholderText}>CCTV 1</Text>
+									</View>
+									<View style={styles.cctvPlaceholder}>
+										<Text style={styles.cctvPlaceholderText}>CCTV 2</Text>
+									</View>
+									<View style={styles.cctvPlaceholder}>
+										<Text style={styles.cctvPlaceholderText}>CCTV 3</Text>
+									</View>
+								</>
+							)}
+						</View>
+
+						{!isArrived ? (
+							<>
+								<LinearGradient
+									colors={["#ECECF0", "#C8D8E9"]}
+									start={{ x: 0, y: 0 }}
+									end={{ x: 1, y: 1 }}
+									style={styles.predictionBox}
+								>
+									<Text style={styles.predictionTitle}>
+										Is it {incident.incident_category ?? "this incident"}?
+									</Text>
+									<View style={styles.predictionRow}>
+										<Pressable
+											style={[
+												styles.answerBtnTrue,
+												predictionAnswer === "TRUE" ? styles.answerBtnActive : null,
+											]}
+											onPress={() => setPredictionAnswer("TRUE")}
+										>
+											<Text style={styles.answerBtnText}>TRUE</Text>
+										</Pressable>
+										<Pressable
+											style={[
+												styles.answerBtnFalse,
+												predictionAnswer === "FALSE" ? styles.answerBtnActive : null,
+											]}
+											onPress={() => setPredictionAnswer("FALSE")}
+										>
+											<Text style={styles.answerBtnText}>FALSE</Text>
+										</Pressable>
+									</View>
+								</LinearGradient>
+
+								<Text style={styles.sectionHeader}>Investigation Guidelines</Text>
+								{EARLY_CHECKLIST.map((item) => (
+									<Pressable key={item} style={styles.lineItem} onPress={() => onToggleEarlyChecklist(item)}>
+										<View style={[styles.checkbox, earlyChecked[item] ? styles.checkboxChecked : null]}>
+											{earlyChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
+										</View>
+										<Text style={[styles.lineItemText, earlyChecked[item] ? styles.lineItemTextChecked : null]}>
+											{item}
+										</Text>
+									</Pressable>
+								))}
+
+								<View style={styles.testingModeRow}>
+									<Text style={styles.testingModeLabel}>Testing Mode</Text>
+									<Pressable
+										style={[styles.testingModeToggle, testingMode ? styles.testingModeToggleOn : null]}
+										onPress={() => setTestingMode((prev) => !prev)}
+									>
+										<Text style={styles.testingModeToggleText}>{testingMode ? "ON" : "OFF"}</Text>
+									</Pressable>
+								</View>
+
+									{!canMarkArrived && (
+										<Text style={styles.distanceHint}>
+											{distanceMeters === null
+												? "Enable GPS to detect distance to incident."
+												: `Move nearer to incident (${Math.round(distanceMeters)}m away).`}
+										</Text>
+									)}
+							</>
 						) : (
 							<>
-								<View style={styles.cctvPlaceholder}>
-									<Text style={styles.cctvPlaceholderText}>CCTV 1</Text>
+								<View style={styles.actionsRow}>
+									<Pressable style={[styles.actionBtn, styles.backupBtn]} onPress={() => setShowBackupModal(true)}>
+										<Text style={styles.actionBtnText}>Request Backup</Text>
+									</Pressable>
+									<Pressable
+										style={[styles.actionBtn, styles.hotlineBtn]}
+										onPress={() => {
+											void onCallSupervisor();
+										}}
+									>
+										<Text style={styles.hotlineBtnText}>Supervisor</Text>
+									</Pressable>
 								</View>
-								<View style={styles.cctvPlaceholder}>
-									<Text style={styles.cctvPlaceholderText}>CCTV 2</Text>
-								</View>
-								<View style={styles.cctvPlaceholder}>
-									<Text style={styles.cctvPlaceholderText}>CCTV 3</Text>
-								</View>
+
+								<Text style={styles.sectionHeader}>Checklist of SOP Guidelines</Text>
+								{SOP_CHECKLIST.map((item) => (
+									<Pressable key={item} style={styles.lineItem} onPress={() => onToggleChecklist(item)}>
+										<View style={[styles.checkbox, sopChecked[item] ? styles.checkboxChecked : null]}>
+											{sopChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
+										</View>
+										<Text style={[styles.lineItemText, sopChecked[item] ? styles.lineItemTextChecked : null]}>
+											{item}
+										</Text>
+									</Pressable>
+								))}
+
+								<Pressable style={styles.primaryBtn} onPress={() => setShowReportModeModal(true)}>
+									<Text style={styles.primaryBtnText}>Incident Report</Text>
+								</Pressable>
 							</>
 						)}
 					</View>
+				</ScrollView>
 
-					{!isArrived ? (
-						<>
+				{!isArrived ? (
+					<View style={styles.floatingArrivedArea} pointerEvents="box-none">
+						<Pressable
+							style={[
+								styles.markArrivedBtnWrap,
+								!canMarkArrived ? styles.markArrivedBtnWrapDisabled : null,
+							]}
+							onPress={() => setIsArrived(true)}
+							disabled={!canMarkArrived}
+						>
 							<LinearGradient
-								colors={["#ECECF0", "#C8D8E9"]}
+								colors={canMarkArrived ? ["#1A4A7D", "#0B2D57"] : ["#94A3B8", "#64748B"]}
 								start={{ x: 0, y: 0 }}
 								end={{ x: 1, y: 1 }}
-								style={styles.predictionBox}
+								style={styles.markArrivedBtn}
 							>
-								<Text style={styles.predictionTitle}>
-									Is it {incident.incident_category ?? "this incident"}?
-								</Text>
-								<View style={styles.predictionRow}>
-									<Pressable
-										style={[
-											styles.answerBtnTrue,
-											predictionAnswer === "TRUE" ? styles.answerBtnActive : null,
-										]}
-										onPress={() => setPredictionAnswer("TRUE")}
-									>
-										<Text style={styles.answerBtnText}>TRUE</Text>
-									</Pressable>
-									<Pressable
-										style={[
-											styles.answerBtnFalse,
-											predictionAnswer === "FALSE" ? styles.answerBtnActive : null,
-										]}
-										onPress={() => setPredictionAnswer("FALSE")}
-									>
-										<Text style={styles.answerBtnText}>FALSE</Text>
-									</Pressable>
-								</View>
+								<Text style={styles.primaryBtnText}>Mark as Arrived</Text>
 							</LinearGradient>
-
-							<Text style={styles.sectionHeader}>Investigation Guidelines</Text>
-							{EARLY_CHECKLIST.map((item) => (
-								<Pressable key={item} style={styles.lineItem} onPress={() => onToggleEarlyChecklist(item)}>
-									<View style={[styles.checkbox, earlyChecked[item] ? styles.checkboxChecked : null]}>
-										{earlyChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
-									</View>
-									<Text style={[styles.lineItemText, earlyChecked[item] ? styles.lineItemTextChecked : null]}>
-										{item}
-									</Text>
-								</Pressable>
-							))}
-
-							<View style={styles.testingModeRow}>
-								<Text style={styles.testingModeLabel}>Testing Mode</Text>
-								<Pressable
-									style={[styles.testingModeToggle, testingMode ? styles.testingModeToggleOn : null]}
-									onPress={() => setTestingMode((prev) => !prev)}
-								>
-									<Text style={styles.testingModeToggleText}>{testingMode ? "ON" : "OFF"}</Text>
-								</Pressable>
-							</View>
-
-							{canMarkArrived ? (
-								<Pressable style={styles.markArrivedBtnWrap} onPress={() => setIsArrived(true)}>
-									<LinearGradient
-										colors={["#1A4A7D", "#0B2D57"]}
-										start={{ x: 0, y: 0 }}
-										end={{ x: 1, y: 1 }}
-										style={styles.markArrivedBtn}
-									>
-										<Text style={styles.primaryBtnText}>Mark as Arrived</Text>
-									</LinearGradient>
-								</Pressable>
-							) : (
-								<Text style={styles.distanceHint}>
-									{distanceMeters === null
-										? "Enable GPS to detect distance to incident."
-										: `Move nearer to incident (${Math.round(distanceMeters)}m away).`}
-								</Text>
-							)}
-						</>
-					) : (
-						<>
-							<View style={styles.actionsRow}>
-								<Pressable style={[styles.actionBtn, styles.backupBtn]} onPress={() => setShowBackupModal(true)}>
-									<Text style={styles.actionBtnText}>Request Backup</Text>
-								</Pressable>
-								<Pressable
-									style={[styles.actionBtn, styles.hotlineBtn]}
-									onPress={() => {
-										void onCallSupervisor();
-									}}
-								>
-									<Text style={styles.hotlineBtnText}>Supervisor</Text>
-								</Pressable>
-							</View>
-
-							<Text style={styles.sectionHeader}>Checklist of SOP Guidelines</Text>
-							{SOP_CHECKLIST.map((item) => (
-								<Pressable key={item} style={styles.lineItem} onPress={() => onToggleChecklist(item)}>
-									<View style={[styles.checkbox, sopChecked[item] ? styles.checkboxChecked : null]}>
-										{sopChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
-									</View>
-									<Text style={[styles.lineItemText, sopChecked[item] ? styles.lineItemTextChecked : null]}>
-										{item}
-									</Text>
-								</Pressable>
-							))}
-
-							<Pressable style={styles.primaryBtn} onPress={() => setShowReportModeModal(true)}>
-								<Text style={styles.primaryBtnText}>Incident Report</Text>
-							</Pressable>
-						</>
-					)}
-				</View>
-			</ScrollView>
+						</Pressable>
+					</View>
+				) : null}
+			</View>
 
 			<Modal
 				visible={showMapModal}
@@ -644,11 +691,14 @@ export default function CurrentIncidentScreen() {
 				transparent
 				animationType="fade"
 				onRequestClose={() => setShowBackupModal(false)}
-			>
-				<View style={styles.modalBackdrop}>
-					<View style={styles.modalCard}>
-						<Text style={styles.modalTitle}>REQUEST BACKUP</Text>
-						<Text style={styles.modalSubtitle}>Pick the amount of officer(s) for backup</Text>
+				>
+					<View style={styles.modalBackdrop}>
+						<View style={styles.modalCard}>
+							<Pressable style={styles.modalCloseIconBtn} onPress={() => setShowBackupModal(false)}>
+								<Text style={styles.modalCloseIconText}>×</Text>
+							</Pressable>
+							<Text style={styles.modalTitle}>REQUEST BACKUP</Text>
+							<Text style={styles.modalSubtitle}>Pick the amount of officer(s) for backup</Text>
 
 						<View style={styles.backupCountRow}>
 							{["1", "2", "3", "4", "5+"].map((count) => (
@@ -721,28 +771,6 @@ export default function CurrentIncidentScreen() {
 	);
 }
 
-function extractCctvUris(incident: IncidentRow | null) {
-	if (!incident) return [] as string[];
-	const raw = [
-		incident.cctv_image_1_path,
-		incident.cctv_image_2_path,
-		incident.cctv_image_3_path,
-		incident.cctv_image_4,
-	];
-
-	return raw
-		.map((item) => {
-			if (!item) return null;
-			const value = item.trim();
-			if (!value) return null;
-			if (/^https?:\/\//i.test(value)) return value;
-
-			const { data } = supabase.storage.from(INCIDENT_IMAGE_BUCKET).getPublicUrl(value);
-			return data.publicUrl || null;
-		})
-		.filter((item): item is string => Boolean(item));
-}
-
 function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
 	const R = 6371000;
 	const dLat = toRad(lat2 - lat1);
@@ -765,7 +793,7 @@ function clamp(value: number, min: number, max: number) {
 const styles = StyleSheet.create({
 	root: {
 		flex: 1,
-		backgroundColor: "#ECEDEF",
+		backgroundColor: "#0E2D52",
 	},
 	loadingWrap: {
 		flex: 1,
@@ -775,63 +803,92 @@ const styles = StyleSheet.create({
 	},
 	emptyText: {
 		fontSize: 15,
-		color: "#475569",
+		color: "#FFFFFF",
+		fontWeight: "600",
+	},
+	topPanel: {
+		backgroundColor: "#0E2D52",
+		paddingBottom: 2,
 	},
 	header: {
 		paddingHorizontal: 12,
-		paddingTop: 8,
-		paddingBottom: 12,
-		backgroundColor: "#133762",
+		paddingTop: 40,
+		paddingBottom: 8,
 		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "space-between",
 	},
 	headerTitle: {
-		fontSize: 36,
-		fontWeight: "700",
+		flex: 1,
+		marginHorizontal: 10,
+		fontSize: 24,
+		lineHeight: 22,
+		fontWeight: "600",
 		color: "#FFFFFF",
 	},
 	iconBtn: {
 		width: 40,
 		height: 40,
 		borderRadius: 10,
-		backgroundColor: "rgba(255,255,255,0.2)",
+		backgroundColor: "rgba(255,255,255,0.12)",
+		borderWidth: 1,
+		borderColor: "rgba(255,255,255,0.18)",
 		alignItems: "center",
 		justifyContent: "center",
 	},
+	bodyPanel: {
+		flex: 1,
+		backgroundColor: "#F6F6F7",
+		borderTopLeftRadius: 30,
+		borderTopRightRadius: 30,
+		overflow: "hidden",
+	},
+	leftRail: {
+		position: "absolute",
+		left: 8,
+		top: 16,
+		bottom: 100,
+		width: 7,
+		borderRadius: 14,
+		backgroundColor: "#5074A6",
+	},
 	scrollContent: {
-		paddingHorizontal: 10,
-		paddingBottom: 24,
+		paddingHorizontal: 22,
+		paddingTop: 16,
+		paddingBottom: 36,
+	},
+	scrollContentWithFloatingArrivedBtn: {
+		paddingBottom: 126,
 	},
 	card: {
-		backgroundColor: "#EFF0F1",
-		borderRadius: 24,
-		paddingHorizontal: 10,
-		paddingTop: 8,
-		paddingBottom: 14,
-		borderLeftWidth: 8,
-		borderLeftColor: "#6589BD",
+		backgroundColor: "transparent",
 	},
 	incidentTitle: {
-		fontSize: 40,
-		lineHeight: 44,
-		fontWeight: "900",
-		color: "#163A67",
+		fontSize: 20,
+		lineHeight: 24,
+		fontWeight: "800",
+		color: "#0E2D52",
 		textTransform: "uppercase",
 	},
 	unitText: {
-		fontSize: 27,
-		fontWeight: "800",
+		marginTop: 2,
+		fontSize: 13,
+		lineHeight: 22,
+		fontWeight: "700",
 		color: "#0059D6",
-		marginBottom: 8,
+		marginBottom: 6,
+	},
+	mapCard: {
+		borderRadius: 12,
+		overflow: "hidden",
+		borderWidth: 1,
+		borderColor: "#D9E2EC",
 	},
 	map: {
-		height: 130,
-		borderRadius: 10,
-		overflow: "hidden",
+		height: 150,
 	},
 	mapHint: {
-		marginTop: 6,
+		marginTop: 8,
 		alignSelf: "flex-start",
 		paddingHorizontal: 10,
 		paddingVertical: 5,
@@ -844,26 +901,24 @@ const styles = StyleSheet.create({
 		color: "#274C77",
 	},
 	cctvRow: {
-		marginTop: 8,
+		marginTop: 0,
 		flexDirection: "row",
-		gap: 4,
+		gap: 0,
 	},
 	cctvImage: {
 		flex: 1,
-		height: 88,
-		borderRadius: 4,
+		height: 103,
 	},
 	cctvPlaceholder: {
 		flex: 1,
-		height: 88,
-		borderRadius: 4,
-		backgroundColor: "#CBD5E1",
+		height: 103,
+		backgroundColor: "#D7DEE8",
 		alignItems: "center",
 		justifyContent: "center",
 	},
 	cctvPlaceholderText: {
 		fontSize: 12,
-		color: "#334155",
+		color: "#5B6472",
 		fontWeight: "700",
 	},
 	predictionBox: {
@@ -923,9 +978,10 @@ const styles = StyleSheet.create({
 	sectionHeader: {
 		marginTop: 14,
 		marginBottom: 8,
-		fontSize: 22,
-		fontWeight: "800",
-		color: "#202428",
+		fontSize: 16,
+		lineHeight: 22,
+		fontWeight: "700",
+		color: "#0E2D52",
 	},
 	lineItem: {
 		flexDirection: "row",
@@ -954,8 +1010,8 @@ const styles = StyleSheet.create({
 	},
 	lineItemText: {
 		flex: 1,
-		fontSize: 13,
-		lineHeight: 17,
+		fontSize: 14,
+		lineHeight: 18,
 		fontWeight: "600",
 		color: "#1E293B",
 	},
@@ -1001,7 +1057,6 @@ const styles = StyleSheet.create({
 		color: "#7C2D12",
 	},
 	markArrivedBtnWrap: {
-		marginTop: 16,
 		alignSelf: "center",
 		borderRadius: 999,
 		shadowColor: "#08203B",
@@ -1010,27 +1065,47 @@ const styles = StyleSheet.create({
 		shadowOffset: { width: 0, height: 5 },
 		elevation: 7,
 	},
+	markArrivedBtnWrapDisabled: {
+		opacity: 0.82,
+	},
 	markArrivedBtn: {
-		height: 44,
-		minWidth: 180,
-		paddingHorizontal: 28,
+		height: 48,
+		minWidth: 210,
+		paddingHorizontal: 34,
 		borderRadius: 999,
 		alignItems: "center",
 		justifyContent: "center",
+	},
+	floatingArrivedArea: {
+		position: "absolute",
+		left: 0,
+		right: 0,
+		bottom: 22,
+		alignItems: "center",
 	},
 	primaryBtn: {
 		marginTop: 14,
 		alignSelf: "center",
-		height: 44,
-		paddingHorizontal: 24,
+		minHeight: 40,
+		paddingHorizontal: 18,
+		paddingVertical: 9,
 		borderRadius: 999,
 		backgroundColor: "#0E2D52",
+		borderWidth: 1,
+		borderColor: "rgba(160,176,192,0.4)",
 		alignItems: "center",
 		justifyContent: "center",
+		flexDirection: "row",
+		gap: 8,
+		shadowColor: "#0E2D52",
+		shadowOpacity: 0.1,
+		shadowRadius: 6,
+		shadowOffset: { width: 0, height: 4 },
+		elevation: 2,
 	},
 	primaryBtnText: {
 		fontSize: 15,
-		fontWeight: "900",
+		fontWeight: "800",
 		color: "#FFFFFF",
 	},
 	actionsRow: {
@@ -1039,26 +1114,33 @@ const styles = StyleSheet.create({
 		gap: 8,
 	},
 	actionBtn: {
-		height: 38,
-		paddingHorizontal: 14,
+		minHeight: 30,
+		paddingHorizontal: 12,
 		borderRadius: 999,
+		borderWidth: 1,
+		borderColor: "rgba(160,176,192,0.4)",
 		alignItems: "center",
 		justifyContent: "center",
+		shadowColor: "#0E2D52",
+		shadowOpacity: 0.1,
+		shadowRadius: 6,
+		shadowOffset: { width: 0, height: 4 },
+		elevation: 2,
 	},
 	backupBtn: {
-		backgroundColor: "#B91C1C",
+		backgroundColor: "#FFEBDD",
 	},
 	hotlineBtn: {
-		backgroundColor: "#DBEAFE",
+		backgroundColor: "#EEF7FF",
 	},
 	actionBtnText: {
-		color: "#FFFFFF",
-		fontWeight: "800",
+		color: "#9C2222",
+		fontWeight: "700",
 		fontSize: 14,
 	},
 	hotlineBtnText: {
-		color: "#48617C",
-		fontWeight: "800",
+		color: "#5A6E85",
+		fontWeight: "700",
 		fontSize: 14,
 	},
 	modalBackdrop: {
@@ -1076,8 +1158,26 @@ const styles = StyleSheet.create({
 		borderWidth: 3,
 		borderColor: "#3F1FB6",
 		paddingHorizontal: 18,
-		paddingTop: 20,
-		paddingBottom: 18,
+		paddingTop: 28,
+		paddingBottom: 26,
+		minHeight: 420,
+	},
+	modalCloseIconBtn: {
+		position: "absolute",
+		top: 8,
+		right: 10,
+		width: 32,
+		height: 32,
+		borderRadius: 16,
+		alignItems: "center",
+		justifyContent: "center",
+		zIndex: 2,
+	},
+	modalCloseIconText: {
+		fontSize: 30,
+		lineHeight: 22,
+		fontWeight: "700",
+		color: "#0E2D52",
 	},
 	mapModalCard: {
 		width: "100%",
@@ -1091,6 +1191,7 @@ const styles = StyleSheet.create({
 		paddingBottom: 12,
 	},
 	mapModalTitle: {
+		marginTop: 40,
 		fontSize: 24,
 		fontWeight: "900",
 		color: "#163A67",
@@ -1105,7 +1206,7 @@ const styles = StyleSheet.create({
 	},
 	mapModalFrame: {
 		marginTop: 10,
-		height: 360,
+		height: 400,
 		borderRadius: 16,
 		overflow: "hidden",
 		borderWidth: 1,
@@ -1165,6 +1266,7 @@ const styles = StyleSheet.create({
 		color: "#334155",
 	},
 	modalTitle: {
+		marginTop: 12,
 		fontSize: 35,
 		fontWeight: "900",
 		textAlign: "center",
