@@ -21,19 +21,27 @@ export default function Layout() {
           <Stack.Screen name="shift-details" />
           <Stack.Screen name="clock-in" />
           <Stack.Screen name="id-card" />
-          <Stack.Screen name="translate" />
+          <Stack.Screen
+            name="translate"
+            options={{
+              presentation: "transparentModal",
+              animation: "fade",
+              contentStyle: { backgroundColor: "transparent" },
+            }}
+          />
           <Stack.Screen name="languages" />
           <Stack.Screen name="notifications" />
           <Stack.Screen name="settings" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="messagingChannel" />
           <Stack.Screen name="message" />
-          <Stack.Screen name="phonecalls" />
-          <Stack.Screen name="sop" />
-        </Stack>
+        <Stack.Screen name="phonecalls" />
+        <Stack.Screen name="sop" />
+        <Stack.Screen name="chatbot" />
+      </Stack>
       </View>
 
-      <FloatingChatButton bottomOffset={98} rightOffset={20} targetHref="/securityofficer/chatbot" />
+      <FloatingChatButton bottomOffset={98} rightOffset={20} targetHref="/sso/chatbot" />
       <BottomBar />
     </View>
   );

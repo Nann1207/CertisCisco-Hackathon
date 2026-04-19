@@ -12,6 +12,7 @@ import {
   Modal,
 } from "react-native";
 import Text from "../../components/TranslatedText";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import {
@@ -24,6 +25,8 @@ import {
   Grid3X3,
 } from "lucide-react-native";
 import { Ionicons } from "@expo/vector-icons";
+import NotificationsModal from "../securityofficer/components/NotificationsModal";
+import { generateNotifications, type NotificationItem, type NotificationAssignment, type NotificationShift } from "../../lib/notifications";
 
 import { styles } from "../../styles/securityofficer/home.styles";
 import ServicesModal from "./components/services";
@@ -67,8 +70,28 @@ type UpcomingShift = {
 };
 
 type ActiveIncidentRow = {
-  incident_id: string;
+  assignment_id: string;
+  incident_id: string | null;
   active_status: boolean | null;
+  assigned_at: string | null;
+  incidents:
+    | {
+        incident_id?: string | null;
+        incident_name?: string | null;
+      }
+    | {
+        incident_id?: string | null;
+        incident_name?: string | null;
+      }[]
+    | null;
+};
+
+type ActiveHomeIncident = {
+  assignment_id: string;
+  incident_id: string;
+  incident_name: string | null;
+  active_status: boolean | null;
+  assigned_at: string | null;
 };
 
 export default function Home() {
@@ -83,7 +106,7 @@ export default function Home() {
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [todayShifts, setTodayShifts] = useState<Shift[]>([]);
-  const [todayIncidentSummary, setTodayIncidentSummary] = useState<string | null>(null);
+  const [activeIncidents, setActiveIncidents] = useState<ActiveHomeIncident[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingShift[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [debugEmptyReason, setDebugEmptyReason] = useState<string | null>(null);
@@ -95,6 +118,10 @@ export default function Home() {
   const [earlyClockOutShiftId, setEarlyClockOutShiftId] = useState<string | null>(null);
   const [earlyClockOutFromText, setEarlyClockOutFromText] = useState<string>("");
   const [showServices, setShowServices] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notificationsList, setNotificationsList] = useState<NotificationItem[]>([]);
+  const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
+  const NOTIF_DISMISS_PREFIX = "notifications_dismissed";
 
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   const calendarIconSize = Math.round(clamp(width * 0.11, 34, 45));
@@ -200,6 +227,14 @@ export default function Home() {
       const userId = sessionData.session?.user.id;
       if (userId) {
         setAuthUserId(userId);
+        try {
+          const key = `${NOTIF_DISMISS_PREFIX}:${userId}`;
+          const stored = await AsyncStorage.getItem(key);
+          const parsed = stored ? (JSON.parse(stored) as Record<string, string>) : {};
+          setDismissedMap(parsed);
+        } catch (err) {
+          console.warn("Failed loading dismissed notifications:", err);
+        }
       }
 
       if (sessionError || !userId) {
@@ -244,11 +279,11 @@ export default function Home() {
         .limit(5);
 
       const { data: activeIncidentsRaw, error: activeIncidentError } = await supabase
-        .from("incidents")
-        .select("incident_id, active_status")
+        .from("incident_assignments")
+        .select("assignment_id, incident_id, active_status, assigned_at, incidents(incident_id, incident_name)")
         .eq("supervisor_id", userId)
         .eq("active_status", true)
-        .order("created_at", { ascending: false })
+        .order("assigned_at", { ascending: false })
         .limit(50);
 
       const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? [])
@@ -295,12 +330,17 @@ export default function Home() {
         if (!visibleError) {
           const visibleCount = visibleShifts?.length ?? 0;
           const hasMatchingSupervisor = (visibleShifts ?? []).some((item: any) => item.supervisor_id === userId);
+          const supervisorCount = (visibleShifts ?? []).filter((item: any) => item.supervisor_id === userId).length;
 
           if (visibleCount === 0) {
             setDebugEmptyReason(
               `No shifts are visible for this session. Auth user: ${userId}. This usually means RLS policy is blocking select on shifts.`
             );
-          } else if (!hasMatchingSupervisor) {
+          } else if (hasMatchingSupervisor) {
+            setDebugEmptyReason(
+              `You supervise ${supervisorCount} upcoming shift${supervisorCount === 1 ? "" : "s"}.`
+            );
+          } else {
             setDebugEmptyReason(
               `Shifts are visible, but none match supervisor_id = ${userId}. Check shifts.supervisor_id values for this user.`
             );
@@ -308,15 +348,22 @@ export default function Home() {
         }
       }
 
-      const activeIncidents = ((activeIncidentsRaw as ActiveIncidentRow[] | null) ?? []).filter(
-        (incident) => Boolean(incident.incident_id)
+      const activeIncidentMap = new Map<string, ActiveHomeIncident>();
+      for (const row of ((activeIncidentsRaw as ActiveIncidentRow[] | null) ?? [])) {
+        const incident = Array.isArray(row.incidents) ? row.incidents[0] : row.incidents;
+        if (!row.incident_id || activeIncidentMap.has(row.incident_id)) continue;
+
+        activeIncidentMap.set(row.incident_id, {
+          assignment_id: row.assignment_id,
+          incident_id: row.incident_id,
+          incident_name: incident?.incident_name ?? null,
+          active_status: row.active_status,
+          assigned_at: row.assigned_at,
+        });
+      }
+      const activeIncidents = Array.from(activeIncidentMap.values()).sort(
+        (a, b) => toMillis(b.assigned_at) - toMillis(a.assigned_at)
       );
-      const incidentText =
-        activeIncidents.length > 0
-          ? `${activeIncidents.length} active incident${activeIncidents.length > 1 ? "s" : ""} require assignment`
-          : todayShiftData.length > 0
-            ? "No incidents for today"
-            : null;
 
       if (!alive) return;
 
@@ -333,7 +380,7 @@ export default function Home() {
 
       setTodayShifts(todayShiftData);
       setUpcoming(upcomingShifts);
-      setTodayIncidentSummary(incidentText);
+      setActiveIncidents(activeIncidents);
       setLoading(false);
     };
 
@@ -455,6 +502,28 @@ export default function Home() {
     });
   };
 
+  const openActiveIncident = async (incidentId: string) => {
+    const { data: assignmentRows, error } = await supabase
+      .from("incident_assignments")
+      .select("assignment_id")
+      .eq("incident_id", incidentId)
+      .eq("active_status", true)
+      .limit(1);
+
+    if (error) {
+      Alert.alert("Open failed", error.message);
+      return;
+    }
+
+    const hasAssignment = (assignmentRows?.length ?? 0) > 0;
+    if (hasAssignment) {
+      router.push(`/sso/incident-after-assign?incidentId=${incidentId}`);
+      return;
+    }
+
+    router.push(`/sso/incident-before-assign?incidentId=${incidentId}`);
+  };
+
   const todayDateText = (todayShift ? new Date(todayShift.shift_date) : new Date()).toLocaleDateString("en-GB", {
     weekday: "long",
     day: "2-digit",
@@ -473,6 +542,31 @@ export default function Home() {
 
   return (
     <View style={styles.root}>
+      <NotificationsModal
+        visible={showNotifications}
+        notifications={notificationsList}
+        onClose={() => setShowNotifications(false)}
+        onDelete={async (id) => {
+          if (!authUserId) {
+            setNotificationsList((prev) => prev.filter((n) => n.id !== id));
+            return;
+          }
+          const nowISO = new Date().toISOString();
+          const key = `${NOTIF_DISMISS_PREFIX}:${authUserId}`;
+          const next = { ...(dismissedMap ?? {}), [id]: nowISO } as Record<string, string>;
+          try {
+            await AsyncStorage.setItem(key, JSON.stringify(next));
+          } catch (err) {
+            console.warn("Failed to persist dismissed notification", err);
+          }
+          setDismissedMap(next);
+          setNotificationsList((prev) => prev.map((n) => (n.id === id ? { ...n, dismissedAt: nowISO } : n)));
+        }}
+        onViewAll={() => {
+          setShowNotifications(false);
+          router.push("/sso/notifications");
+        }}
+      />
       <ImageBackground
         source={require("../securityofficer/assets/header.png")}
         style={styles.header}
@@ -498,7 +592,23 @@ export default function Home() {
             <Pressable onPress={() => router.push("/sso/translate")}>
               <Languages color="#fff" size={22} />
             </Pressable>
-            <Pressable onPress={() => router.push("/sso/notifications")}>
+            <Pressable
+              onPress={() => {
+                const combined = [...todayShifts, ...upcoming] as NotificationShift[];
+                const uniqueShifts = Array.from(new Map(combined.map((s) => [s.id, s])).values());
+                const assignments: NotificationAssignment[] = activeIncidents.map((a) => ({
+                  assignment_id: a.assignment_id,
+                  incident_id: a.incident_id,
+                  assigned_at: a.assigned_at,
+                  active_status: a.active_status,
+                  incidents: { incident_name: a.incident_name ?? null },
+                }));
+                const entries = generateNotifications(uniqueShifts, null, null, assignments, new Date(), { includePast: false });
+                const annotated = entries.map((e) => ({ ...e, dismissedAt: dismissedMap[e.id] ?? null }));
+                setNotificationsList(annotated);
+                setShowNotifications(true);
+              }}
+            >
               <Bell color="#fff" size={22} />
             </Pressable>
             <Pressable onPress={() => router.push("/sso/settings")}>
@@ -568,7 +678,7 @@ export default function Home() {
             </View>
           </View>
 
-          <View style={{ flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 14 }}>
+          <View style={{ position: "relative", minHeight: 34, justifyContent: "center", alignItems: "center" }}>
             <Pressable
               style={styles.clockInButton}
               onPress={() => {
@@ -581,6 +691,7 @@ export default function Home() {
             </Pressable>
 
             <Pressable
+              style={{ position: "absolute", right: 0 }}
               onPress={() =>
                 router.push({
                   pathname: "/sso/shift-details",
@@ -588,7 +699,7 @@ export default function Home() {
                 })
               }
             >
-              <Text style={{ color: "#9B2C2C", fontWeight: "700", fontSize: 14 , alignContent: "Left"}}>Shift Details</Text>
+              <Text style={{ color: "#9B2C2C", fontWeight: "900", fontSize: 14, textDecorationLine: "underline" }}>Shift Details</Text>
             </Pressable>
           </View>
         </View>
@@ -599,20 +710,34 @@ export default function Home() {
         </View>
       )}
 
-      {todayShift && todayIncidentSummary ? (
+      {activeIncidents.length > 0 ? (
         <>
           <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}>
             <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
           </View>
 
-          <Pressable
-            style={[styles.card, styles.incidentCard, { marginHorizontal: horizontalPadding }]}
-            onPress={() => router.push("/sso/incidents")}
-          >
-            <Text style={[styles.cardSubtitle, { color: "#7C1515", marginTop: 0 }]}>
-              {todayIncidentSummary}
-            </Text>
-          </Pressable>
+          <View style={[styles.incidentSummaryCard, { marginHorizontal: horizontalPadding }]}>
+            {activeIncidents.map((incident, index) => (
+              <View key={incident.assignment_id || `${incident.incident_id}-${index}`}>
+                {index > 0 ? (
+                  <View style={{ height: 1, backgroundColor: "rgba(186, 79, 79, 0.35)", marginVertical: 10 }} />
+                ) : null}
+                <Pressable
+                  style={styles.incidentSummaryRow}
+                  onPress={() => {
+                    void openActiveIncident(incident.incident_id);
+                  }}
+                >
+                  <Text style={styles.incidentSummaryTitle} numberOfLines={2}>
+                    {incident.incident_name?.trim() || "Active Incident"}
+                  </Text>
+                  <View style={styles.incidentStatusBadge}>
+                    <Text style={styles.incidentStatusText}>ACTIVE</Text>
+                  </View>
+                </Pressable>
+              </View>
+            ))}
+          </View>
         </>
       ) : null}
 
@@ -792,4 +917,10 @@ function getDisplayShiftForToday(todayShifts: Shift[], now: Date, activeClockedI
       return Number.isFinite(shiftEndMs) && shiftEndMs > nowMs;
     }) ?? null
   );
+}
+
+function toMillis(iso: string | null | undefined) {
+  if (!iso) return 0;
+  const date = new Date(iso);
+  return Number.isFinite(date.getTime()) ? date.getTime() : 0;
 }

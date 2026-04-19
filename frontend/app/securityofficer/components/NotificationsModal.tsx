@@ -19,6 +19,15 @@ export default function NotificationsModal({
   onDelete,
   onViewAll,
 }: NotificationsModalProps) {
+  const activeNotifications = React.useMemo(() => {
+    const m = new Map<string, NotificationItem>();
+    for (const n of notifications) {
+      if (n.dismissedAt) continue;
+      if (!m.has(n.id)) m.set(n.id, n);
+    }
+    return Array.from(m.values());
+  }, [notifications]);
+
   return (
     <Modal
       visible={visible}
@@ -40,7 +49,7 @@ export default function NotificationsModal({
             </View>
 
             <FlatList
-              data={notifications}
+              data={activeNotifications}
               keyExtractor={(item) => item.id}
               contentContainerStyle={styles.notificationsListContent}
               ListEmptyComponent={

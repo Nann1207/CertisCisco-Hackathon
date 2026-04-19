@@ -31,6 +31,7 @@ type AlertAssignment = {
 };
 
 const STORAGE_KEY_PREFIX = "assignment_acknowledged_ids";
+const DISMISS_STORAGE_KEY_PREFIX = "assignment_dismissed_map";
 
 export default function AssignmentAlertModal() {
   const router = useRouter();
@@ -38,11 +39,17 @@ export default function AssignmentAlertModal() {
   const [loading, setLoading] = useState(true);
   const [visible, setVisible] = useState(false);
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
+  const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
   const [activeAssignment, setActiveAssignment] = useState<AlertAssignment | null>(null);
 
   const storageKey = useMemo(() => {
     if (!userId) return null;
     return `${STORAGE_KEY_PREFIX}:${userId}`;
+  }, [userId]);
+
+  const storageDismissKey = useMemo(() => {
+    if (!userId) return null;
+    return `${DISMISS_STORAGE_KEY_PREFIX}:${userId}`;
   }, [userId]);
 
   const stopVibration = () => {
@@ -56,41 +63,59 @@ export default function AssignmentAlertModal() {
     return row.incidents ?? null;
   }, []);
 
-  const fetchActiveAssignments = useCallback(async (activeUserId: string, ackSet: Set<string>) => {
-    const { data, error } = await supabase
-      .from("incident_assignments")
-      .select("assignment_id, incident_id, assigned_at, active_status, incidents(incident_name, location_unit_no)")
-      .eq("officer_id", activeUserId)
-      .eq("active_status", true)
-      .order("assigned_at", { ascending: false })
-      .limit(20);
+  const fetchActiveAssignments = useCallback(
+    async (activeUserId: string, ackSet: Set<string>, dismissed: Record<string, string> = {}) => {
+      const { data, error } = await supabase
+        .from("incident_assignments")
+        .select("assignment_id, incident_id, assigned_at, active_status, incidents(incident_name, location_unit_no)")
+        .eq("officer_id", activeUserId)
+        .eq("active_status", true)
+        .order("assigned_at", { ascending: false })
+        .limit(20);
 
-    if (error) {
-      return;
-    }
+      if (error) {
+        return;
+      }
 
-    const rows = (data as AssignmentRow[] | null) ?? [];
-    const next = rows.find((row) => row.incident_id && !ackSet.has(row.assignment_id));
+      const rows = (data as AssignmentRow[] | null) ?? [];
+      const activeIds = new Set(rows.map((r) => r.assignment_id).filter(Boolean));
 
-    if (!next || !next.incident_id) {
-      setActiveAssignment(null);
-      setVisible(false);
-      stopVibration();
-      return;
-    }
+      const prunedAckSet = new Set(Array.from(ackSet).filter((id) => activeIds.has(id)));
+      if (prunedAckSet.size !== ackSet.size) {
+        setAcknowledgedIds(prunedAckSet);
+        await AsyncStorage.setItem(`${STORAGE_KEY_PREFIX}:${activeUserId}`, JSON.stringify(Array.from(prunedAckSet)));
+      }
 
-    const incident = parseIncident(next);
-    const incidentName = (incident?.incident_name ?? "New Incident").toUpperCase();
-    const locationUnitNo = incident?.location_unit_no?.trim() ? `#${incident.location_unit_no.trim()}` : "Location Unit Pending";
+      const prunedDismissed = Object.fromEntries(Object.entries(dismissed).filter(([id]) => activeIds.has(id)));
+      if (JSON.stringify(prunedDismissed) !== JSON.stringify(dismissed)) {
+        setDismissedMap(prunedDismissed);
+        await AsyncStorage.setItem(`${DISMISS_STORAGE_KEY_PREFIX}:${activeUserId}`, JSON.stringify(prunedDismissed));
+      }
 
-    setActiveAssignment({
-      assignmentId: next.assignment_id,
-      incidentId: next.incident_id,
-      incidentName,
-      locationUnitNo,
-    });
-    setVisible(true);
-  }, [parseIncident]);
+      const effectiveAckSet = prunedAckSet.size !== ackSet.size ? prunedAckSet : ackSet;
+      const next = rows.find((row) => row.incident_id && !effectiveAckSet.has(row.assignment_id) && !prunedDismissed[row.assignment_id]);
+
+      if (!next || !next.incident_id) {
+        setActiveAssignment(null);
+        setVisible(false);
+        stopVibration();
+        return;
+      }
+
+      const incident = parseIncident(next);
+      const incidentName = (incident?.incident_name ?? "New Incident").toUpperCase();
+      const locationUnitNo = incident?.location_unit_no?.trim() ? `#${incident.location_unit_no.trim()}` : "Location Unit Pending";
+
+      setActiveAssignment({
+        assignmentId: next.assignment_id,
+        incidentId: next.incident_id,
+        incidentName,
+        locationUnitNo,
+      });
+      setVisible(true);
+    },
+    [parseIncident]
+  );
 
   useEffect(() => {
     let alive = true;
@@ -112,9 +137,14 @@ export default function AssignmentAlertModal() {
       const stored = await AsyncStorage.getItem(key);
       const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
 
+      const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${currentUserId}`;
+      const storedDismissed = await AsyncStorage.getItem(dKey);
+      const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
+
       if (!alive) return;
       setAcknowledgedIds(ids);
-      await fetchActiveAssignments(currentUserId, ids);
+      setDismissedMap(dismissed);
+      await fetchActiveAssignments(currentUserId, ids, dismissed);
       if (alive) setLoading(false);
     };
 
@@ -135,8 +165,13 @@ export default function AssignmentAlertModal() {
       const key = `${STORAGE_KEY_PREFIX}:${nextUserId}`;
       const stored = await AsyncStorage.getItem(key);
       const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
+
+      const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${nextUserId}`;
+      const storedDismissed = await AsyncStorage.getItem(dKey);
+      const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
       setAcknowledgedIds(ids);
-      await fetchActiveAssignments(nextUserId, ids);
+      setDismissedMap(dismissed);
+      await fetchActiveAssignments(nextUserId, ids, dismissed);
     });
 
     return () => {
@@ -160,7 +195,7 @@ export default function AssignmentAlertModal() {
           filter: `officer_id=eq.${userId}`,
         },
         async () => {
-          await fetchActiveAssignments(userId, acknowledgedIds);
+          await fetchActiveAssignments(userId, acknowledgedIds, dismissedMap);
         }
       )
       .subscribe();
@@ -190,13 +225,44 @@ export default function AssignmentAlertModal() {
       await AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
     }
 
+    if (storageDismissKey) {
+      const nextDismissed = { ...dismissedMap };
+      delete nextDismissed[activeAssignment.assignmentId];
+      setDismissedMap(nextDismissed);
+      await AsyncStorage.setItem(storageDismissKey, JSON.stringify(nextDismissed));
+    }
+
     setVisible(false);
     stopVibration();
     router.push(`/securityofficer/currentIncident?incidentId=${activeAssignment.incidentId}`);
   };
 
+  const onDismiss = async () => {
+    if (!activeAssignment) {
+      setVisible(false);
+      stopVibration();
+      return;
+    }
+
+    const id = activeAssignment.assignmentId;
+    const next = { ...dismissedMap, [id]: new Date().toISOString() };
+    setDismissedMap(next);
+    const key = storageDismissKey ?? (userId ? `${DISMISS_STORAGE_KEY_PREFIX}:${userId}` : null);
+    if (key) await AsyncStorage.setItem(key, JSON.stringify(next));
+
+    setVisible(false);
+    stopVibration();
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => {}}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => {
+        void onDismiss();
+      }}
+    >
       <View style={styles.backdrop}>
         <LinearGradient
           colors={["#FDEFE4", "#FFEAD7", "#FFA07D"]}

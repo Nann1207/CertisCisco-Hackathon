@@ -3,11 +3,15 @@ import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, StyleSheet, Vie
 import { useRouter } from "expo-router";
 import { Bell, CalendarDays, ChevronLeft, Clock3, ShieldAlert } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { DISPLAY_TIME_ZONE } from "../../lib/notifications";
 import Text from "../../components/TranslatedText";
 import {
-  generateShiftNotifications,
+  generateNotifications,
   type NotificationKind,
   type NotificationShift,
+  type NotificationAssignment,
+  type NotificationItem,
 } from "../../lib/notifications";
 
 type ShiftRow = {
@@ -36,6 +40,9 @@ export default function NotificationsPage() {
   const [loading, setLoading] = useState(true);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [shiftRows, setShiftRows] = useState<NotificationShift[]>([]);
+  const [assignmentRows, setAssignmentRows] = useState<NotificationAssignment[]>([]);
+  const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
+  const NOTIF_DISMISS_PREFIX = "notifications_dismissed";
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>("today");
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -65,15 +72,26 @@ export default function NotificationsPage() {
         return;
       }
 
-      const { data: shiftsRaw, error: shiftsError } = await supabase
-        .from("shifts")
-        .select("shift_id, shift_date, shift_start, shift_end, completion_status, location, clockin_time, clockout_time")
-        .eq("officer_id", userId)
-        .order("shift_date", { ascending: false })
-        .order("shift_start", { ascending: false })
-        .limit(120);
+      const [shiftsResp, assignmentsResp] = await Promise.all([
+        supabase
+          .from("shifts")
+          .select("shift_id, shift_date, shift_start, shift_end, completion_status, location, clockin_time, clockout_time")
+          .eq("officer_id", userId)
+          .order("shift_date", { ascending: false })
+          .order("shift_start", { ascending: false })
+          .limit(120),
+        supabase
+          .from("incident_assignments")
+          .select("assignment_id, incident_id, assigned_at, active_status, incidents(incident_name, location_unit_no, created_at)")
+          .eq("officer_id", userId)
+          .order("assigned_at", { ascending: false })
+          .limit(120),
+      ]);
 
       if (!alive) return;
+
+      const shiftsError = (shiftsResp as any).error;
+      const assignmentsError = (assignmentsResp as any).error;
 
       if (shiftsError) {
         setErrorText(shiftsError.message);
@@ -81,7 +99,15 @@ export default function NotificationsPage() {
         return;
       }
 
-      const mappedRows: NotificationShift[] = ((shiftsRaw ?? []) as ShiftRow[]).map((shift) => ({
+      if (assignmentsError) {
+        // non-fatal; continue with shifts only
+        console.warn("Assignments load error:", assignmentsError.message);
+      }
+
+      const shiftsRaw = (shiftsResp as any).data ?? [];
+      const assignmentsRaw = (assignmentsResp as any).data ?? [];
+
+      const mappedRows: NotificationShift[] = (shiftsRaw as ShiftRow[]).map((shift) => ({
         id: shift.shift_id,
         shift_date: shift.shift_date,
         shift_start: shift.shift_start,
@@ -92,7 +118,27 @@ export default function NotificationsPage() {
         clockout_time: shift.clockout_time,
       }));
 
+      const mappedAssignments: NotificationAssignment[] = (assignmentsRaw as any[]).map((r) => ({
+        assignment_id: r.assignment_id,
+        incident_id: r.incident_id,
+        assigned_at: r.assigned_at,
+        active_status: r.active_status,
+        incidents: r.incidents ?? null,
+      }));
+
       setShiftRows(mappedRows);
+      setAssignmentRows(mappedAssignments);
+      // load dismissed map for this user
+      if (userId) {
+        try {
+          const key = `${NOTIF_DISMISS_PREFIX}:${userId}`;
+          const stored = await AsyncStorage.getItem(key);
+          const parsed = stored ? (JSON.parse(stored) as Record<string, string>) : {};
+          setDismissedMap(parsed);
+        } catch (err) {
+          console.warn("Failed to load dismissed notifications:", err);
+        }
+      }
       setLoading(false);
     };
 
@@ -104,15 +150,66 @@ export default function NotificationsPage() {
   }, []);
 
   const entries = useMemo(() => {
-    return generateShiftNotifications(shiftRows, currentTime, { includePast: true });
-  }, [currentTime, shiftRows]);
+    return generateNotifications(shiftRows, null, null, assignmentRows, currentTime, { includePast: true });
+  }, [currentTime, shiftRows, assignmentRows]);
+
+  const entriesWithDismissed = useMemo(() => {
+    return entries.map((e) => ({ ...e, dismissedAt: dismissedMap[e.id] ?? null }));
+  }, [entries, dismissedMap]);
 
   const filteredEntries = useMemo(() => {
-    if (activeFilter === "all") return entries;
+    const includeKindsForFilter: Record<NotificationFilter, NotificationKind[]> = {
+      today: ["today", "incident", "assignment", "report"],
+      upcoming: ["upcoming", "assignment"],
+      past: ["past", "report"],
+      all: ["today", "incident", "assignment", "report", "upcoming", "past"],
+    };
+
+    const kinds = includeKindsForFilter[activeFilter];
+    let list: NotificationItem[] = [];
+
+    const todayKey = currentTime.toLocaleDateString("en-CA", { timeZone: DISPLAY_TIME_ZONE });
+    const getItemDateKey = (it: NotificationItem) => {
+      if (it.time) return new Date(it.time).toLocaleDateString("en-CA", { timeZone: DISPLAY_TIME_ZONE });
+      if (typeof it.timestamp === "string" && it.timestamp.toLowerCase().includes("today")) return todayKey;
+      try {
+        const dt = new Date(it.timestamp);
+        if (Number.isFinite(dt.getTime())) return dt.toLocaleDateString("en-CA", { timeZone: DISPLAY_TIME_ZONE });
+      } catch (e) {
+        // ignore
+      }
+      return null;
+    };
+
     if (activeFilter === "today") {
-      return entries.filter((entry) => entry.kind === "today" || entry.kind === "incident");
+      list = entriesWithDismissed.filter((e) => getItemDateKey(e) === todayKey);
+    } else {
+      list = entriesWithDismissed.filter((e) => kinds.includes(e.kind));
     }
-    return entries.filter((entry) => entry.kind === activeFilter);
+
+    // De-duplicate by id to avoid duplicate-key rendering errors
+    list = Array.from(new Map(list.map((e) => [e.id, e])).values());
+
+    // Re-sort based on active filter to surface the most-relevant items first
+    list.sort((a, b) => {
+      const pa = a.priority ?? 99;
+      const pb = b.priority ?? 99;
+      if (pa !== pb) return pa - pb;
+      const ta = a.time ?? 0;
+      const tb = b.time ?? 0;
+      if (activeFilter === "upcoming") return ta - tb; // soonest first
+      if (activeFilter === "today") {
+        // incidents: most recent first; today: earliest first; assignment/report: most recent first
+        if (a.kind === "incident" && b.kind === "incident") return tb - ta;
+        if (a.kind === "today" && b.kind === "today") return ta - tb;
+        if ((a.kind === "assignment" || a.kind === "report") && (b.kind === "assignment" || b.kind === "report")) return tb - ta;
+        return pa - pb;
+      }
+      if (activeFilter === "past") return tb - ta; // recent past first
+      return pb - pa;
+    });
+
+    return list;
   }, [activeFilter, entries]);
 
   const hasEntries = filteredEntries.length > 0;
