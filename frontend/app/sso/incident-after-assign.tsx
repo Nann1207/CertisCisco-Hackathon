@@ -835,7 +835,7 @@ const styles = StyleSheet.create({
   },
   actionChipWarmText: {
     color: "#9C2222",
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "700",
   },
   actionChipBlue: {
@@ -844,7 +844,7 @@ const styles = StyleSheet.create({
   },
   actionChipBlueText: {
     color: "#5A6E85",
-    fontSize: 11,
+    fontSize: 14,
     fontWeight: "700",
   },
   sectionDivider: {
@@ -880,11 +880,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 12,
+    columnGap: 18,
+    rowGap: 14,
     minHeight: 86,
+    justifyContent: "space-between",
   },
   assignedOfficerItem: {
-    width: 84,
+    width: "30%",
+    minWidth: 92,
     alignItems: "center",
   },
   assignedAvatar: {
@@ -912,6 +915,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textAlign: "center",
     width: "100%",
+    lineHeight: 18,
   },
   assignedOfficerRole: {
     marginTop: 1,
@@ -959,7 +963,7 @@ const styles = StyleSheet.create({
   },
   reportBtnText: {
     color: "#FFFFFF",
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: "700",
   },
   requestBackdrop: {
