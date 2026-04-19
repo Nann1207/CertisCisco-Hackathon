@@ -1,10 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import { useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import { ChevronLeft, MessageCirclePlus, Search } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
 import Text from "../../components/TranslatedText";
+import { createRealtimeTopic } from "../../lib/realtime";
+import {
+  formatUnreadCount,
+  getReadStateMap,
+  getUnreadCountsByParticipant,
+  isMissingChatReadStatesTableError,
+} from "../../lib/chatUnread";
 import {
   formatMessageTime,
   getAvatarColor,
@@ -55,6 +62,11 @@ const Avatar = ({ channel, size = 54 }: { channel: ChatChannel; size?: number })
 
 export default function MessagingChannelScreen() {
   const router = useRouter();
+  const pathname = usePathname();
+  const isSeniorSecurityOfficer = pathname?.startsWith("/sso") ?? false;
+  const showCurrentSupervisorSection = !isSeniorSecurityOfficer;
+  const baseRoute = isSeniorSecurityOfficer ? "/sso" : "/securityofficer";
+
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [channels, setChannels] = useState<ChatChannel[]>([]);
   const [currentSupervisorId, setCurrentSupervisorId] = useState<string | null>(null);
@@ -66,7 +78,13 @@ export default function MessagingChannelScreen() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   };
 
-  const buildChannels = useCallback((messages: ChatMessageRecord[], userId: string, profiles: EmployeeProfile[]) => {
+  const buildChannels = useCallback(
+    (
+      messages: ChatMessageRecord[],
+      userId: string,
+      profiles: EmployeeProfile[],
+      unreadCountsByParticipant: Map<string, number>
+    ) => {
     const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
     const latestByParticipant = new Map<string, ChatMessageRecord>();
 
@@ -91,6 +109,7 @@ export default function MessagingChannelScreen() {
           subtitle: profile?.role ?? "Conversation",
           lastMessage: getMessagePreview(latestMessage.text, latestMessage.sender_id === userId),
           lastTime: formatMessageTime(latestMessage.created_at),
+          unread: unreadCountsByParticipant.get(participantId) ?? 0,
           online: false,
           avatarColor,
           avatarTextColor: getAvatarTextColor(avatarColor),
@@ -101,7 +120,9 @@ export default function MessagingChannelScreen() {
         const messageB = latestByParticipant.get(b.id);
         return new Date(messageB?.created_at ?? 0).getTime() - new Date(messageA?.created_at ?? 0).getTime();
       });
-  }, []);
+    },
+    []
+  );
 
   const loadChannels = useCallback(async () => {
     setLoading(true);
@@ -119,28 +140,37 @@ export default function MessagingChannelScreen() {
 
     setCurrentUserId(userId);
 
-    const [{ data: messagesData, error: messagesError }, { data: shiftData, error: shiftError }] = await Promise.all([
+    const shiftPromise = showCurrentSupervisorSection
+      ? supabase
+          .from("shifts")
+          .select("supervisor_id")
+          .eq("officer_id", userId)
+          .eq("shift_date", todayISO())
+          .order("shift_start", { ascending: true })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null as { supervisor_id?: string | null } | null, error: null as unknown });
+
+    const [{ data: messagesData, error: messagesError }, { data: shiftData, error: shiftError }, readStateResult] =
+      await Promise.all([
       supabase
         .from("messages")
         .select("id, sender_id, receiver_id, text, created_at")
         .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
         .order("created_at", { ascending: false })
         .order("id", { ascending: false }),
-      supabase
-        .from("shifts")
-        .select("supervisor_id")
-        .eq("officer_id", userId)
-        .eq("shift_date", todayISO())
-        .order("shift_start", { ascending: true })
-        .limit(1)
-        .maybeSingle(),
+      shiftPromise,
+      getReadStateMap(userId).then(
+        (readStateMap) => ({ readStateMap, error: null as unknown }),
+        (error) => ({ readStateMap: new Map<string, string>(), error })
+      ),
     ]);
 
-    if (shiftError) {
+    if (shiftError && showCurrentSupervisorSection) {
       console.error("Error fetching current supervisor:", shiftError);
     }
 
-    setCurrentSupervisorId(shiftData?.supervisor_id ?? null);
+    setCurrentSupervisorId(showCurrentSupervisorSection ? shiftData?.supervisor_id ?? null : null);
 
     if (messagesError) {
       console.error("Error fetching message channels:", messagesError);
@@ -150,6 +180,11 @@ export default function MessagingChannelScreen() {
     }
 
     const messages = (messagesData || []) as ChatMessageRecord[];
+    if (readStateResult.error && !isMissingChatReadStatesTableError(readStateResult.error)) {
+      console.error("Error fetching chat read states:", readStateResult.error);
+    }
+
+    const unreadCountsByParticipant = getUnreadCountsByParticipant(messages, userId, readStateResult.readStateMap);
     const participantIds = Array.from(
       new Set(messages.map((message) => (message.sender_id === userId ? message.receiver_id : message.sender_id)))
     );
@@ -169,9 +204,9 @@ export default function MessagingChannelScreen() {
       console.error("Error fetching message profiles:", profilesError);
     }
 
-    setChannels(buildChannels(messages, userId, (profilesData || []) as EmployeeProfile[]));
+    setChannels(buildChannels(messages, userId, (profilesData || []) as EmployeeProfile[], unreadCountsByParticipant));
     setLoading(false);
-  }, [buildChannels]);
+  }, [buildChannels, showCurrentSupervisorSection]);
 
   useEffect(() => {
     loadChannels();
@@ -186,25 +221,44 @@ export default function MessagingChannelScreen() {
   useEffect(() => {
     if (!currentUserId) return;
 
-    const channel = supabase
-      .channel(`message-channels:${currentUserId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "messages",
-        },
-        (payload) => {
-          const row = (payload.new || payload.old) as Partial<ChatMessageRecord>;
-          if (row.sender_id !== currentUserId && row.receiver_id !== currentUserId) return;
-          loadChannels();
-        }
-      )
-      .subscribe();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    try {
+      channel = supabase
+        .channel(createRealtimeTopic(`message-channels:${currentUserId}`))
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "messages",
+          },
+          (payload) => {
+            const row = (payload.new || payload.old) as Partial<ChatMessageRecord>;
+            if (row.sender_id !== currentUserId && row.receiver_id !== currentUserId) return;
+            loadChannels();
+          }
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "chat_read_states",
+            filter: `user_id=eq.${currentUserId}`,
+          },
+          () => {
+            loadChannels();
+          }
+        )
+        .subscribe();
+    } catch (error) {
+      console.error("Error subscribing to realtime updates:", error);
+      return;
+    }
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [currentUserId, loadChannels]);
 
@@ -220,7 +274,7 @@ export default function MessagingChannelScreen() {
 
   const openChannel = (channel: ChatChannel) => {
     router.push({
-      pathname: "/securityofficer/message",
+      pathname: `${baseRoute}/message`,
       params: { channelId: channel.id },
     });
   };
@@ -243,7 +297,7 @@ export default function MessagingChannelScreen() {
           </Text>
           {channel.unread ? (
             <View style={styles.unreadBadge}>
-              <Text style={styles.unreadText}>{channel.unread}</Text>
+              <Text style={styles.unreadText}>{formatUnreadCount(channel.unread)}</Text>
             </View>
           ) : channel.lastTime ? (
             <Text style={styles.channelCheck}>{"\u2713"}</Text>
@@ -259,7 +313,7 @@ export default function MessagingChannelScreen() {
         <Pressable
           style={styles.backButton}
           onPress={() =>
-            router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+            router.canGoBack() ? router.back() : router.replace(`${baseRoute}/home`)
           }
           hitSlop={10}
         >
@@ -270,7 +324,7 @@ export default function MessagingChannelScreen() {
 
         <Pressable
           style={styles.composeButton}
-          onPress={() => router.push("/securityofficer/newMessage")}
+          onPress={() => router.push(`${baseRoute}/newMessage`)}
           hitSlop={10}
         >
           <MessageCirclePlus size={28} color="#FFFFFF" strokeWidth={2.4} />
@@ -278,16 +332,22 @@ export default function MessagingChannelScreen() {
       </View>
 
       <ScrollView style={styles.listArea} contentContainerStyle={styles.listContent} keyboardShouldPersistTaps="handled">
-        <Text style={styles.sectionTitle}>Current Supervisor</Text>
-        {loading ? (
-          <ActivityIndicator color="#0F2C59" />
-        ) : currentSupervisor ? (
-          renderChannelRow(currentSupervisor)
-        ) : (
-          <Text style={styles.emptyText}>No current supervisor conversation yet.</Text>
-        )}
+        {showCurrentSupervisorSection ? (
+          <>
+            <Text style={styles.sectionTitle}>Current Supervisor</Text>
+            {loading ? (
+              <ActivityIndicator color="#0F2C59" />
+            ) : currentSupervisor ? (
+              renderChannelRow(currentSupervisor)
+            ) : (
+              <Text style={styles.emptyText}>No current supervisor conversation yet.</Text>
+            )}
+          </>
+        ) : null}
 
-        <Text style={[styles.sectionTitle, styles.allSupervisorsTitle]}>Message History</Text>
+        <Text style={[styles.sectionTitle, showCurrentSupervisorSection ? styles.allSupervisorsTitle : null]}>
+          Message History
+        </Text>
 
         <View style={styles.searchWrap}>
           <Search size={24} color="#111827" />
