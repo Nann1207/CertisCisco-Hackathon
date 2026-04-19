@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
+  Text as RNText,
   Image,
   ImageBackground,
   Pressable,
@@ -23,17 +24,10 @@ import {
   Grid3X3,
 } from "lucide-react-native";
 import { Ionicons } from "@expo/vector-icons";
-import NotificationsModal from "./components/NotificationsModal";
-import ServicesModal from "./components/services";
-import {
-  generateShiftNotifications,
-  type NotificationShift,
-} from "../../lib/notifications";
 
 import { styles } from "../../styles/securityofficer/home.styles";
 
 const DISPLAY_TIME_ZONE = "Asia/Singapore";
-const USE_SIGNED_URL = true;
 
 type Profile = {
   id: string;
@@ -74,30 +68,6 @@ type UpcomingShift = {
   } | null;
 };
 
-type HomeIncidentAssignmentRow = {
-  assignment_id: string;
-  incident_id: string | null;
-  active_status: boolean | null;
-  incidents:
-    | {
-        incident_id: string;
-        incident_name: string | null;
-        location_unit_no: string | null;
-      }
-    | {
-        incident_id: string;
-        incident_name: string | null;
-        location_unit_no: string | null;
-      }[]
-    | null;
-};
-
-type HomeAssignedIncident = {
-  incidentId: string;
-  incidentName: string;
-  locationUnitNo: string;
-};
-
 export default function Home() {
   const router = useRouter();
   const { clockedInShiftId, clockedInAt } = useLocalSearchParams<{
@@ -110,7 +80,6 @@ export default function Home() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [todayShifts, setTodayShifts] = useState<Shift[]>([]);
   const [todayIncidentSummary, setTodayIncidentSummary] = useState<string | null>(null);
-  const [assignedIncidents, setAssignedIncidents] = useState<HomeAssignedIncident[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingShift[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [debugEmptyReason, setDebugEmptyReason] = useState<string | null>(null);
@@ -121,9 +90,6 @@ export default function Home() {
   const [showEarlyClockOutModal, setShowEarlyClockOutModal] = useState(false);
   const [earlyClockOutShiftId, setEarlyClockOutShiftId] = useState<string | null>(null);
   const [earlyClockOutFromText, setEarlyClockOutFromText] = useState<string>("");
-  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
-  const [showServicesModal, setShowServicesModal] = useState(false);
-  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>([]);
 
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   const calendarIconSize = Math.round(clamp(width * 0.11, 34, 45));
@@ -134,6 +100,8 @@ export default function Home() {
   const scheduleLinkSize = Math.round(clamp(width * 0.036, 12, 14));
 
   const AVATAR_BUCKET = "profile-photos";
+
+  const USE_SIGNED_URL = true;
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -357,31 +325,9 @@ export default function Home() {
         }
       }
 
-      // 4) Active incident assignments for this officer.
-      const { data: assignmentRows, error: assignmentError } = await supabase
-        .from("incident_assignments")
-        .select("assignment_id, incident_id, active_status, incidents(incident_id, incident_name, location_unit_no)")
-        .eq("officer_id", userId)
-        .eq("active_status", true)
-        .order("assigned_at", { ascending: false })
-        .limit(8);
-
-      const activeAssignedIncidents: HomeAssignedIncident[] = ((assignmentRows as HomeIncidentAssignmentRow[] | null) ?? [])
-        .map((row) => {
-          const incident = Array.isArray(row.incidents) ? row.incidents[0] : row.incidents;
-          if (!incident?.incident_id) return null;
-
-          return {
-            incidentId: incident.incident_id,
-            incidentName: (incident.incident_name ?? "New Incident").toUpperCase(),
-            locationUnitNo: incident.location_unit_no?.trim() ?? "",
-          } as HomeAssignedIncident;
-        })
-        .filter((item): item is HomeAssignedIncident => Boolean(item));
-
-      const incidentText = activeAssignedIncidents.length > 0
-        ? `${activeAssignedIncidents.length} active incident${activeAssignedIncidents.length > 1 ? "s" : ""} assigned`
-        : "No active incidents assigned";
+      // 4) Incidents: STRICT rule = no shift => no incidents section
+      // Since incidents table is not ready yet, keep it simple:
+      const incidentText = todayShiftData.length > 0 ? "No incidents for today" : null;
 
       if (!alive) return;
 
@@ -398,11 +344,7 @@ export default function Home() {
 
       setTodayShifts(todayShiftData);
       setUpcoming(upcomingShifts ?? []);
-      setAssignedIncidents(activeAssignedIncidents);
       setTodayIncidentSummary(incidentText);
-      if (assignmentError) {
-        setTodayIncidentSummary("Unable to load incidents right now");
-      }
       setLoading(false);
     };
 
@@ -427,33 +369,6 @@ export default function Home() {
       activeClockedInShiftId
     );
   }, [activeClockedInShiftId, currentTime, todayShifts]);
-
-  const notificationSourceShifts = useMemo(() => {
-    const byId = new Map<string, NotificationShift>();
-    const mergedShifts = [...todayShifts, ...upcoming] as (Shift | UpcomingShift)[];
-
-    for (const shift of mergedShifts) {
-      byId.set(shift.id, {
-        id: shift.id,
-        shift_date: shift.shift_date,
-        shift_start: shift.shift_start,
-        shift_end: shift.shift_end,
-        completion_status: shift.completion_status,
-        location: shift.location ?? null,
-        clockin_time: (shift as Shift).clockin_time ?? null,
-        clockout_time: (shift as Shift).clockout_time ?? null,
-      });
-    }
-
-    return Array.from(byId.values());
-  }, [todayShifts, upcoming]);
-
-  const liveNotifications = useMemo(() => {
-    const generated = generateShiftNotifications(notificationSourceShifts, currentTime, {
-      includePast: false,
-    });
-    return generated.filter((entry) => !dismissedNotificationIds.includes(entry.id)).slice(0, 8);
-  }, [currentTime, dismissedNotificationIds, notificationSourceShifts]);
 
   const isClockedInForTodayShift = Boolean(
     todayShift && activeClockedInShiftId && todayShift.id === activeClockedInShiftId
@@ -529,7 +444,7 @@ export default function Home() {
     setActiveClockedInShiftId(null);
     setIsSavingShiftAction(false);
     router.push({
-      pathname: "/securityofficer/shift-reports",
+      pathname: "/securityofficer/reports",
       params: {
         shiftId: shiftToClockOut.id,
       },
@@ -598,7 +513,10 @@ export default function Home() {
               onError={() => setAvatarLoadFailed(true)}
             />
             <View>
-              <Text style={styles.hiText}>{`Hi ${name}!`}</Text>
+              <View style={{ flexDirection: "row", alignItems: "baseline" }}>
+                <Text style={styles.hiText}>Hi </Text>
+                <RNText style={styles.hiText}>{name}!</RNText>
+              </View>
               <Text style={styles.welcomeText}>Welcome Back</Text>
             </View>
           </View>
@@ -607,7 +525,7 @@ export default function Home() {
             <Pressable onPress={() => router.push("/securityofficer/translate")}>
               <Languages color="#fff" size={22} />
             </Pressable>
-            <Pressable onPress={() => setShowNotificationsModal(true)}>
+            <Pressable onPress={() => router.push("/securityofficer/notifications")}>
               <Bell color="#fff" size={22} />
             </Pressable>
             <Pressable onPress={() => router.push("/securityofficer/settings")}>
@@ -620,7 +538,7 @@ export default function Home() {
           <QuickAction label="ID Card" Icon={CreditCard} onPress={() => router.push("/securityofficer/id-card")} />
           <QuickAction label="Incidents" Icon={ShieldAlert} onPress={() => router.push("/securityofficer/incidents")} />
           <QuickAction label="Reports" Icon={FileText} onPress={() => router.push("/securityofficer/reports")} />
-          <QuickAction label="All Services" Icon={Grid3X3} onPress={() => setShowServicesModal(true)} />
+          <QuickAction label="All Services" Icon={Grid3X3} onPress={() => router.push("/securityofficer/services")} />
         </View>
       </ImageBackground>
 
@@ -634,9 +552,9 @@ export default function Home() {
               <Text style={[styles.cardTitle, { fontSize: calendarDateFontSize }]}>{todayDateText}</Text>
               <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
                 <Text style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>Location: </Text>
-                <Text style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>
+                <RNText style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>
                   {todayShift.location ?? "-"}
-                </Text>
+                </RNText>
               </View>
             </View>
             {isClockedInForTodayShift ? (
@@ -699,7 +617,7 @@ export default function Home() {
         </View>
       )}
 
-      {todayIncidentSummary && (
+      {todayShift && todayIncidentSummary && (
         <>
           <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}> 
             <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
@@ -712,19 +630,6 @@ export default function Home() {
             <Text style={[styles.cardSubtitle, { color: "#7C1515", marginTop: 0 }]}>
               {todayIncidentSummary}
             </Text>
-
-            {assignedIncidents.slice(0, 2).map((incident) => (
-              <View key={incident.incidentId} style={{ marginTop: 8 }}>
-                <Text style={[styles.cardSubtitle, { opacity: 0.85, color: "#1F2937" }]}>
-                  {incident.incidentName}
-                </Text>
-                {incident.locationUnitNo ? (
-                  <Text style={[styles.cardSubtitle, { opacity: 0.75, color: "#0059D6" }]}>
-                    #{incident.locationUnitNo}
-                  </Text>
-                ) : null}
-              </View>
-            ))}
           </Pressable>
         </>
       )}
@@ -759,7 +664,7 @@ export default function Home() {
             <Pressable 
               style={styles.shiftCard} // Add shadow and background color in styles
               onPress={() => router.push({
-                pathname: "/securityofficer/shift-details",
+                pathname: "/securityofficer/upcoming-shift-details",
                 params: { shiftData: JSON.stringify(item) }
               })}
             >
@@ -775,32 +680,10 @@ export default function Home() {
         }}
       />
 
-      <NotificationsModal
-        visible={showNotificationsModal}
-        notifications={liveNotifications}
-        onClose={() => setShowNotificationsModal(false)}
-        onDelete={(id) => {
-          setDismissedNotificationIds((prev) =>
-            prev.includes(id) ? prev : [...prev, id]
-          );
-        }}
-        onViewAll={() => {
-          setShowNotificationsModal(false);
-          router.push("/securityofficer/notifications");
-        }}
-      />
-
-      <ServicesModal
-        visible={showServicesModal}
-        onClose={() => setShowServicesModal(false)}
-      />
-
       <Modal
         visible={showEarlyClockOutModal}
         transparent
         animationType="fade"
-        statusBarTranslucent
-        navigationBarTranslucent
         onRequestClose={() => setShowEarlyClockOutModal(false)}
       >
         <View style={styles.earlyModalBackdrop}>
@@ -940,4 +823,3 @@ function getDisplayShiftForToday(
 
   return nextShift ?? null;
 }
-

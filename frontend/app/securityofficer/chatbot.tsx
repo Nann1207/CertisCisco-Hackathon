@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -221,6 +221,45 @@ export default function ChatBotPage() {
   const [dynamicReplies, setDynamicReplies] = useState<DynamicReply[]>([]);
   const [isAsking, setIsAsking] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [appRoutePrefix, setAppRoutePrefix] = useState("/securityofficer");
+  const [shiftOwnerColumn, setShiftOwnerColumn] = useState<"officer_id" | "supervisor_id">("officer_id");
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadRoleContext = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+
+      if (!userId || !alive) return;
+
+      const { data: profile } = await supabase
+        .from("employees")
+        .select("role")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (!alive) return;
+
+      const role = profile?.role ?? "";
+      const isSsoUser = role === "Senior Security Officer";
+
+      if (isSsoUser) {
+        setAppRoutePrefix("/sso");
+        setShiftOwnerColumn("supervisor_id");
+        return;
+      }
+
+      setAppRoutePrefix("/securityofficer");
+      setShiftOwnerColumn("officer_id");
+    };
+
+    void loadRoleContext();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const botReplies = useMemo<BotReply[]>(
     () => [
@@ -368,7 +407,7 @@ export default function ChatBotPage() {
       const { data: shiftsData, error: shiftsError } = await supabase
         .from("shifts")
         .select("shift_id, shift_description, shift_date, clockin_time, clockout_time")
-        .eq("officer_id", userId)
+        .eq(shiftOwnerColumn, userId)
         .order("shift_date", { ascending: false })
         .limit(10);
 
@@ -416,6 +455,10 @@ export default function ChatBotPage() {
     }
 
     if (suggestion === "Escalation contacts" || suggestion === "Location of fire alarm") {
+      if (appRoutePrefix === "/sso") {
+        router.push("/sso/sop");
+        return;
+      }
       router.push("/securityofficer/fire-evacuation");
       return;
     }
@@ -432,7 +475,7 @@ export default function ChatBotPage() {
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
       <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.replace("/securityofficer/home")} hitSlop={10}>
+        <Pressable style={styles.backButton} onPress={() => router.replace(`${appRoutePrefix}/home` as any)} hitSlop={10}>
           <ChevronLeft size={36} color="#FFFFFF" strokeWidth={3} />
         </Pressable>
         <Text style={styles.headerTitle}>Chat Bot</Text>
@@ -540,19 +583,26 @@ export default function ChatBotPage() {
               </View>
               <Text style={styles.actionLabel}>Call SCDF</Text>
             </Pressable>
-            <Pressable style={styles.actionButton} onPress={() => router.push("/securityofficer/fire-evacuation")}>
+            <Pressable
+              style={styles.actionButton}
+              onPress={() =>
+                appRoutePrefix === "/sso"
+                  ? router.push("/sso/sop")
+                  : router.push("/securityofficer/fire-evacuation")
+              }
+            >
               <View style={styles.actionCircle}>
                 <ListChecks size={30} color="#0E2D52" strokeWidth={2.4} />
               </View>
               <Text style={styles.actionLabel}>View Fire SOP Guide</Text>
             </Pressable>
-            <Pressable style={styles.actionButton} onPress={() => router.push("/securityofficer/incidents")}>
+            <Pressable style={styles.actionButton} onPress={() => router.push(`${appRoutePrefix}/incidents` as any)}>
               <View style={styles.actionCircle}>
                 <Check size={36} color="#0E2D52" strokeWidth={2.4} />
               </View>
               <Text style={styles.actionLabel}>Open Incident Checklist</Text>
             </Pressable>
-            <Pressable style={styles.actionButton} onPress={() => router.push("/securityofficer/reports")}>
+            <Pressable style={styles.actionButton} onPress={() => router.push(`${appRoutePrefix}/reports` as any)}>
               <View style={styles.actionCircle}>
                 <ClipboardPen size={30} color="#0E2D52" strokeWidth={2.4} />
               </View>

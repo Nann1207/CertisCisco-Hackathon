@@ -1,6 +1,6 @@
 import React from "react";
 import { Image, Pressable, StyleSheet, ViewStyle } from "react-native";
-import { useRouter } from "expo-router";
+import { usePathname, useRouter } from "expo-router";
 import Svg, { Defs, RadialGradient, Stop, Circle } from "react-native-svg";
 
 const ROBOT_ICON = require("../assets/robot.png");
@@ -9,6 +9,7 @@ type Props = {
   bottomOffset?: number;
   rightOffset?: number;
   size?: number; // <-- make it bigger easily
+  targetHref?: string;
   style?: ViewStyle;
 };
 
@@ -16,13 +17,19 @@ export default function FloatingChatButton({
   bottomOffset = 104, // slightly higher because button is bigger
   rightOffset = 20,
   size = 62, // <-- bigger than your original 46ish
+  targetHref = "/securityofficer/chatbot",
   style,
 }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
+
+  if (pathname?.endsWith("/chatbot")) {
+    return null;
+  }
 
   return (
     <Pressable
-      onPress={() => router.push("/securityofficer/chatbot")}
+      onPress={() => router.push(targetHref as any)}
       style={[
         styles.fab,
         {
@@ -74,6 +81,7 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 6 },
     elevation: 10,
+    zIndex: 20,
 
     // ensure gradient is clipped perfectly to circle
     overflow: "hidden",

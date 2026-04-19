@@ -110,12 +110,7 @@ export default function UpcomingScheduleScreen() {
   return (
     <View style={styles.root}>
       <View style={[styles.headerRow, { paddingHorizontal: horizontalPadding, paddingTop: headerTop }]}> 
-        <Pressable
-          style={styles.backButton}
-          onPress={() =>
-            router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
-          }
-        >
+        <Pressable style={styles.backButton} onPress={() => router.back()}>
           <ChevronLeft size={24} color="#0E2D52" />
         </Pressable>
         <Text style={[styles.headerTitle, { fontSize: titleSize }]}>Upcoming Schedule</Text>
@@ -133,7 +128,7 @@ export default function UpcomingScheduleScreen() {
             style={styles.card}
             onPress={() =>
               router.push({
-                pathname: "/securityofficer/shift-details",
+                pathname: "/securityofficer/upcoming-shift-details",
                 params: { shiftData: JSON.stringify(item) },
               })
             }
