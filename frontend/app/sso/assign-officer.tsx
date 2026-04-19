@@ -77,6 +77,12 @@ type SupervisorName = {
   last_name: string | null;
 };
 
+type ShiftWindow = {
+  shiftDate: string;
+  shiftStart: string;
+  shiftEnd: string;
+};
+
 export default function SsoAssignOfficerPage() {
   const router = useRouter();
   const { incidentId } = useLocalSearchParams<{ incidentId?: string }>();
@@ -147,8 +153,19 @@ export default function SsoAssignOfficerPage() {
         return;
       }
 
+      const shiftRows = ((rows as ShiftOfficerRow[] | null) ?? []);
+      const currentShift = selectCurrentShiftWindow(shiftRows);
+      const sourceRows = currentShift
+        ? shiftRows.filter(
+            (row) =>
+              row.shift_date === currentShift.shiftDate &&
+              row.shift_start === currentShift.shiftStart &&
+              row.shift_end === currentShift.shiftEnd
+          )
+        : shiftRows;
+
       const normalized: CandidateOfficer[] = [];
-      for (const row of ((rows as ShiftOfficerRow[] | null) ?? [])) {
+      for (const row of sourceRows.length > 0 ? sourceRows : shiftRows) {
         const employee = Array.isArray(row.employees) ? row.employees[0] : row.employees;
         if (!row.officer_id || !employee?.id) continue;
 
@@ -380,18 +397,19 @@ export default function SsoAssignOfficerPage() {
                       </View>
                     </View>
 
+                    <View style={styles.shiftDateRow}>
+                      <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
+                    </View>
+
                     <View style={styles.shiftRow}>
-                      <View style={styles.shiftCol}>
-                        <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
-                        <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftStart, officer.shiftEnd)}</Text>
-                      </View>
+                      <Text style={styles.shiftLabel}>Start Time</Text>
+                      <Text style={styles.arrowText}>{"<--->"}</Text>
+                      <Text style={[styles.shiftLabel, styles.shiftLabelRight]}>End Time</Text>
+                    </View>
 
-                      <Text style={styles.arrowText}>{"<---->"}</Text>
-
-                      <View style={[styles.shiftCol, styles.shiftColRight]}>
-                        <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
-                        <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftStart, officer.shiftEnd)}</Text>
-                      </View>
+                    <View style={styles.shiftTimeRow}>
+                      <Text style={styles.shiftTime}>{formatShiftTime(officer.shiftDate, officer.shiftStart)}</Text>
+                      <Text style={[styles.shiftTime, styles.shiftTimeRight]}>{formatShiftTime(officer.shiftDate, officer.shiftEnd)}</Text>
                     </View>
 
                     <Pressable
@@ -519,6 +537,67 @@ function formatTimeRange(startISO: string, endISO: string) {
     timeZone: DISPLAY_TIME_ZONE,
   };
   return `${new Date(startISO).toLocaleTimeString([], opts)} - ${new Date(endISO).toLocaleTimeString([], opts)}`;
+}
+
+function formatShiftTime(shiftDate: string, shiftValue: string) {
+  const opts: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: DISPLAY_TIME_ZONE,
+  };
+
+  const ts = parseShiftTimestamp(shiftDate, shiftValue);
+  if (ts === null) return "--:--";
+  return new Date(ts).toLocaleTimeString([], opts);
+}
+
+function selectCurrentShiftWindow(rows: ShiftOfficerRow[]): ShiftWindow | null {
+  if (rows.length === 0) return null;
+
+  const now = Date.now();
+  for (const row of rows) {
+    const start = parseShiftTimestamp(row.shift_date, row.shift_start);
+    const end = parseShiftTimestamp(row.shift_date, row.shift_end);
+    if (start === null || end === null) continue;
+    if (now >= start && now <= end) {
+      return {
+        shiftDate: row.shift_date,
+        shiftStart: row.shift_start,
+        shiftEnd: row.shift_end,
+      };
+    }
+  }
+
+  // Fallback to the most common shift slot for today.
+  const slotCounts = new Map<string, { count: number; slot: ShiftWindow }>();
+  for (const row of rows) {
+    const key = `${row.shift_date}|${row.shift_start}|${row.shift_end}`;
+    const existing = slotCounts.get(key);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+    slotCounts.set(key, {
+      count: 1,
+      slot: { shiftDate: row.shift_date, shiftStart: row.shift_start, shiftEnd: row.shift_end },
+    });
+  }
+
+  const winner = Array.from(slotCounts.values()).sort((a, b) => b.count - a.count)[0];
+  return winner?.slot ?? null;
+}
+
+function parseShiftTimestamp(shiftDate: string, shiftValue: string) {
+  const raw = shiftValue?.trim();
+  if (!raw) return null;
+
+  const direct = new Date(raw);
+  if (Number.isFinite(direct.getTime())) return direct.getTime();
+
+  const combined = new Date(`${shiftDate}T${raw}`);
+  if (Number.isFinite(combined.getTime())) return combined.getTime();
+
+  return null;
 }
 
 async function resolveAvatarUrlFromPath(rawPath: string) {
@@ -686,7 +765,28 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   shiftRow: {
+    marginTop: 3,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  shiftDateRow: {
     marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  shiftLabel: {
+    color: "#6B7280",
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "600",
+  },
+  shiftLabelRight: {
+    textAlign: "right",
+  },
+  shiftTimeRow: {
+    marginTop: 2,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -709,6 +809,9 @@ const styles = StyleSheet.create({
     lineHeight: 13,
     fontWeight: "600",
     marginTop: 0,
+  },
+  shiftTimeRight: {
+    textAlign: "right",
   },
   arrowText: {
     marginHorizontal: 8,

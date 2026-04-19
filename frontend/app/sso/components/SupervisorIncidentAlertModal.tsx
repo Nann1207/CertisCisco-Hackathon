@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -31,6 +31,8 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   const [visible, setVisible] = useState(false);
   const [activeIncident, setActiveIncident] = useState<AlertIncident | null>(null);
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
+  const acknowledgedIdsRef = useRef<Set<string>>(new Set());
+  const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   const stopVibration = () => {
     Vibration.cancel();
@@ -55,6 +57,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
 
     const prunedAckSet = new Set(Array.from(ackSet).filter((id) => activeIds.has(id)));
     if (prunedAckSet.size !== ackSet.size) {
+      acknowledgedIdsRef.current = prunedAckSet;
       setAcknowledgedIds(prunedAckSet);
     }
 
@@ -85,6 +88,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     if (supervisorId) {
       setUserId(supervisorId);
       const ids = new Set<string>();
+      acknowledgedIdsRef.current = ids;
       setAcknowledgedIds(ids);
       setLoading(false);
       void fetchActiveIncidents(supervisorId, ids);
@@ -122,6 +126,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
       setUserId(nextUserId);
 
       if (!nextUserId) {
+        acknowledgedIdsRef.current = new Set();
         setAcknowledgedIds(new Set());
         setActiveIncident(null);
         setVisible(false);
@@ -130,6 +135,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
       }
 
       const ids = new Set<string>();
+      acknowledgedIdsRef.current = ids;
       setAcknowledgedIds(ids);
       await fetchActiveIncidents(nextUserId, ids);
     });
@@ -145,7 +151,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     if (!userId || loading) return;
 
     const channel = supabase
-      .channel(`sso-incident-alert-${userId}`)
+      .channel(`sso-incident-alert-${userId}-${channelNonceRef.current}`)
       .on(
         "postgres_changes",
         {
@@ -155,7 +161,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
           filter: `supervisor_id=eq.${userId}`,
         },
         async () => {
-          await fetchActiveIncidents(userId, acknowledgedIds);
+          await fetchActiveIncidents(userId, acknowledgedIdsRef.current);
         }
       )
       .subscribe();
@@ -163,7 +169,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [acknowledgedIds, fetchActiveIncidents, loading, userId]);
+  }, [fetchActiveIncidents, loading, userId]);
 
   useEffect(() => {
     if (!visible) {
@@ -180,6 +186,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
 
     const next = new Set(acknowledgedIds);
     next.add(activeIncident.incidentId);
+    acknowledgedIdsRef.current = next;
     setAcknowledgedIds(next);
 
     setVisible(false);
@@ -188,7 +195,15 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => {}}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      presentationStyle="overFullScreen"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={() => {}}
+    >
       <View style={styles.backdrop}>
         <LinearGradient
           colors={["#FBEBD8", "#F7DBD3", "#D7B8F0"]}
