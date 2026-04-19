@@ -267,23 +267,25 @@ export default function SsoIncidentBeforeAssignPage() {
             <View style={styles.assessmentBox}>
               <Text style={styles.assessmentText}>{incident.ai_assessment?.trim() || "No AI assessment available."}</Text>
             </View>
-
-            <Pressable
-              style={styles.dispatchBtnWrap}
-              onPress={() => router.push(`/sso/assign-officer?incidentId=${incident.incident_id}`)}
-            >
-              <LinearGradient
-                colors={["#F00707", "#680002"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.dispatchBtn}
-              >
-                <BellRing size={30} color="#FFFFFF" strokeWidth={2.8} />
-                <Text style={styles.dispatchBtnText}>Dispatch Officers Now</Text>
-              </LinearGradient>
-            </Pressable>
           </View>
         </ScrollView>
+
+        <View style={styles.dispatchFloatingArea}>
+          <Pressable
+            style={styles.dispatchBtnWrap}
+            onPress={() => router.push(`/sso/assign-officer?incidentId=${incident.incident_id}`)}
+          >
+            <LinearGradient
+              colors={["#F00707", "#680002"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.dispatchBtn}
+            >
+              <BellRing size={30} color="#FFFFFF" strokeWidth={2.8} />
+              <Text style={styles.dispatchBtnText}>Dispatch Officers Now</Text>
+            </LinearGradient>
+          </Pressable>
+        </View>
       </View>
 
       <Modal visible={showMapModal} animationType="slide" onRequestClose={() => setShowMapModal(false)}>
@@ -394,7 +396,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 22,
     paddingTop: 16,
-    paddingBottom: 112,
+    paddingBottom: 172,
   },
   card: {
     backgroundColor: "transparent",
@@ -462,8 +464,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
+  dispatchFloatingArea: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 18,
+    alignItems: "center",
+  },
   dispatchBtnWrap: {
-    marginTop: 18,
     alignSelf: "center",
     borderRadius: 111,
     shadowColor: "#FF0202",
