@@ -14,7 +14,7 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { AlertTriangle, Bot, Check, ChevronLeft, ClipboardPen, ListChecks, PhoneCall } from "lucide-react-native";
+import { AlertTriangle, Check, ChevronLeft, ClipboardPen, ListChecks, PhoneCall, SendHorizontal } from "lucide-react-native";
 import Svg, { Circle, Line, Path, Rect, Text as SvgText } from "react-native-svg";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
@@ -32,7 +32,6 @@ type DynamicReply = {
   id: string;
   question: string;
   answer: string;
-  answerRich?: React.ReactNode;
   time: string;
   loading: boolean;
   showGuide: boolean;
@@ -72,7 +71,6 @@ const FIRE_QUICK_REPLIES = [
 const GENERIC_QUICK_REPLIES = [
   "Show SOP steps",
   "Escalation contacts",
-  "Mark response complete",
   "Logistics needed",
 ];
 
@@ -84,7 +82,28 @@ Response rules:
 - Use plain text only. Do not use markdown, bold markers, headings, or asterisks.
 - Do not invent names, phone numbers, or building details that are not provided.`;
 
-const CONVO_BOT_IMAGE = require("./assets/convobot.png");
+const CONVO_BOT_IMAGE = require("./assets/robot.png");
+
+type SessionChatState = {
+  replies: DynamicReply[];
+  showFullSteps: boolean;
+};
+
+const sessionChatCache = new Map<string, SessionChatState>();
+
+let chatAuthSubscriptionStarted = false;
+const ensureChatAuthSubscription = () => {
+  if (chatAuthSubscriptionStarted) return;
+  chatAuthSubscriptionStarted = true;
+
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === "SIGNED_OUT") {
+      sessionChatCache.clear();
+    }
+  });
+};
+
+ensureChatAuthSubscription();
 
 const ExtinguisherGuide = ({ width }: { width: number }) => {
   const guideWidth = Math.min(width, 330);
@@ -152,7 +171,7 @@ const ExtinguisherGuide = ({ width }: { width: number }) => {
 
 const BotAvatar = () => (
   <View style={styles.botAvatar}>
-    <Image source={CONVO_BOT_IMAGE} style={styles.botAvatarImage} resizeMode="cover" />
+    <Image source={CONVO_BOT_IMAGE} style={styles.botAvatarImage} resizeMode="contain" />
   </View>
 );
 
@@ -328,6 +347,175 @@ const splitDashHeadline = (value: string) => {
   const tail = value.slice(idx + 3).trim();
   if (!head || !tail) return null;
   return { head: `${head} -`, tail };
+};
+
+const splitNumberedHeading = (line: string) => {
+  const match = line.match(/^(\d+\)\s+)(.+)$/);
+  if (!match) return null;
+  const prefix = match[1]?.trim();
+  const title = match[2]?.trim();
+  if (!prefix || !title) return null;
+  return { prefix, title };
+};
+
+const isAllCapsHeading = (line: string) => {
+  const trimmed = line.trim();
+  if (trimmed.length < 6 || trimmed.length > 64) return false;
+  if (!/[A-Z]/.test(trimmed)) return false;
+  if (!/^[A-Z0-9 ()&.,'/-]+$/.test(trimmed)) return false;
+  return trimmed === trimmed.toUpperCase();
+};
+
+const normalizeAnswerLines = (answer: string) => {
+  const raw = answer.split("\n").map((l) => l.trim());
+  const out: string[] = [];
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const current = raw[i];
+    if (!current) continue;
+
+    const isOrphanStep = /^\d+[.)]$/.test(current);
+    if (!isOrphanStep) {
+      out.push(current);
+      continue;
+    }
+
+    let j = i + 1;
+    while (j < raw.length && !raw[j]) j += 1;
+    if (j >= raw.length) {
+      out.push(current);
+      continue;
+    }
+
+    out.push(`${current} ${raw[j]}`.trim());
+    i = j;
+  }
+
+  return out;
+};
+
+const splitEmphasisPrefix = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const colonIdx = trimmed.indexOf(":");
+  if (colonIdx > 0 && colonIdx < 64) {
+    const head = trimmed.slice(0, colonIdx + 1).trim();
+    const tail = trimmed.slice(colonIdx + 1).trim();
+    if (head && tail) return { head, tail: ` ${tail}` };
+    if (head) return { head, tail: "" };
+  }
+
+  const firstDot = trimmed.indexOf(".");
+  if (firstDot > 0 && firstDot < 72) {
+    const head = trimmed.slice(0, firstDot + 1).trim();
+    const tail = trimmed.slice(firstDot + 1).trim();
+    const wordCount = head.split(/\s+/).filter(Boolean).length;
+    if (head && wordCount <= 14) return { head, tail: tail ? ` ${tail}` : "" };
+  }
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length <= 6) {
+    return { head: trimmed, tail: "" };
+  }
+
+  const headWords = words.slice(0, 6).join(" ");
+  const rest = trimmed.slice(headWords.length).trim();
+  if (!headWords) return null;
+  return { head: headWords, tail: rest ? ` ${rest}` : "" };
+};
+
+const isLikelySectionTitle = (line: string) => {
+  const trimmed = line.trim();
+  if (trimmed.length < 6 || trimmed.length > 56) return false;
+  if (/^\d+[.)]/.test(trimmed)) return false;
+  if (/[:.]\s*$/.test(trimmed)) return false;
+  if (!/[A-Za-z]/.test(trimmed)) return false;
+  return true;
+};
+
+const renderAnswerLines = (answer: string, keyPrefix: string) => {
+  const lines = normalizeAnswerLines(answer);
+
+  return lines.map((line, idx) => {
+    if (!line) return null;
+
+    const nextLine = lines[idx + 1] ?? "";
+    if (isLikelySectionTitle(line) && splitStepLine(nextLine)) {
+      return (
+        <Text key={`${keyPrefix}-section-${idx}`} style={[styles.messageText, styles.boldText]}>
+          {line}
+        </Text>
+      );
+    }
+
+    const numberedHeading = splitNumberedHeading(line);
+    if (numberedHeading) {
+      return (
+        <Text key={`${keyPrefix}-heading-${idx}`} style={[styles.messageText, styles.boldText]}>
+          {`${numberedHeading.prefix}${numberedHeading.title}`}
+        </Text>
+      );
+    }
+
+    if (isAllCapsHeading(line)) {
+      return (
+        <Text key={`${keyPrefix}-caps-${idx}`} style={[styles.messageText, styles.boldText]}>
+          {line}
+        </Text>
+      );
+    }
+
+    const labelValue = splitLabelValue(line);
+    if (labelValue) {
+      return (
+        <View key={`${keyPrefix}-label-${idx}`} style={styles.inlineRow}>
+          <Text style={[styles.messageText, styles.fallbackLabel]}>{labelValue.label}</Text>
+          <Text style={[styles.messageText, styles.inlineValue]}>{labelValue.value}</Text>
+        </View>
+      );
+    }
+
+    const stepParts = splitStepLine(line);
+    if (stepParts) {
+      const dash = splitDashHeadline(stepParts.value);
+      const emphasis = !dash ? splitEmphasisPrefix(stepParts.value) : null;
+      return (
+        <View key={`${keyPrefix}-step-${idx}`} style={styles.inlineRow}>
+          <Text style={[styles.messageText, styles.fallbackLabel]}>{stepParts.label}</Text>
+          {dash ? (
+            <>
+              <Text style={[styles.messageText, styles.boldText, styles.inlineValue]}>{dash.head}</Text>
+              <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
+            </>
+          ) : emphasis ? (
+            <>
+              <Text style={[styles.messageText, styles.boldText, styles.inlineValue]}>{emphasis.head}</Text>
+              {emphasis.tail ? <Text style={[styles.messageText, styles.inlineValue]}>{emphasis.tail}</Text> : null}
+            </>
+          ) : (
+            <Text style={[styles.messageText, styles.inlineValue]}>{stepParts.value}</Text>
+          )}
+        </View>
+      );
+    }
+
+    const dash = splitDashHeadline(line);
+    if (dash) {
+      return (
+        <View key={`${keyPrefix}-dash-${idx}`} style={styles.inlineRow}>
+          <Text style={[styles.messageText, styles.boldText]}>{dash.head}</Text>
+          <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
+        </View>
+      );
+    }
+
+    return (
+      <Text key={`${keyPrefix}-line-${idx}`} style={styles.messageText}>
+        {line}
+      </Text>
+    );
+  });
 };
 
 const sopCategoryLabelForSlug = (slug: string | null | undefined) => {
@@ -529,11 +717,13 @@ export default function ChatBotPage() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const scrollViewRef = useRef<ScrollView | null>(null);
+  const lastUserIdRef = useRef<string | null>(null);
   const [input, setInput] = useState("");
   const [showFullSteps, setShowFullSteps] = useState(false);
   const [dynamicReplies, setDynamicReplies] = useState<DynamicReply[]>([]);
   const [isAsking, setIsAsking] = useState(false);
-  const [isListening, setIsListening] = useState(false);
+  const [initialBotTime, setInitialBotTime] = useState(formatCurrentTime());
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [activeIncident, setActiveIncident] = useState<ActiveIncident | null>(null);
   const [incidentLoaded, setIncidentLoaded] = useState(false);
   const [incidentAiAssessment, setIncidentAiAssessment] = useState<string | null>(null);
@@ -580,6 +770,59 @@ export default function ChatBotPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+
+    const loadHistory = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id ?? null;
+      if (!alive) return;
+      setAuthUserId(userId);
+      lastUserIdRef.current = userId;
+      if (!userId) return;
+
+      const cached = sessionChatCache.get(userId);
+      if (cached) {
+        setDynamicReplies(cached.replies);
+        setShowFullSteps(cached.showFullSteps);
+      }
+    };
+
+    void loadHistory();
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+      const prevUserId = lastUserIdRef.current;
+      const nextUserId = session?.user?.id ?? null;
+      setAuthUserId(nextUserId);
+      lastUserIdRef.current = nextUserId;
+
+      if (event === "SIGNED_OUT" || !nextUserId) {
+        if (prevUserId) sessionChatCache.delete(prevUserId);
+        setDynamicReplies([]);
+        setShowFullSteps(false);
+        setInput("");
+      }
+    });
+
+    return () => {
+      alive = false;
+      subscription?.subscription?.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authUserId) return;
+    sessionChatCache.set(authUserId, {
+      replies: dynamicReplies.map((r) => ({ ...r, loading: false })),
+      showFullSteps,
+    });
+  }, [authUserId, dynamicReplies, showFullSteps]);
+
+  useEffect(() => {
+    if (!incidentLoaded) return;
+    setInitialBotTime(formatCurrentTime());
+  }, [activeIncident?.id, incidentLoaded]);
+
   const sopSlug = useMemo(
     () => normalizeIncidentCategoryToSopSlug(activeIncident?.incident_category, incidentAiAssessment),
     [activeIncident?.incident_category, incidentAiAssessment]
@@ -599,63 +842,14 @@ export default function ChatBotPage() {
       {
         id: "initial",
         title,
-        time: "01:59 PM",
+        time: initialBotTime,
         suggestions: quickReplies,
         body: (
           <>
             <Text style={[styles.messageText, styles.assessmentHeader]}>AI Incident Assessment</Text>
             {showLoading ? <Text style={styles.messageText}>Loading incident details...</Text> : null}
             {!showLoading && incidentAiAssessment ? (
-              incidentAiAssessment
-                .split("\n")
-                .map((rawLine, idx) => {
-                  const line = rawLine.trim();
-                  if (!line) return null;
-
-                  const labelValue = splitLabelValue(line);
-                  if (labelValue) {
-                    return (
-                      <View key={`ai-assign-${idx}`} style={styles.inlineRow}>
-                        <Text style={[styles.messageText, styles.fallbackLabel]}>{labelValue.label}</Text>
-                        <Text style={[styles.messageText, styles.inlineValue]}>{labelValue.value}</Text>
-                      </View>
-                    );
-                  }
-
-                  const stepParts = splitStepLine(line);
-                  if (stepParts) {
-                    const dash = splitDashHeadline(stepParts.value);
-                    return (
-                      <View key={`ai-assign-${idx}`} style={styles.inlineRow}>
-                        <Text style={[styles.messageText, styles.fallbackLabel]}>{stepParts.label}</Text>
-                        {dash ? (
-                          <>
-                            <Text style={[styles.messageText, styles.boldText, styles.inlineValue]}>{dash.head}</Text>
-                            <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
-                          </>
-                        ) : (
-                          <Text style={[styles.messageText, styles.inlineValue]}>{stepParts.value}</Text>
-                        )}
-                      </View>
-                    );
-                  }
-
-                  const dash = splitDashHeadline(line);
-                  if (dash) {
-                    return (
-                      <View key={`ai-assign-${idx}`} style={styles.inlineRow}>
-                        <Text style={[styles.messageText, styles.boldText]}>{dash.head}</Text>
-                        <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
-                      </View>
-                    );
-                  }
-
-                  return (
-                    <Text key={`ai-assign-${idx}`} style={styles.messageText}>
-                      {line}
-                    </Text>
-                  );
-                })
+              renderAnswerLines(incidentAiAssessment, "ai-assign")
             ) : null}
             {!showLoading && !incidentAiAssessment && incidentInfoLines.length
               ? incidentInfoLines.map((line, idx) => (
@@ -672,7 +866,7 @@ export default function ChatBotPage() {
         ),
       },
     ];
-  }, [activeIncident, incidentAiAssessment, incidentAiLoaded, incidentLoaded, quickReplies]);
+  }, [activeIncident, incidentAiAssessment, incidentAiLoaded, incidentLoaded, initialBotTime, quickReplies]);
 
   const incidentBanner = useMemo(
     () => buildIncidentBanner(activeIncident, incidentLoaded),
@@ -919,29 +1113,6 @@ export default function ChatBotPage() {
     askBot(input);
   };
 
-  const stopSpeechInput = async () => {
-    setIsListening(false);
-  };
-
-  const startSpeechInput = async () => {
-    setIsListening(false);
-    Alert.alert(
-      "Speech-to-text unavailable",
-      "SEA-LION's public API currently supports text/chat completions, not audio transcription. Use your phone keyboard's dictation button, or connect a separate transcription API behind the backend."
-    );
-  };
-
-  const toggleSpeechInput = async () => {
-    if (isAsking) return;
-
-    if (isListening) {
-      await stopSpeechInput();
-      return;
-    }
-
-    await startSpeechInput();
-  };
-
   const addLocalReply = (question: string, answer: string) => {
     setDynamicReplies((prev) => [
       ...prev,
@@ -949,23 +1120,6 @@ export default function ChatBotPage() {
         id: `local-${Date.now()}`,
         question,
         answer,
-        answerRich: undefined,
-        time: formatCurrentTime(),
-        loading: false,
-        showGuide: false,
-      },
-    ]);
-    scrollToBottom();
-  };
-
-  const addLocalReplyRich = (question: string, answerRich: React.ReactNode) => {
-    setDynamicReplies((prev) => [
-      ...prev,
-      {
-        id: `local-${Date.now()}`,
-        question,
-        answer: "",
-        answerRich,
         time: formatCurrentTime(),
         loading: false,
         showGuide: false,
@@ -1027,26 +1181,18 @@ export default function ChatBotPage() {
   };
 
   const markEvacuationComplete = async () => {
+    if (!activeIncident) {
+      Alert.alert("No active incident", "You can only mark evacuation complete when an incident is assigned to you.");
+      return;
+    }
     const completedAt = formatReportTimestamp();
-    const incidentLabel = activeIncident ? buildIncidentTitle(activeIncident) : "Incident";
+    const incidentLabel = buildIncidentTitle(activeIncident);
     const note = `[${completedAt}] Evacuation marked complete for ${incidentLabel}.`;
     setShowFullSteps(true);
     await markShiftReportNote(
       "Mark evacuation complete",
       note,
       `Evacuation complete has been recorded in the shift report.\nTime noted: ${completedAt}`
-    );
-  };
-
-  const markResponseComplete = async () => {
-    const completedAt = formatReportTimestamp();
-    const incidentLabel = activeIncident ? buildIncidentTitle(activeIncident) : "Incident";
-    const note = `[${completedAt}] Response marked complete for ${incidentLabel}.`;
-    setShowFullSteps(true);
-    await markShiftReportNote(
-      "Mark response complete",
-      note,
-      `Response complete has been recorded in the shift report.\nTime noted: ${completedAt}`
     );
   };
 
@@ -1060,32 +1206,15 @@ export default function ChatBotPage() {
     const stepsToShow = incidentSopSteps.slice(0, 12);
     const question = isFireIncident ? "Show evacuation steps" : "Show SOP steps";
 
-    addLocalReplyRich(
-      question,
-      <View>
-        {incidentSopTitle ? <Text style={[styles.messageText, styles.boldText]}>{incidentSopTitle}</Text> : null}
-        {stepsToShow.map((s) => {
-          const short = (s.step_short ?? "").trim();
-          const desc = (s.step_description ?? "").trim();
-          const hasShort = Boolean(short);
-          const hasDesc = Boolean(desc);
-          const shortWithDash = hasShort ? (short.endsWith("-") ? short : `${short} -`) : "";
-
-          return (
-            <View key={`sop-step-${s.step_no}`} style={styles.inlineRow}>
-              <Text style={[styles.messageText, styles.fallbackLabel]}>{`${s.step_no}.`}</Text>
-              {hasShort ? (
-                <Text style={[styles.messageText, styles.boldText, styles.inlineValue]}>{shortWithDash}</Text>
-              ) : null}
-              {hasDesc ? <Text style={[styles.messageText, styles.inlineValue]}>{desc}</Text> : null}
-              {!hasShort && !hasDesc ? (
-                <Text style={[styles.messageText, styles.inlineValue]}>Step</Text>
-              ) : null}
-            </View>
-          );
-        })}
-      </View>
-    );
+    const lines: string[] = [];
+    if (incidentSopTitle) lines.push(incidentSopTitle);
+    for (const s of stepsToShow) {
+      const short = (s.step_short ?? "").trim();
+      const desc = (s.step_description ?? "").trim();
+      const parts = short && desc ? `${short} - ${desc}` : [short, desc].filter(Boolean).join(" ");
+      lines.push(`${s.step_no}. ${parts || "Step"}`.trim());
+    }
+    addLocalReply(question, lines.join("\n"));
   };
 
   const handleSuggestionPress = (suggestion: string) => {
@@ -1117,12 +1246,12 @@ export default function ChatBotPage() {
     }
 
     if (suggestion === "Mark evacuation complete") {
+      if (!activeIncident) {
+        Alert.alert("No active incident", "You can only mark evacuation complete when an incident is assigned to you.");
+        return;
+      }
       void markEvacuationComplete();
       return;
-    }
-
-    if (suggestion === "Mark response complete") {
-      void markResponseComplete();
     }
   };
 
@@ -1134,18 +1263,15 @@ export default function ChatBotPage() {
     >
       <View style={styles.header}>
         <Pressable style={styles.backButton} onPress={() => router.replace(`${appRoutePrefix}/home` as any)} hitSlop={10}>
-          <ChevronLeft size={36} color="#FFFFFF" strokeWidth={3} />
+          <ChevronLeft size={28} color="#FFFFFF" strokeWidth={3} />
         </Pressable>
         <Text style={styles.headerTitle}>Chat Bot</Text>
-        <View style={styles.headerBotWrap}>
-          <Image source={CONVO_BOT_IMAGE} style={styles.headerBotImage} resizeMode="cover" />
-          <Text style={styles.headerBotText}>conversation AI</Text>
-        </View>
+        <View style={styles.headerSpacer} />
       </View>
 
       <View style={styles.incidentBanner}>
         <View style={styles.alertIconWrap}>
-          <AlertTriangle size={30} color="#B91C1C" strokeWidth={2.8} />
+          <AlertTriangle size={20} color="#D85B53" strokeWidth={2.6} />
         </View>
         <View style={styles.incidentTextWrap}>
           <Text style={styles.incidentTitle}>{incidentBanner.title}</Text>
@@ -1175,16 +1301,21 @@ export default function ChatBotPage() {
             {reply.suggestions ? (
               <View style={styles.suggestionsWrap}>
                 <Text style={styles.suggestionHelp}>Click on the suggested questions or type out your question.</Text>
-                {reply.suggestions.map((suggestion) => (
-                  <Pressable
-                    key={suggestion}
-                    style={[styles.suggestionButton, isAsking && styles.disabledButton]}
-                    disabled={isAsking}
-                    onPress={() => handleSuggestionPress(suggestion)}
-                  >
-                    <Text style={styles.suggestionText}>{suggestion}</Text>
-                  </Pressable>
-                ))}
+                {reply.suggestions.map((suggestion) => {
+                  const isMarkAction = suggestion.startsWith("Mark ");
+                  const suggestionDisabled = isAsking || (isMarkAction && !activeIncident);
+
+                  return (
+                    <Pressable
+                      key={suggestion}
+                      style={[styles.suggestionButton, suggestionDisabled && styles.disabledButton]}
+                      disabled={suggestionDisabled}
+                      onPress={() => handleSuggestionPress(suggestion)}
+                    >
+                      <Text style={styles.suggestionText}>{suggestion}</Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             ) : null}
 
@@ -1218,58 +1349,7 @@ export default function ChatBotPage() {
                 </View>
               ) : (
                 <>
-                  {reply.answerRich ? (
-                    reply.answerRich
-                  ) : (
-                    reply.answer.split("\n").map((rawLine, index) => {
-                      const line = rawLine.trim();
-                      if (!line) return null;
-
-                      const labelValue = splitLabelValue(line);
-                      if (labelValue) {
-                        return (
-                          <View key={`${reply.id}-${index}`} style={styles.inlineRow}>
-                            <Text style={[styles.messageText, styles.fallbackLabel]}>{labelValue.label}</Text>
-                            <Text style={[styles.messageText, styles.inlineValue]}>{labelValue.value}</Text>
-                          </View>
-                        );
-                      }
-
-                      const stepParts = splitStepLine(line);
-                      if (stepParts) {
-                        const dash = splitDashHeadline(stepParts.value);
-                        return (
-                          <View key={`${reply.id}-${index}`} style={styles.inlineRow}>
-                            <Text style={[styles.messageText, styles.fallbackLabel]}>{stepParts.label}</Text>
-                            {dash ? (
-                              <>
-                                <Text style={[styles.messageText, styles.boldText, styles.inlineValue]}>{dash.head}</Text>
-                                <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
-                              </>
-                            ) : (
-                              <Text style={[styles.messageText, styles.inlineValue]}>{stepParts.value}</Text>
-                            )}
-                          </View>
-                        );
-                      }
-
-                      const dash = splitDashHeadline(line);
-                      if (dash) {
-                        return (
-                          <View key={`${reply.id}-${index}`} style={styles.inlineRow}>
-                            <Text style={[styles.messageText, styles.boldText]}>{dash.head}</Text>
-                            <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
-                          </View>
-                        );
-                      }
-
-                      return (
-                        <Text key={`${reply.id}-${index}`} style={styles.messageText}>
-                          {line}
-                        </Text>
-                      );
-                    })
-                  )}
+                  {renderAnswerLines(reply.answer, reply.id)}
                   {reply.showGuide ? (
                     <>
                       <Text style={styles.messageText}>Use correct extinguisher:</Text>
@@ -1320,24 +1400,18 @@ export default function ChatBotPage() {
             value={input}
             onChangeText={setInput}
             onSubmitEditing={handleSend}
-            placeholder={isListening ? "listening..." : "type here..."}
-            placeholderTextColor="#111827"
+            placeholder="Type here..."
+            placeholderTextColor="#000000"
             returnKeyType="send"
             style={styles.input}
           />
           <Pressable
-            style={[styles.micButton, isListening && styles.micButtonListening, isAsking && styles.disabledButton]}
-            onPress={input.trim() ? handleSend : toggleSpeechInput}
-            disabled={isAsking}
+            style={[styles.sendButton, (!input.trim() || isAsking) && styles.disabledButton]}
+            onPress={handleSend}
+            disabled={!input.trim() || isAsking}
             hitSlop={8}
           >
-            {input.trim() ? (
-              <Bot size={22} color="#FFFFFF" strokeWidth={2.4} />
-            ) : isListening ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Image source={CONVO_BOT_IMAGE} style={styles.micIconImage} resizeMode="contain" />
-            )}
+            <SendHorizontal size={16} color="#FFFFFF" strokeWidth={2.6} />
           </Pressable>
         </View>
       </View>
@@ -1351,18 +1425,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
   header: {
-    minHeight: 106,
+    minHeight: 104,
     backgroundColor: "#16518E",
     paddingTop: 40,
     paddingBottom: 12,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
   },
   backButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
     backgroundColor: "rgba(255,255,255,0.16)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.14)",
@@ -1372,66 +1447,67 @@ const styles = StyleSheet.create({
   headerTitle: {
     flex: 1,
     color: "#FFFFFF",
-    fontSize: 31,
-    fontWeight: "800",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontSize: 26,
+    lineHeight: 24,
+    fontWeight: "600",
     textAlign: "center",
-    marginLeft: 12,
+    marginHorizontal: 10,
   },
-  headerBotWrap: {
-    width: 72,
-    alignItems: "center",
-  },
-  headerBotImage: {
-    width: 62,
-    height: 46,
-    borderRadius: 8,
-  },
-  headerBotText: {
-    marginTop: 1,
-    color: "#FFFFFF",
-    fontSize: 7,
-    fontWeight: "700",
+  headerSpacer: {
+    width: 40,
+    height: 40,
   },
   incidentBanner: {
-    minHeight: 78,
-    backgroundColor: "#F3B1B5",
-    borderBottomWidth: 2,
-    borderBottomColor: "#E58B92",
+    minHeight: 59,
+    backgroundColor: "#E19D9D",
+    borderBottomWidth: 1.5,
+    borderBottomColor: "rgba(255, 61, 61, 0.4)",
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   alertIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: "#9F232B",
+    width: 30,
+    height: 31,
+    borderRadius: 10,
+    backgroundColor: "#802A2A",
     alignItems: "center",
     justifyContent: "center",
     marginRight: 14,
   },
   incidentTextWrap: {
     flex: 1,
+    alignItems: "center",
   },
   incidentTitle: {
-    color: "#B01621",
-    fontSize: 23,
-    lineHeight: 27,
-    fontWeight: "900",
+    color: "#A50909",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: "600",
     letterSpacing: 0,
+    textAlign: "center",
   },
   incidentSubtitle: {
-    color: "#211315",
-    fontSize: 18,
+    color: "#151414",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontSize: 15,
     lineHeight: 24,
     letterSpacing: 0,
+    fontWeight: "400",
+    textAlign: "center",
   },
   chatArea: {
     flex: 1,
   },
   chatContent: {
     paddingHorizontal: 18,
-    paddingTop: 28,
+    paddingTop: 18,
     paddingBottom: 22,
   },
   botBlock: {
@@ -1442,77 +1518,94 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   botAvatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: "#EAF4FF",
+    width: 56,
+    height: 56,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
     marginRight: 10,
   },
   botAvatarImage: {
-    width: 102,
-    height: 72,
+    width: 48,
+    height: 48,
   },
   botTitleWrap: {
     flex: 1,
   },
   followText: {
-    color: "#202124",
-    fontSize: 16,
-    lineHeight: 22,
+    color: "#151414",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "400",
+    fontSize: 12,
+    lineHeight: 24,
   },
   botTitle: {
-    color: "#0B0B0C",
-    fontSize: 18,
+    color: "#000000",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "600",
+    fontSize: 14,
     lineHeight: 24,
-    fontWeight: "800",
   },
   botBody: {
-    marginTop: 12,
-    paddingHorizontal: 16,
+    marginTop: 8,
+    paddingHorizontal: 6,
   },
   messageText: {
-    color: "#202124",
-    fontSize: 20,
-    lineHeight: 32,
+    color: "#151414",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "400",
+    fontSize: 15,
+    lineHeight: 24,
     letterSpacing: 0,
   },
   fireIcon: {
     fontSize: 20,
   },
   suggestionsWrap: {
-    marginTop: 20,
-    paddingHorizontal: 8,
+    marginTop: 12,
   },
   suggestionHelp: {
-    color: "#111827",
+    color: "#151414",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "400",
     fontSize: 13,
-    lineHeight: 18,
+    lineHeight: 24,
     marginBottom: 8,
   },
   suggestionButton: {
-    minHeight: 31,
+    minHeight: 30,
     justifyContent: "center",
-    backgroundColor: "#E6EEF5",
+    backgroundColor: "#E4F0FF",
+    borderWidth: 1,
+    borderColor: "rgba(116, 144, 177, 0.36)",
     marginBottom: 9,
     paddingHorizontal: 12,
-    borderRadius: 0,
+    paddingVertical: 5,
+    borderRadius: 2,
   },
   disabledButton: {
     opacity: 0.55,
   },
   suggestionText: {
-    color: "#0A66B7",
-    fontSize: 15,
-    lineHeight: 20,
+    color: "#416F9E",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "400",
+    fontSize: 13,
+    lineHeight: 24,
     letterSpacing: 0,
   },
   replyTime: {
-    color: "#3E6F9E",
-    fontSize: 15,
-    marginTop: 10,
+    color: "#416F9E",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "400",
+    fontSize: 12,
+    lineHeight: 24,
+    marginTop: 1,
     marginLeft: 12,
   },
   userBubbleWrap: {
@@ -1521,21 +1614,29 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     width: "73%",
-    minHeight: 72,
-    borderRadius: 8,
-    backgroundColor: "#A9CDF8",
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: "#B6D6FF",
     justifyContent: "center",
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   userBubbleText: {
     color: "#111827",
-    fontSize: 19,
-    lineHeight: 25,
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "400",
+    fontSize: 15,
+    lineHeight: 24,
   },
   userTime: {
-    color: "#3E6F9E",
-    fontSize: 14,
-    marginTop: 8,
+    color: "#416F9E",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "400",
+    fontSize: 12,
+    lineHeight: 24,
+    marginTop: 1,
     marginRight: 6,
   },
   guideWrap: {
@@ -1550,8 +1651,9 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     color: "#202124",
-    fontSize: 16,
-    lineHeight: 22,
+    fontFamily: "Inter",
+    fontSize: 18,
+    lineHeight: 24,
   },
   actionRow: {
     flexDirection: "row",
@@ -1574,8 +1676,9 @@ const styles = StyleSheet.create({
   },
   actionLabel: {
     color: "#111827",
-    fontSize: 10,
-    lineHeight: 13,
+    fontFamily: "Inter",
+    fontSize: 12,
+    lineHeight: 15,
     textAlign: "center",
     marginTop: 8,
   },
@@ -1583,41 +1686,42 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#DADDE3",
-    paddingHorizontal: 12,
+    paddingHorizontal: 6,
     paddingTop: 10,
     paddingBottom: 10,
   },
   inputWrap: {
-    minHeight: 58,
-    borderRadius: 8,
+    minHeight: 37,
+    borderRadius: 17,
     borderWidth: 1,
-    borderColor: "#B9CFE8",
-    backgroundColor: "#EAF4FF",
+    borderColor: "rgba(116, 144, 177, 0.36)",
+    backgroundColor: "#E4F0FF",
     flexDirection: "row",
     alignItems: "center",
-    paddingLeft: 40,
+    paddingLeft: 20,
     paddingRight: 8,
   },
   input: {
     flex: 1,
-    color: "#111827",
-    fontSize: 16,
-    paddingVertical: Platform.OS === "ios" ? 12 : 8,
+    color: "#000000",
+    fontFamily: "Inter",
+    fontStyle: "normal",
+    fontWeight: "400",
+    fontSize: 12,
+    lineHeight: 19,
+    textAlign: "left",
+    textAlignVertical: "center",
+    height: 37,
+    paddingTop: -1,
+    paddingBottom: 1,
   },
-  micButton: {
-    width: 45,
-    height: 45,
-    borderRadius: 23,
+  sendButton: {
+    width: 27,
+    height: 27,
+    borderRadius: 14,
     backgroundColor: "#0E2D52",
     alignItems: "center",
     justifyContent: "center",
-  },
-  micIconImage: {
-    width: 28,
-    height: 28,
-  },
-  micButtonListening: {
-    backgroundColor: "#B01621",
   },
   assessmentHeader: {
     fontWeight: "900",
