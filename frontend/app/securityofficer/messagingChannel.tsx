@@ -170,7 +170,8 @@ export default function MessagingChannelScreen() {
       console.error("Error fetching current supervisor:", shiftError);
     }
 
-    setCurrentSupervisorId(showCurrentSupervisorSection ? shiftData?.supervisor_id ?? null : null);
+    const supervisorId = showCurrentSupervisorSection ? shiftData?.supervisor_id ?? null : null;
+    setCurrentSupervisorId(supervisorId);
 
     if (messagesError) {
       console.error("Error fetching message channels:", messagesError);
@@ -186,7 +187,12 @@ export default function MessagingChannelScreen() {
 
     const unreadCountsByParticipant = getUnreadCountsByParticipant(messages, userId, readStateResult.readStateMap);
     const participantIds = Array.from(
-      new Set(messages.map((message) => (message.sender_id === userId ? message.receiver_id : message.sender_id)))
+      new Set(
+        [
+          ...messages.map((message) => (message.sender_id === userId ? message.receiver_id : message.sender_id)),
+          ...(supervisorId ? [supervisorId] : []),
+        ].filter((id): id is string => typeof id === "string" && id.length > 0)
+      )
     );
 
     if (participantIds.length === 0) {
@@ -204,7 +210,49 @@ export default function MessagingChannelScreen() {
       console.error("Error fetching message profiles:", profilesError);
     }
 
-    setChannels(buildChannels(messages, userId, (profilesData || []) as EmployeeProfile[], unreadCountsByParticipant));
+    const profiles = (profilesData || []) as EmployeeProfile[];
+    const baseChannels = buildChannels(messages, userId, profiles, unreadCountsByParticipant);
+
+    // Ensure "Current Supervisor" can be messaged even when there's no chat history yet.
+    if (showCurrentSupervisorSection && supervisorId) {
+      const exists = baseChannels.some((channel) => channel.id === supervisorId);
+      if (!exists) {
+        const supervisorProfile = profiles.find((profile) => profile.id === supervisorId) ?? null;
+        let resolvedSupervisorName = supervisorProfile ? getDisplayName(supervisorProfile) : "";
+
+        // Fallback when employees SELECT is blocked by RLS: use the RPC used elsewhere in the app.
+        if (!resolvedSupervisorName.trim()) {
+          try {
+            const { data } = await supabase.rpc("get_my_supervisor_name", {
+              p_supervisor_id: supervisorId,
+            });
+            const row = Array.isArray(data) ? data[0] : data;
+            const firstName = (row?.first_name ?? "").toString().trim();
+            const lastName = (row?.last_name ?? "").toString().trim();
+            resolvedSupervisorName = `${firstName} ${lastName}`.trim();
+          } catch (error) {
+            console.error("Error fetching current supervisor name:", error);
+          }
+        }
+
+        const name = resolvedSupervisorName.trim() ? resolvedSupervisorName : "Current Supervisor";
+        const avatarColor = getAvatarColor(supervisorId);
+
+        baseChannels.unshift({
+          id: supervisorId,
+          name,
+          subtitle: supervisorProfile?.role ?? "Current Supervisor",
+          lastMessage: "Tap to message",
+          lastTime: "",
+          unread: 0,
+          online: false,
+          avatarColor,
+          avatarTextColor: getAvatarTextColor(avatarColor),
+        });
+      }
+    }
+
+    setChannels(baseChannels);
     setLoading(false);
   }, [buildChannels, showCurrentSupervisorSection]);
 
@@ -269,7 +317,8 @@ export default function MessagingChannelScreen() {
     return channels.filter((channel) => channel.name.toLowerCase().includes(normalizedSearch));
   }, [channels, search]);
 
-  const currentSupervisor = filteredChannels.find((channel) => channel.id === currentSupervisorId);
+  // Keep current supervisor visible even when filtering message history.
+  const currentSupervisor = channels.find((channel) => channel.id === currentSupervisorId);
   const otherChannels = filteredChannels.filter((channel) => channel.id !== currentSupervisorId);
 
   const openChannel = (channel: ChatChannel) => {
