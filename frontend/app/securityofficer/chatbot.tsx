@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -9,14 +9,14 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View,
   useWindowDimensions,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { AlertTriangle, Bot, Check, ChevronLeft, ClipboardPen, ListChecks, Mic, PhoneCall } from "lucide-react-native";
+import { AlertTriangle, Bot, Check, ChevronLeft, ClipboardPen, ListChecks, PhoneCall } from "lucide-react-native";
 import Svg, { Circle, Line, Path, Rect, Text as SvgText } from "react-native-svg";
+import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
 import { askSeaLion, isSeaLionConfigured } from "../../lib/sealion";
 
@@ -32,6 +32,7 @@ type DynamicReply = {
   id: string;
   question: string;
   answer: string;
+  answerRich?: React.ReactNode;
   time: string;
   loading: boolean;
   showGuide: boolean;
@@ -45,25 +46,40 @@ type ShiftReportTarget = {
   clockout_time: string | null;
 };
 
-const QUICK_REPLIES = [
+type ActiveIncident = {
+  id: string;
+  incident_category: string | null;
+  location_name: string | null;
+  location_unit_no: string | null;
+  location_description: string | null;
+  created_at: string | null;
+  assigned_at: string | null;
+};
+
+type SopStep = {
+  step_no: number;
+  step_short: string | null;
+  step_description: string | null;
+};
+
+const FIRE_QUICK_REPLIES = [
   "Show evacuation steps",
   "Escalation contacts",
   "Mark evacuation complete",
   "Location of fire alarm",
 ];
 
-const INCIDENT_CONTEXT = `Active incident: Fire detected at Zone 4B.
-Role: Security officer response assistant.
-Known SOP:
-- Raise alarm or confirm alarm activation.
-- Notify the control room immediately.
-- Begin evacuation using emergency exit stairs. Do not use lifts.
-- Check the area only if safe.
-- Firefighting is only allowed if safe and with the correct extinguisher.
-- Escalate to Control Room and call SCDF at 995 for emergency support.
+const GENERIC_QUICK_REPLIES = [
+  "Show SOP steps",
+  "Escalation contacts",
+  "Mark response complete",
+  "Logistics needed",
+];
+
+const BASE_RESPONSE_RULES = `Role: Security officer response assistant.
 Response rules:
 - Adapt to the officer's latest update. If the officer says something cannot be done, do not simply repeat that step. Give the next best contingency.
-- For "cannot contact control room", tell them to keep evacuation moving, retry using another channel, escalate to supervisor/nearby officer if available, and call SCDF at 995 if immediate emergency support is needed.
+- For "cannot contact control room", give practical alternatives (retry other channel, escalate to supervisor/nearby officer relay, proceed with life-safety steps).
 - Use 3 to 5 short numbered steps.
 - Use plain text only. Do not use markdown, bold markers, headings, or asterisks.
 - Do not invent names, phone numbers, or building details that are not provided.`;
@@ -173,9 +189,9 @@ const getFallbackAnswer = (prompt: string) => {
     normalizedPrompt.includes("cannot contact")
   ) {
     return [
-      "1. Continue evacuation by emergency exit stairs. Do not wait for Control Room before moving people away from Zone 4B.",
+      "1. Continue evacuation by emergency exit stairs. Do not wait for Control Room before moving people away from the affected area.",
       "2. Retry Control Room using another channel if available, such as radio, phone, or nearby officer relay.",
-      "3. Escalate to your supervisor or the nearest available officer and state: Fire at Zone 4B, evacuation in progress, Control Room unreachable.",
+      "3. Escalate to your supervisor or the nearest available officer and state: Incident at the affected area, evacuation in progress, Control Room unreachable.",
       "4. If there is immediate danger or the fire is spreading, call SCDF at 995.",
       "5. Record the time and method of each failed contact attempt.",
     ].join("\n");
@@ -185,7 +201,7 @@ const getFallbackAnswer = (prompt: string) => {
     return [
       "Step 1: Confirm the fire alarm is activated. If it is not active, activate the nearest fire alarm immediately.",
       "Step 2: Begin evacuation using the nearest emergency exit stairs. Do not use the lifts.",
-      "Step 3: Guide people away from Zone 4B and keep exits clear.",
+      "Step 3: Guide people away from the affected area and keep exits clear.",
       "Step 4: If safe, check the area and use the correct extinguisher only if trained.",
       "Step 5: Inform the Control Room and call SCDF at 995.",
     ].join("\n");
@@ -200,10 +216,10 @@ const getFallbackAnswer = (prompt: string) => {
   }
 
   if (normalizedPrompt.includes("complete")) {
-    return "Mark evacuation complete only after occupants are directed to safety, Zone 4B is cleared where safe to check, and the Control Room has been updated.";
+    return "Mark evacuation complete only after occupants are directed to safety, the affected area is cleared where safe to check, and the Control Room has been updated.";
   }
 
-  return "For the active fire incident at Zone 4B: confirm the alarm, notify Control Room, evacuate by stairs, avoid lifts, check only if safe, and call SCDF at 995 if needed.";
+  return "For the active incident: open the SOP guide, confirm the exact category, inform Control Room with the location and current status, and follow the listed steps. Record timestamps for key actions and updates.";
 };
 
 const cleanBotAnswer = (answer: string) =>
@@ -213,44 +229,596 @@ const cleanBotAnswer = (answer: string) =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
+const formatIncidentTimestamp = (iso: string | null | undefined) => {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+const buildIncidentTitle = (incident: ActiveIncident) => {
+  const category = (incident.incident_category ?? "Incident").trim();
+  const locationName = (incident.location_name ?? incident.location_description ?? "Unknown Location").trim();
+  return `${category} - ${locationName}`;
+};
+
+const formatIncidentInfoLines = (incident: ActiveIncident) => {
+  const category = (incident.incident_category ?? "Incident").trim();
+  const locationName = (incident.location_name ?? "Unknown Location").trim();
+  const unit = (incident.location_unit_no ?? "").trim();
+  const desc = (incident.location_description ?? "").trim();
+
+  return [
+    { label: "Category:", value: category },
+    { label: "Location:", value: [locationName, unit].filter(Boolean).join(" ") || locationName },
+    ...(desc ? [{ label: "Details:", value: desc }] : []),
+  ];
+};
+
+const buildIncidentBanner = (incident: ActiveIncident | null, loaded: boolean) => {
+  if (!loaded) {
+    return {
+      title: "LOADING INCIDENT...",
+      subtitle: "Fetching incident details.",
+    };
+  }
+
+  if (!incident) {
+    return {
+      title: "NO ACTIVE INCIDENT",
+      subtitle: "No incident is currently assigned to you.",
+    };
+  }
+
+  const category = (incident.incident_category ?? "Incident").trim();
+  const locationName = (incident.location_name ?? incident.location_description ?? "Unknown Location").trim();
+  const unit = (incident.location_unit_no ?? "").trim();
+  const place = [locationName, unit].filter(Boolean).join(" ");
+
+  return {
+    title: `ACTIVE INCIDENT - ${place || "UNKNOWN"}`,
+    subtitle: `${category} detected at ${place || locationName}. Response in progress`,
+  };
+};
+
+const extractIncidentAiAssessment = (incident: any): string | null => {
+  if (!incident || typeof incident !== "object") return null;
+
+  const value = (incident as any).ai_assessment;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value && typeof value === "object") {
+    try {
+      const asJson = JSON.stringify(value);
+      if (asJson && asJson !== "{}" && asJson !== "[]") return asJson;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+};
+
+const splitLabelValue = (line: string) => {
+  const match = line.match(/^([^:\n]{1,32}):\s*(.+)$/);
+  if (!match) return null;
+  const label = match[1]?.trim();
+  const value = match[2]?.trim();
+  if (!label || !value) return null;
+  return { label: `${label}:`, value };
+};
+
+const splitStepLine = (line: string) => {
+  const trimmed = line.trim();
+  const stepMatch = trimmed.match(/^(step\s+\d+:\s*)(.+)$/i);
+  if (stepMatch) return { label: stepMatch[1].trim(), value: stepMatch[2].trim() };
+  const numMatch = trimmed.match(/^(\d+\.\s*)(.+)$/);
+  if (numMatch) return { label: numMatch[1].trim(), value: numMatch[2].trim() };
+  return null;
+};
+
+const splitDashHeadline = (value: string) => {
+  const idx = value.indexOf(" - ");
+  if (idx <= 0) return null;
+  const head = value.slice(0, idx).trim();
+  const tail = value.slice(idx + 3).trim();
+  if (!head || !tail) return null;
+  return { head: `${head} -`, tail };
+};
+
+const sopCategoryLabelForSlug = (slug: string | null | undefined) => {
+  if (!slug) return null;
+
+  // Keep in sync with `frontend/app/securityofficer/[category].tsx`
+  const categoryMap: Record<string, string> = {
+    "fire-evacuation": "Fire & Evacuation",
+    robbery: "Robbery",
+    violence: "Violence",
+    "lift-alarm": "Lift Alarm",
+    medical: "Medical",
+    "bomb-threat": "Bomb Threat",
+    "suspicious-item": "Suspicious Item",
+    "suspicious-person": "Suspicious Person",
+  };
+
+  return categoryMap[slug] ?? null;
+};
+
+const pickBestSopTitle = (titles: string[], incidentHints: string[]) => {
+  const normalizedTitles = titles
+    .map((t) => (typeof t === "string" ? t.trim() : ""))
+    .filter(Boolean);
+  if (!normalizedTitles.length) return null;
+
+  const hintText = incidentHints
+    .map((h) => (h ?? "").toString().toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+
+  // If we have no hints, keep stable behavior (first alphabetical).
+  if (!hintText.trim()) return normalizedTitles[0];
+
+  const normalizedKey = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/&/g, "and")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  // Special-case: avoid picking "Multi Site Bomb Threat" unless the incident explicitly indicates multi-site.
+  if (hintText.includes("bomb") && !hintText.includes("multi") && !hintText.includes("multiple") && !hintText.includes("site")) {
+    // Preferred default for Bomb Threat incidents.
+    // If Risk Assessment exists, always use it as the default (even if hints mention "written bomb threat").
+    const riskAssessment =
+      normalizedTitles.find((t) => normalizedKey(t) === "bomb threat risk assessment") ??
+      normalizedTitles.find((t) => normalizedKey(t).startsWith("bomb threat risk assessment"));
+    if (riskAssessment) return riskAssessment;
+
+    const exactBombThreat = normalizedTitles.find((t) => normalizedKey(t) === "bomb threat");
+    if (exactBombThreat) return exactBombThreat;
+  }
+
+  const hintTokens = Array.from(
+    new Set(
+      hintText
+        .split(/[^a-z0-9]+/g)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 3)
+    )
+  );
+
+  let bestTitle: string | null = null;
+  let bestScore = -1;
+
+  for (const title of normalizedTitles) {
+    const tLower = title.toLowerCase();
+
+    let score = 0;
+    // Phrase boost for very common categories.
+    if (hintText.includes("bomb") && tLower.includes("bomb")) score += 8;
+    if (hintText.includes("fire") && tLower.includes("fire")) score += 8;
+    if (hintText.includes("robber") && tLower.includes("robber")) score += 8;
+    if (hintText.includes("lift") && tLower.includes("lift")) score += 8;
+    if (hintText.includes("medical") && tLower.includes("medical")) score += 8;
+    if (hintText.includes("violence") && tLower.includes("violence")) score += 8;
+
+    // Token overlap.
+    for (const tok of hintTokens) {
+      if (tLower.includes(tok)) score += 2;
+    }
+
+    // Penalize multi-site titles unless hints mention it.
+    const titleKey = normalizedKey(title);
+    const wantsMulti = hintText.includes("multi") || hintText.includes("multiple") || hintText.includes("site");
+    if (!wantsMulti && (titleKey.includes("multi site") || titleKey.includes("multi-site") || titleKey.includes("multiple site"))) {
+      score -= 6;
+    }
+
+    // Prefer more specific titles when scores tie: longer (but cap effect).
+    score += Math.min(3, Math.floor(title.length / 20));
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestTitle = title;
+    }
+  }
+
+  return bestTitle ?? normalizedTitles[0];
+};
+
+const formatSopStepsForPrompt = (title: string | null, steps: SopStep[]) => {
+  if (!steps.length) return "Known SOP: (not loaded)";
+  const header = title ? `Known SOP (${title}):` : "Known SOP:";
+
+  const lines = steps.slice(0, 10).map((s) => {
+    const short = (s.step_short ?? "").trim();
+    const desc = (s.step_description ?? "").trim();
+    const details = [short, desc].filter(Boolean).join(" - ");
+    return `${s.step_no}. ${details || "Step"}`;
+  });
+
+  return [header, ...lines].join("\n");
+};
+
+const buildIncidentContext = (
+  incident: ActiveIncident | null,
+  sopSlug: string | null,
+  sopTitle: string | null,
+  sopSteps: SopStep[],
+  incidentAiAssessment: string | null
+) => {
+  if (!incident) {
+    return `Active incident: none assigned.\n${BASE_RESPONSE_RULES}`;
+  }
+
+  const title = buildIncidentTitle(incident);
+  const unit = (incident.location_unit_no ?? "").trim();
+  const desc = (incident.location_description ?? "").trim();
+  const created = formatIncidentTimestamp(incident.created_at);
+  const assigned = formatIncidentTimestamp(incident.assigned_at);
+  const timing = [assigned ? `assigned ${assigned}` : null, created ? `created ${created}` : null]
+    .filter(Boolean)
+    .join(", ");
+  const locationBits = [unit, desc].filter(Boolean).join(" • ");
+
+  const sopCategory = sopCategoryLabelForSlug(sopSlug);
+  const sopBlock = sopCategory
+    ? `${formatSopStepsForPrompt(sopTitle, sopSteps)}\nSOP category: ${sopCategory}`
+    : formatSopStepsForPrompt(sopTitle, sopSteps);
+  const aiBlock = incidentAiAssessment ? `Incident AI assessment:\n${incidentAiAssessment}\n` : "";
+
+  return `Active incident: ${title}${timing ? ` (${timing})` : ""}\nLocation: ${locationBits || "Unknown"}\n${aiBlock}${sopBlock}\n${BASE_RESPONSE_RULES}`;
+};
+
+const normalizeIncidentCategoryToSopSlug = (category: string | null | undefined, aiAssessment?: string | null) => {
+  const raw = (category ?? "").trim().toLowerCase();
+  if (!raw) return null;
+
+  const assessment = (aiAssessment ?? "").toString().trim().toLowerCase();
+  if (assessment.includes("bomb")) return "bomb-threat";
+  if (assessment.includes("fire") || assessment.includes("evac")) return "fire-evacuation";
+
+  // Explicit mappings (prefer matching SOP slugs in `frontend/app/securityofficer/sop.tsx`).
+  const mappings: Record<string, string> = {
+    fire: "fire-evacuation",
+    "fire & evacuation": "fire-evacuation",
+    "fire incident": "fire-evacuation",
+    evacuation: "fire-evacuation",
+    robbery: "robbery",
+    violence: "violence",
+    "lift alarm": "lift-alarm",
+    lift: "lift-alarm",
+    medical: "medical",
+    "medical emergency": "medical",
+    "bomb threat": "bomb-threat",
+    bomb: "bomb-threat",
+    "suspicious item": "suspicious-item",
+    "suspicious items": "suspicious-item",
+    "suspicious person": "suspicious-person",
+    "suspicious persons": "suspicious-person",
+  };
+
+  if (mappings[raw]) return mappings[raw];
+
+  // Keyword fallback (handles values like "Bomb Threat Incident" / "Fire Incident - Zone 4B")
+  if (raw.includes("bomb")) return "bomb-threat";
+  if (raw.includes("abandon") && (raw.includes("object") || raw.includes("bag") || raw.includes("package"))) return "bomb-threat";
+  if (raw.includes("fire") || raw.includes("evac")) return "fire-evacuation";
+  if (raw.includes("robber") || raw.includes("theft")) return "robbery";
+  if (raw.includes("violence") || raw.includes("assault") || raw.includes("fight")) return "violence";
+  if (raw.includes("lift") || raw.includes("elevator")) return "lift-alarm";
+  if (raw.includes("medical") || raw.includes("injury") || raw.includes("aed")) return "medical";
+  if (raw.includes("suspicious") && raw.includes("item")) return "suspicious-item";
+  if (raw.includes("suspicious") && (raw.includes("person") || raw.includes("people"))) return "suspicious-person";
+
+  // Best-effort normalization: "Lift Alarm" -> "lift-alarm"
+  const normalized = raw
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || null;
+};
+
 export default function ChatBotPage() {
   const router = useRouter();
   const { width } = useWindowDimensions();
+  const scrollViewRef = useRef<ScrollView | null>(null);
   const [input, setInput] = useState("");
   const [showFullSteps, setShowFullSteps] = useState(false);
   const [dynamicReplies, setDynamicReplies] = useState<DynamicReply[]>([]);
   const [isAsking, setIsAsking] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [activeIncident, setActiveIncident] = useState<ActiveIncident | null>(null);
+  const [incidentLoaded, setIncidentLoaded] = useState(false);
+  const [incidentAiAssessment, setIncidentAiAssessment] = useState<string | null>(null);
+  const [incidentAiLoaded, setIncidentAiLoaded] = useState(false);
+  const [incidentSopTitle, setIncidentSopTitle] = useState<string | null>(null);
+  const [incidentSopSteps, setIncidentSopSteps] = useState<SopStep[]>([]);
 
-  const botReplies = useMemo<BotReply[]>(
-    () => [
+  const sopSlug = useMemo(
+    () => normalizeIncidentCategoryToSopSlug(activeIncident?.incident_category, incidentAiAssessment),
+    [activeIncident?.incident_category, incidentAiAssessment]
+  );
+  const isFireIncident = sopSlug === "fire-evacuation";
+  const quickReplies = useMemo(
+    () => (isFireIncident ? FIRE_QUICK_REPLIES : GENERIC_QUICK_REPLIES),
+    [isFireIncident]
+  );
+
+  const botReplies = useMemo<BotReply[]>(() => {
+    const title = activeIncident ? buildIncidentTitle(activeIncident) : "Incident";
+    const showLoading = !incidentLoaded || (Boolean(activeIncident) && !incidentAiLoaded);
+    const incidentInfoLines = activeIncident ? formatIncidentInfoLines(activeIncident) : [];
+
+    return [
       {
         id: "initial",
-        title: "Fire Incident - Zone 4B",
+        title,
         time: "01:59 PM",
-        suggestions: QUICK_REPLIES,
+        suggestions: quickReplies,
         body: (
           <>
-            <Text style={styles.messageText}>
-              <Text style={styles.fireIcon}>🔥</Text> IMMEDIATE ACTIONS (Fire - Zone 4B)
-            </Text>
-            <Text style={styles.messageText}>1. Raise alarm / confirm alarm activation</Text>
-            <Text style={styles.messageText}>2. Notify control room immediately</Text>
-            <Text style={styles.messageText}>3. Begin evacuation (no lifts)</Text>
-            <Text style={styles.messageText}>4. Check area if safe</Text>
+            <Text style={[styles.messageText, styles.assessmentHeader]}>AI Incident Assessment</Text>
+            {showLoading ? <Text style={styles.messageText}>Loading incident details...</Text> : null}
+            {!showLoading && incidentAiAssessment ? (
+              incidentAiAssessment
+                .split("\n")
+                .map((rawLine, idx) => {
+                  const line = rawLine.trim();
+                  if (!line) return null;
+
+                  const labelValue = splitLabelValue(line);
+                  if (labelValue) {
+                    return (
+                      <View key={`ai-assign-${idx}`} style={styles.inlineRow}>
+                        <Text style={[styles.messageText, styles.fallbackLabel]}>{labelValue.label}</Text>
+                        <Text style={[styles.messageText, styles.inlineValue]}>{labelValue.value}</Text>
+                      </View>
+                    );
+                  }
+
+                  const stepParts = splitStepLine(line);
+                  if (stepParts) {
+                    const dash = splitDashHeadline(stepParts.value);
+                    return (
+                      <View key={`ai-assign-${idx}`} style={styles.inlineRow}>
+                        <Text style={[styles.messageText, styles.fallbackLabel]}>{stepParts.label}</Text>
+                        {dash ? (
+                          <>
+                            <Text style={[styles.messageText, styles.boldText, styles.inlineValue]}>{dash.head}</Text>
+                            <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
+                          </>
+                        ) : (
+                          <Text style={[styles.messageText, styles.inlineValue]}>{stepParts.value}</Text>
+                        )}
+                      </View>
+                    );
+                  }
+
+                  const dash = splitDashHeadline(line);
+                  if (dash) {
+                    return (
+                      <View key={`ai-assign-${idx}`} style={styles.inlineRow}>
+                        <Text style={[styles.messageText, styles.boldText]}>{dash.head}</Text>
+                        <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
+                      </View>
+                    );
+                  }
+
+                  return (
+                    <Text key={`ai-assign-${idx}`} style={styles.messageText}>
+                      {line}
+                    </Text>
+                  );
+                })
+            ) : null}
+            {!showLoading && !incidentAiAssessment && incidentInfoLines.length
+              ? incidentInfoLines.map((line, idx) => (
+                  <View key={`incident-fallback-${idx}`} style={styles.fallbackRow}>
+                    <Text style={[styles.messageText, styles.fallbackLabel]}>{line.label}</Text>
+                    <Text style={[styles.messageText, styles.fallbackValue]}>{line.value}</Text>
+                  </View>
+                ))
+              : null}
+            {!showLoading && !incidentAiAssessment && !incidentInfoLines.length ? (
+              <Text style={styles.messageText}>No incident details available right now.</Text>
+            ) : null}
           </>
         ),
       },
-    ],
-    []
+    ];
+  }, [activeIncident, incidentAiAssessment, incidentAiLoaded, incidentLoaded, quickReplies]);
+
+  const incidentBanner = useMemo(
+    () => buildIncidentBanner(activeIncident, incidentLoaded),
+    [activeIncident, incidentLoaded]
   );
+
+  const openSopGuide = useCallback(() => {
+    if (sopSlug) {
+      const titleQuery = incidentSopTitle ? `?title=${encodeURIComponent(incidentSopTitle)}` : "";
+      router.push(`/securityofficer/${sopSlug}${titleQuery}`);
+      return;
+    }
+
+    router.push("/securityofficer/sop");
+  }, [router, incidentSopTitle, sopSlug]);
+
+  const openSopLogistics = useCallback(() => {
+    if (sopSlug) {
+      const titleQuery = incidentSopTitle ? `&title=${encodeURIComponent(incidentSopTitle)}` : "";
+      router.push(`/securityofficer/${sopSlug}?tab=logistics${titleQuery}`);
+      return;
+    }
+
+    router.push("/securityofficer/sop");
+  }, [router, incidentSopTitle, sopSlug]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadActiveIncident = async () => {
+      setIncidentLoaded(false);
+      setIncidentAiLoaded(false);
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id ?? null;
+
+      if (!alive) return;
+
+      if (sessionError || !userId) {
+        setActiveIncident(null);
+        setIncidentLoaded(true);
+        setIncidentAiAssessment(null);
+        setIncidentAiLoaded(true);
+        return;
+      }
+
+      const { data: assignmentRow, error: assignmentError } = await supabase
+        .from("incident_assignments")
+        .select(
+          "assignment_id, incident_id, assigned_at, active_status, incidents(*)"
+        )
+        .eq("officer_id", userId)
+        .eq("active_status", true)
+        .order("assigned_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!alive) return;
+
+      if (assignmentError || !assignmentRow) {
+        setActiveIncident(null);
+        setIncidentLoaded(true);
+        setIncidentAiAssessment(null);
+        setIncidentAiLoaded(true);
+        return;
+      }
+
+      const incident = Array.isArray((assignmentRow as any).incidents)
+        ? (assignmentRow as any).incidents?.[0]
+        : (assignmentRow as any).incidents;
+
+      if (!incident?.incident_id) {
+        setActiveIncident(null);
+        setIncidentLoaded(true);
+        setIncidentAiAssessment(null);
+        setIncidentAiLoaded(true);
+        return;
+      }
+
+      setActiveIncident({
+        id: incident.incident_id,
+        incident_category: incident.incident_category ?? null,
+        location_name: incident.location_name ?? null,
+        location_unit_no: incident.location_unit_no ?? null,
+        location_description: incident.location_description ?? null,
+        created_at: incident.created_at ?? null,
+        assigned_at: (assignmentRow as any).assigned_at ?? null,
+      });
+      setIncidentAiAssessment(extractIncidentAiAssessment(incident));
+      setIncidentAiLoaded(true);
+      setIncidentLoaded(true);
+    };
+
+    void loadActiveIncident();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadIncidentSop = async () => {
+      setIncidentSopTitle(null);
+      setIncidentSopSteps([]);
+
+      const categoryLabel = sopCategoryLabelForSlug(sopSlug);
+      if (!categoryLabel) {
+        return;
+      }
+
+      try {
+        const { data: titleRows, error: titleError } = await supabase
+          .from("sop")
+          .select("title")
+          .eq("category", categoryLabel)
+          .order("title", { ascending: true });
+
+        if (!alive) return;
+        if (titleError) throw titleError;
+
+        const allTitles = ((titleRows ?? []) as any[])
+          .map((row) => (row as any)?.title)
+          .filter((t) => typeof t === "string" && t.trim().length > 0) as string[];
+
+        const title = pickBestSopTitle(allTitles, [
+          activeIncident?.incident_category ?? "",
+          incidentAiAssessment ?? "",
+          categoryLabel,
+          sopSlug ?? "",
+        ]);
+        setIncidentSopTitle(title);
+
+        if (!title) {
+          return;
+        }
+
+        const { data: stepsRows, error: stepsError } = await supabase
+          .from("sop")
+          .select("step_no, step_short, step_description")
+          .eq("title", title)
+          .order("step_no", { ascending: true });
+
+        if (!alive) return;
+        if (stepsError) throw stepsError;
+
+        const parsed = ((stepsRows ?? []) as any[]).map((row) => ({
+          step_no: Number(row.step_no),
+          step_short: row.step_short ?? null,
+          step_description: row.step_description ?? null,
+        })) as SopStep[];
+
+        setIncidentSopSteps(parsed.filter((s) => Number.isFinite(s.step_no)).sort((a, b) => a.step_no - b.step_no));
+      } catch (error) {
+        console.error("Error loading incident SOP:", error);
+      }
+    };
+
+    void loadIncidentSop();
+    return () => {
+      alive = false;
+    };
+  }, [activeIncident?.incident_category, incidentAiAssessment, sopSlug]);
+
+  const scrollToBottom = useCallback((animated = true) => {
+    requestAnimationFrame(() => {
+      scrollViewRef.current?.scrollToEnd({ animated });
+    });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [dynamicReplies, showFullSteps, scrollToBottom]);
 
   const askBot = async (prompt: string) => {
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt || isAsking) return;
 
     const replyId = `sealion-${Date.now()}`;
-    const showGuide = trimmedPrompt.toLowerCase().includes("evacuation");
+    const normalizedPrompt = trimmedPrompt.toLowerCase();
+    const wantsFireGuide =
+      normalizedPrompt.includes("evacuation") ||
+      normalizedPrompt.includes("extinguisher") ||
+      normalizedPrompt.includes("fire");
+    const showGuide = isFireIncident && wantsFireGuide;
     const time = formatCurrentTime();
 
     setInput("");
@@ -267,24 +835,26 @@ export default function ChatBotPage() {
         showGuide,
       },
     ]);
+    scrollToBottom();
 
     try {
       const answer = isSeaLionConfigured()
-        ? await askSeaLion([
-            {
-              role: "system",
-              content: INCIDENT_CONTEXT,
-            },
-            {
-              role: "user",
-              content: `Officer update: "${trimmedPrompt}"\n\nGive the immediate next actions for this active Zone 4B fire incident. If the officer reports a blocker, give a practical workaround.`,
-            },
-          ])
+          ? await askSeaLion([
+              {
+                role: "system",
+                content: buildIncidentContext(activeIncident, sopSlug, incidentSopTitle, incidentSopSteps, incidentAiAssessment),
+              },
+              {
+                role: "user",
+                content: `Officer update: "${trimmedPrompt}"\n\nGive the immediate next actions for the active incident. If the officer reports a blocker, give a practical workaround.`,
+              },
+            ])
         : getFallbackAnswer(trimmedPrompt);
 
       setDynamicReplies((prev) =>
         prev.map((reply) => (reply.id === replyId ? { ...reply, answer: cleanBotAnswer(answer), loading: false } : reply))
       );
+      scrollToBottom();
     } catch (error) {
       console.error("SEA-LION chatbot error:", error);
       setDynamicReplies((prev) =>
@@ -300,6 +870,7 @@ export default function ChatBotPage() {
             : reply
         )
       );
+      scrollToBottom();
     } finally {
       setIsAsking(false);
     }
@@ -339,22 +910,35 @@ export default function ChatBotPage() {
         id: `local-${Date.now()}`,
         question,
         answer,
+        answerRich: undefined,
         time: formatCurrentTime(),
         loading: false,
         showGuide: false,
       },
     ]);
+    scrollToBottom();
   };
 
-  const markEvacuationComplete = async () => {
+  const addLocalReplyRich = (question: string, answerRich: React.ReactNode) => {
+    setDynamicReplies((prev) => [
+      ...prev,
+      {
+        id: `local-${Date.now()}`,
+        question,
+        answer: "",
+        answerRich,
+        time: formatCurrentTime(),
+        loading: false,
+        showGuide: false,
+      },
+    ]);
+    scrollToBottom();
+  };
+
+  const markShiftReportNote = async (question: string, note: string, successMessage: string) => {
     if (isAsking) return;
 
-    const question = "Mark evacuation complete";
-    const completedAt = formatReportTimestamp();
-    const note = `[${completedAt}] Evacuation marked complete for Fire Incident - Zone 4B.`;
-
     setInput("");
-    setShowFullSteps(true);
     setIsAsking(true);
 
     try {
@@ -394,34 +978,112 @@ export default function ChatBotPage() {
 
       if (updateError) throw updateError;
 
-      addLocalReply(
-        question,
-        `Evacuation complete has been recorded in the shift report.\nTime noted: ${completedAt}`
-      );
+      addLocalReply(question, successMessage);
     } catch (error) {
-      console.error("Error marking evacuation complete:", error);
-      addLocalReply(
-        question,
-        `I could not update the shift report automatically. Please add this note manually:\n${note}`
-      );
+      console.error("Error updating shift report:", error);
+      addLocalReply(question, `I could not update the shift report automatically. Please add this note manually:\n${note}`);
     } finally {
       setIsAsking(false);
     }
   };
 
-  const handleSuggestionPress = (suggestion: string) => {
-    if (suggestion === "Show evacuation steps") {
-      askBot(suggestion);
+  const markEvacuationComplete = async () => {
+    const completedAt = formatReportTimestamp();
+    const incidentLabel = activeIncident ? buildIncidentTitle(activeIncident) : "Incident";
+    const note = `[${completedAt}] Evacuation marked complete for ${incidentLabel}.`;
+    setShowFullSteps(true);
+    await markShiftReportNote(
+      "Mark evacuation complete",
+      note,
+      `Evacuation complete has been recorded in the shift report.\nTime noted: ${completedAt}`
+    );
+  };
+
+  const markResponseComplete = async () => {
+    const completedAt = formatReportTimestamp();
+    const incidentLabel = activeIncident ? buildIncidentTitle(activeIncident) : "Incident";
+    const note = `[${completedAt}] Response marked complete for ${incidentLabel}.`;
+    setShowFullSteps(true);
+    await markShiftReportNote(
+      "Mark response complete",
+      note,
+      `Response complete has been recorded in the shift report.\nTime noted: ${completedAt}`
+    );
+  };
+
+  const showIncidentSopSteps = () => {
+    if (!incidentSopSteps.length) {
+      openSopGuide();
       return;
     }
 
-    if (suggestion === "Escalation contacts" || suggestion === "Location of fire alarm") {
-      router.push("/securityofficer/fire-evacuation");
+    setShowFullSteps(true);
+    const stepsToShow = incidentSopSteps.slice(0, 12);
+    const question = isFireIncident ? "Show evacuation steps" : "Show SOP steps";
+
+    addLocalReplyRich(
+      question,
+      <View>
+        {incidentSopTitle ? <Text style={[styles.messageText, styles.boldText]}>{incidentSopTitle}</Text> : null}
+        {stepsToShow.map((s) => {
+          const short = (s.step_short ?? "").trim();
+          const desc = (s.step_description ?? "").trim();
+          const hasShort = Boolean(short);
+          const hasDesc = Boolean(desc);
+          const shortWithDash = hasShort ? (short.endsWith("-") ? short : `${short} -`) : "";
+
+          return (
+            <View key={`sop-step-${s.step_no}`} style={styles.inlineRow}>
+              <Text style={[styles.messageText, styles.fallbackLabel]}>{`${s.step_no}.`}</Text>
+              {hasShort ? (
+                <Text style={[styles.messageText, styles.boldText, styles.inlineValue]}>{shortWithDash}</Text>
+              ) : null}
+              {hasDesc ? <Text style={[styles.messageText, styles.inlineValue]}>{desc}</Text> : null}
+              {!hasShort && !hasDesc ? (
+                <Text style={[styles.messageText, styles.inlineValue]}>Step</Text>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  const handleSuggestionPress = (suggestion: string) => {
+    if (suggestion === "Show evacuation steps") {
+      showIncidentSopSteps();
+      return;
+    }
+
+    if (suggestion === "Show SOP steps") {
+      showIncidentSopSteps();
+      return;
+    }
+
+    if (suggestion === "Escalation contacts") {
+      router.push("/securityofficer/phonecalls");
+      return;
+    }
+
+    if (
+      suggestion === "Location of fire alarm" ||
+      suggestion === "Logistics needed"
+    ) {
+      if (suggestion === "Logistics needed") {
+        openSopLogistics();
+      } else {
+        openSopGuide();
+      }
       return;
     }
 
     if (suggestion === "Mark evacuation complete") {
       void markEvacuationComplete();
+      return;
+    }
+
+    if (suggestion === "Mark response complete") {
+      void markResponseComplete();
     }
   };
 
@@ -447,12 +1109,18 @@ export default function ChatBotPage() {
           <AlertTriangle size={30} color="#B91C1C" strokeWidth={2.8} />
         </View>
         <View style={styles.incidentTextWrap}>
-          <Text style={styles.incidentTitle}>ACTIVE INCIDENT - ZONE 4B</Text>
-          <Text style={styles.incidentSubtitle}>Fire detected at Zone 4B. Response in progress</Text>
+          <Text style={styles.incidentTitle}>{incidentBanner.title}</Text>
+          <Text style={styles.incidentSubtitle}>{incidentBanner.subtitle}</Text>
         </View>
       </View>
 
-      <ScrollView style={styles.chatArea} contentContainerStyle={styles.chatContent} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.chatArea}
+        contentContainerStyle={styles.chatContent}
+        keyboardShouldPersistTaps="handled"
+        onContentSizeChange={() => scrollToBottom(false)}
+      >
         {botReplies.map((reply) => (
           <View key={reply.id} style={styles.botBlock}>
             <View style={styles.botHeaderRow}>
@@ -499,7 +1167,7 @@ export default function ChatBotPage() {
               <BotAvatar />
               <View style={styles.botTitleWrap}>
                 <Text style={styles.followText}>Follow up -</Text>
-                <Text style={styles.botTitle}>Fire Incident - Zone 4B</Text>
+                <Text style={styles.botTitle}>{activeIncident ? buildIncidentTitle(activeIncident) : "Incident"}</Text>
               </View>
             </View>
 
@@ -511,12 +1179,57 @@ export default function ChatBotPage() {
                 </View>
               ) : (
                 <>
-                  {reply.answer.split("\n").map((line, index) =>
-                    line.trim() ? (
-                      <Text key={`${reply.id}-${index}`} style={styles.messageText}>
-                        {line.trim()}
-                      </Text>
-                    ) : null
+                  {reply.answerRich ? (
+                    reply.answerRich
+                  ) : (
+                    reply.answer.split("\n").map((rawLine, index) => {
+                      const line = rawLine.trim();
+                      if (!line) return null;
+
+                      const labelValue = splitLabelValue(line);
+                      if (labelValue) {
+                        return (
+                          <View key={`${reply.id}-${index}`} style={styles.inlineRow}>
+                            <Text style={[styles.messageText, styles.fallbackLabel]}>{labelValue.label}</Text>
+                            <Text style={[styles.messageText, styles.inlineValue]}>{labelValue.value}</Text>
+                          </View>
+                        );
+                      }
+
+                      const stepParts = splitStepLine(line);
+                      if (stepParts) {
+                        const dash = splitDashHeadline(stepParts.value);
+                        return (
+                          <View key={`${reply.id}-${index}`} style={styles.inlineRow}>
+                            <Text style={[styles.messageText, styles.fallbackLabel]}>{stepParts.label}</Text>
+                            {dash ? (
+                              <>
+                                <Text style={[styles.messageText, styles.boldText, styles.inlineValue]}>{dash.head}</Text>
+                                <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
+                              </>
+                            ) : (
+                              <Text style={[styles.messageText, styles.inlineValue]}>{stepParts.value}</Text>
+                            )}
+                          </View>
+                        );
+                      }
+
+                      const dash = splitDashHeadline(line);
+                      if (dash) {
+                        return (
+                          <View key={`${reply.id}-${index}`} style={styles.inlineRow}>
+                            <Text style={[styles.messageText, styles.boldText]}>{dash.head}</Text>
+                            <Text style={[styles.messageText, styles.inlineValue]}>{dash.tail}</Text>
+                          </View>
+                        );
+                      }
+
+                      return (
+                        <Text key={`${reply.id}-${index}`} style={styles.messageText}>
+                          {line}
+                        </Text>
+                      );
+                    })
                   )}
                   {reply.showGuide ? (
                     <>
@@ -540,11 +1253,11 @@ export default function ChatBotPage() {
               </View>
               <Text style={styles.actionLabel}>Call SCDF</Text>
             </Pressable>
-            <Pressable style={styles.actionButton} onPress={() => router.push("/securityofficer/fire-evacuation")}>
+            <Pressable style={styles.actionButton} onPress={openSopGuide}>
               <View style={styles.actionCircle}>
                 <ListChecks size={30} color="#0E2D52" strokeWidth={2.4} />
               </View>
-              <Text style={styles.actionLabel}>View Fire SOP Guide</Text>
+              <Text style={styles.actionLabel}>View SOP Guide</Text>
             </Pressable>
             <Pressable style={styles.actionButton} onPress={() => router.push("/securityofficer/incidents")}>
               <View style={styles.actionCircle}>
@@ -584,7 +1297,7 @@ export default function ChatBotPage() {
             ) : isListening ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Mic size={30} color="#FFFFFF" strokeWidth={2.4} />
+              <Image source={CONVO_BOT_IMAGE} style={styles.micIconImage} resizeMode="contain" />
             )}
           </Pressable>
         </View>
@@ -860,7 +1573,40 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  micIconImage: {
+    width: 28,
+    height: 28,
+  },
   micButtonListening: {
     backgroundColor: "#B01621",
+  },
+  assessmentHeader: {
+    fontWeight: "900",
+  },
+  boldText: {
+    fontWeight: "800",
+  },
+  fallbackLabel: {
+    fontWeight: "800",
+  },
+  fallbackRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+  },
+  fallbackValue: {
+    flexShrink: 1,
+    minWidth: 0,
+    marginLeft: 6,
+  },
+  inlineRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+  },
+  inlineValue: {
+    flexShrink: 1,
+    minWidth: 0,
+    marginLeft: 6,
   },
 });
