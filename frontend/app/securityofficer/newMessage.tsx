@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import { ChevronLeft, Search } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
@@ -13,6 +13,7 @@ import {
   type ChatMessageRecord,
   type EmployeeProfile,
 } from "../../lib/messageData";
+import { attachProfilePhotoUrls } from "../../lib/profilePhotos";
 
 const Avatar = ({ channel, size = 54 }: { channel: ChatChannel; size?: number }) => (
   <View
@@ -26,7 +27,11 @@ const Avatar = ({ channel, size = 54 }: { channel: ChatChannel; size?: number })
       },
     ]}
   >
-    <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    {channel.avatarUrl ? (
+      <Image source={{ uri: channel.avatarUrl }} style={[styles.avatarImage, { borderRadius: size / 2 }]} resizeMode="cover" />
+    ) : (
+      <Text style={[styles.avatarText, { color: channel.avatarTextColor }]}>{getInitials(channel.name)}</Text>
+    )}
   </View>
 );
 
@@ -40,6 +45,7 @@ const buildContact = (profile: EmployeeProfile): ChatChannel => {
     lastMessage: "Tap to start a conversation",
     lastTime: "",
     online: false,
+    avatarUrl: profile.avatarUrl ?? null,
     avatarColor,
     avatarTextColor: getAvatarTextColor(avatarColor),
   };
@@ -73,7 +79,7 @@ export default function NewMessageScreen() {
     ] = await Promise.all([
       supabase
         .from("employees")
-        .select("id, first_name, last_name, role")
+        .select("id, emp_id, first_name, last_name, role, profile_photo_path")
         .order("first_name", { ascending: true }),
       supabase
         .from("messages")
@@ -97,7 +103,14 @@ export default function NewMessageScreen() {
     }
 
     const visibleProfiles = (employeesData || []) as EmployeeProfile[];
-    const contactsById = new Map(visibleProfiles.map((profile) => [profile.id, buildContact(profile)]));
+    let profilesWithPhotos: EmployeeProfile[] = visibleProfiles;
+    try {
+      profilesWithPhotos = await attachProfilePhotoUrls(visibleProfiles);
+    } catch (error) {
+      console.warn("Unable to resolve profile photos for new chat list:", error);
+    }
+
+    const contactsById = new Map(profilesWithPhotos.map((profile) => [profile.id, buildContact(profile)]));
 
     if (!contactsById.has(userId)) {
       const avatarColor = getAvatarColor(userId);
@@ -344,6 +357,10 @@ const styles = StyleSheet.create({
   avatarText: {
     fontSize: 17,
     fontWeight: "800",
+  },
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
   contactBody: {
     flex: 1,
