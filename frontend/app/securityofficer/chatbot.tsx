@@ -540,6 +540,45 @@ export default function ChatBotPage() {
   const [incidentAiLoaded, setIncidentAiLoaded] = useState(false);
   const [incidentSopTitle, setIncidentSopTitle] = useState<string | null>(null);
   const [incidentSopSteps, setIncidentSopSteps] = useState<SopStep[]>([]);
+  const [appRoutePrefix, setAppRoutePrefix] = useState("/securityofficer");
+  const [shiftOwnerColumn, setShiftOwnerColumn] = useState<"officer_id" | "supervisor_id">("officer_id");
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadRoleContext = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id;
+
+      if (!userId || !alive) return;
+
+      const { data: profile } = await supabase
+        .from("employees")
+        .select("role")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (!alive) return;
+
+      const role = profile?.role ?? "";
+      const isSsoUser = role === "Senior Security Officer";
+
+      if (isSsoUser) {
+        setAppRoutePrefix("/sso");
+        setShiftOwnerColumn("supervisor_id");
+        return;
+      }
+
+      setAppRoutePrefix("/securityofficer");
+      setShiftOwnerColumn("officer_id");
+    };
+
+    void loadRoleContext();
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const sopSlug = useMemo(
     () => normalizeIncidentCategoryToSopSlug(activeIncident?.incident_category, incidentAiAssessment),
@@ -952,7 +991,7 @@ export default function ChatBotPage() {
       const { data: shiftsData, error: shiftsError } = await supabase
         .from("shifts")
         .select("shift_id, shift_description, shift_date, clockin_time, clockout_time")
-        .eq("officer_id", userId)
+        .eq(shiftOwnerColumn, userId)
         .order("shift_date", { ascending: false })
         .limit(10);
 
@@ -1094,7 +1133,7 @@ export default function ChatBotPage() {
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
       <View style={styles.header}>
-        <Pressable style={styles.backButton} onPress={() => router.replace("/securityofficer/home")} hitSlop={10}>
+        <Pressable style={styles.backButton} onPress={() => router.replace(`${appRoutePrefix}/home` as any)} hitSlop={10}>
           <ChevronLeft size={36} color="#FFFFFF" strokeWidth={3} />
         </Pressable>
         <Text style={styles.headerTitle}>Chat Bot</Text>
@@ -1259,13 +1298,13 @@ export default function ChatBotPage() {
               </View>
               <Text style={styles.actionLabel}>View SOP Guide</Text>
             </Pressable>
-            <Pressable style={styles.actionButton} onPress={() => router.push("/securityofficer/incidents")}>
+            <Pressable style={styles.actionButton} onPress={() => router.push(`${appRoutePrefix}/incidents` as any)}>
               <View style={styles.actionCircle}>
                 <Check size={36} color="#0E2D52" strokeWidth={2.4} />
               </View>
               <Text style={styles.actionLabel}>Open Incident Checklist</Text>
             </Pressable>
-            <Pressable style={styles.actionButton} onPress={() => router.push("/securityofficer/reports")}>
+            <Pressable style={styles.actionButton} onPress={() => router.push(`${appRoutePrefix}/reports` as any)}>
               <View style={styles.actionCircle}>
                 <ClipboardPen size={30} color="#0E2D52" strokeWidth={2.4} />
               </View>
