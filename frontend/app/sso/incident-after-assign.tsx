@@ -16,6 +16,7 @@ import * as Location from "expo-location";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { BellRing, ChevronLeft, ClipboardPen, PhoneCall, Settings2 } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
+import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { supabase } from "../../lib/supabase";
 
 type IncidentRow = {
@@ -33,8 +34,6 @@ type IncidentRow = {
   ai_assessment: string | null;
   active_status: boolean | null;
 };
-
-const INCIDENT_IMAGE_BUCKET = "incident-frames";
 
 type AssignmentRow = Record<string, unknown> & {
   assignment_id?: string;
@@ -84,6 +83,7 @@ export default function SsoIncidentAfterAssignPage() {
   const [backupAttentionActive, setBackupAttentionActive] = useState(false);
   const [acknowledgedBackupRequestIds, setAcknowledgedBackupRequestIds] = useState<Set<string>>(new Set());
   const [backupRequestDetails, setBackupRequestDetails] = useState<BackupRequestDetails | null>(null);
+  const [cctvUris, setCctvUris] = useState<string[]>([]);
 
   const addBackupPulse = useRef(new Animated.Value(0)).current;
 
@@ -176,6 +176,33 @@ export default function SsoIncidentAfterAssignPage() {
   }, [acknowledgedBackupRequestIds, incidentId]);
 
   useEffect(() => {
+    let alive = true;
+
+    const loadCctvUris = async () => {
+      if (!incident) {
+        if (alive) setCctvUris([]);
+        return;
+      }
+
+      const uris = await resolveIncidentFrameUrls([
+        incident.cctv_image_1_path,
+        incident.cctv_image_2_path,
+        incident.cctv_image_3_path,
+        incident.cctv_image_4,
+      ]);
+
+      if (alive) {
+        setCctvUris(uris);
+      }
+    };
+
+    void loadCctvUris();
+    return () => {
+      alive = false;
+    };
+  }, [incident]);
+
+  useEffect(() => {
     if (!incidentId) return;
 
     const channel = supabase
@@ -245,8 +272,6 @@ export default function SsoIncidentAfterAssignPage() {
     const locationName = (incident?.location_name ?? incident?.location_description ?? "Unknown Location").toString();
     return `${category} AT ${locationName}`;
   }, [incident?.incident_category, incident?.location_description, incident?.location_name]);
-
-  const cctvUris = useMemo(() => extractCctvUris(incident), [incident]);
 
   const addBackupScale = addBackupPulse.interpolate({
     inputRange: [0, 1],
@@ -622,28 +647,6 @@ function OfficerAvatar({ profilePhotoPath, officerName }: { profilePhotoPath: st
       <Text style={styles.assignedAvatarInitials}>{initials}</Text>
     </View>
   );
-}
-
-function extractCctvUris(incident: IncidentRow | null) {
-  if (!incident) return [] as string[];
-  const raw = [
-    incident.cctv_image_1_path,
-    incident.cctv_image_2_path,
-    incident.cctv_image_3_path,
-    incident.cctv_image_4,
-  ];
-
-  return raw
-    .map((item) => {
-      if (!item) return null;
-      const value = item.trim();
-      if (!value) return null;
-      if (/^https?:\/\//i.test(value)) return value;
-
-      const { data } = supabase.storage.from(INCIDENT_IMAGE_BUCKET).getPublicUrl(value);
-      return data.publicUrl || null;
-    })
-    .filter((item): item is string => Boolean(item));
 }
 
 function clamp(value: number, min: number, max: number) {
