@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   Alert,
   ActivityIndicator,
@@ -16,110 +16,15 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { Eye, EyeOff } from "lucide-react-native";
 import { supabase } from "../lib/supabase";
-import {
-  LanguagePreference,
-  normalizeLanguagePreference,
-  setLanguagePreference,
-} from "../lib/language-preferences";
-import {
-  getPublicLanguagePreference,
-  setPublicLanguagePreference,
-  subscribePublicLanguagePreference,
-} from "../lib/public-language-preferences";
 
 const ORANGE = "#F68D2C";
 const BLUE = "#0E2D52";
 const roleRoutes: Record<string, string> = {
   "Security Officer": "/securityofficer/home",
   "Senior Security Officer": "/sso/home",
-  "Security Supervisor": "/securitysupervisor/home",
+  "Security Supervisor": "/sso/home",
 };
 const REQUEST_TIMEOUT_MS = 15000;
-
-const LOGIN_COPY: Record<
-  LanguagePreference,
-  {
-    welcomeBack: string;
-    enterDetails: string;
-    emailAddress: string;
-    password: string;
-    emailPlaceholder: string;
-    passwordPlaceholder: string;
-    rememberMe: string;
-    forgotPassword: string;
-    signIn: string;
-    missingDetailsTitle: string;
-    missingDetailsBody: string;
-    signInFailedTitle: string;
-    invalidCredentials: string;
-    unexpectedError: string;
-  }
-> = {
-  English: {
-    welcomeBack: "WELCOME BACK",
-    enterDetails: "Please enter your details",
-    emailAddress: "Email Address:",
-    password: "Password:",
-    emailPlaceholder: "Enter your email address ...",
-    passwordPlaceholder: "Enter your password ...",
-    rememberMe: "Remember me",
-    forgotPassword: "Forgot password?",
-    signIn: "SIGN IN",
-    missingDetailsTitle: "Missing details",
-    missingDetailsBody: "Please enter your email and password.",
-    signInFailedTitle: "Sign in failed",
-    invalidCredentials: "Invalid credentials.",
-    unexpectedError: "Unexpected error during sign in.",
-  },
-  Malay: {
-    welcomeBack: "SELAMAT KEMBALI",
-    enterDetails: "Sila masukkan butiran anda",
-    emailAddress: "Alamat Emel:",
-    password: "Kata Laluan:",
-    emailPlaceholder: "Masukkan alamat emel anda ...",
-    passwordPlaceholder: "Masukkan kata laluan anda ...",
-    rememberMe: "Ingat saya",
-    forgotPassword: "Lupa kata laluan?",
-    signIn: "LOG MASUK",
-    missingDetailsTitle: "Maklumat tidak lengkap",
-    missingDetailsBody: "Sila masukkan emel dan kata laluan anda.",
-    signInFailedTitle: "Log masuk gagal",
-    invalidCredentials: "Maklumat log masuk tidak sah.",
-    unexpectedError: "Ralat tidak dijangka semasa log masuk.",
-  },
-  Tamil: {
-    welcomeBack: "மீண்டும் வரவேற்கிறோம்",
-    enterDetails: "உங்கள் விவரங்களை உள்ளிடவும்",
-    emailAddress: "மின்னஞ்சல் முகவரி:",
-    password: "கடவுச்சொல்:",
-    emailPlaceholder: "உங்கள் மின்னஞ்சல் முகவரியை உள்ளிடவும் ...",
-    passwordPlaceholder: "உங்கள் கடவுச்சொல்லை உள்ளிடவும் ...",
-    rememberMe: "என்னை நினைவில் கொள்",
-    forgotPassword: "கடவுச்சொல் மறந்துவிட்டதா?",
-    signIn: "உள்நுழை",
-    missingDetailsTitle: "தகவல் இல்லை",
-    missingDetailsBody: "உங்கள் மின்னஞ்சலும் கடவுச்சொல்லும் உள்ளிடவும்.",
-    signInFailedTitle: "உள்நுழைவு தோல்வி",
-    invalidCredentials: "தவறான உள்நுழைவு தகவல்.",
-    unexpectedError: "உள்நுழையும்போது எதிர்பாராத பிழை.",
-  },
-  Chinese: {
-    welcomeBack: "欢迎回来",
-    enterDetails: "请输入您的资料",
-    emailAddress: "电子邮箱：",
-    password: "密码：",
-    emailPlaceholder: "请输入您的电子邮箱 ...",
-    passwordPlaceholder: "请输入您的密码 ...",
-    rememberMe: "记住我",
-    forgotPassword: "忘记密码？",
-    signIn: "登录",
-    missingDetailsTitle: "缺少信息",
-    missingDetailsBody: "请输入您的电子邮箱和密码。",
-    signInFailedTitle: "登录失败",
-    invalidCredentials: "登录凭据无效。",
-    unexpectedError: "登录时发生意外错误。",
-  },
-};
 
 async function withTimeout<T>(
   promise: PromiseLike<T>,
@@ -147,9 +52,6 @@ export default function LoginScreen() {
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [publicLanguage, setPublicLanguage] = useState<LanguagePreference>(
-    getPublicLanguagePreference()
-  );
 
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -169,24 +71,11 @@ export default function LoginScreen() {
   const langTop = Math.round(clamp(height * 0.06, 20, 54));
   const langRight = Math.round(clamp(width * 0.05, 12, 20));
   const langSize = Math.round(clamp(width * 0.12, 40, 52));
-  const copy = LOGIN_COPY[publicLanguage];
-  const authMetaTextStyle = {
-    fontSize: bodyFontSize,
-    lineHeight: Math.round(bodyFontSize * 1.2),
-  };
-
-  useEffect(() => {
-    return subscribePublicLanguagePreference(setPublicLanguage);
-  }, []);
-
-  useEffect(() => {
-    setLanguagePreference(publicLanguage);
-  }, [publicLanguage]);
 
   async function onSignIn() {
     if (loading) return;
     if (!email.trim() || !password) {
-      Alert.alert(copy.missingDetailsTitle, copy.missingDetailsBody);
+      Alert.alert("Missing details", "Please enter your email and password.");
       return;
     }
 
@@ -201,67 +90,36 @@ export default function LoginScreen() {
         );
 
       if (authError || !authData.user) {
-        Alert.alert(copy.signInFailedTitle, authError?.message ?? copy.invalidCredentials);
+        Alert.alert("Sign in failed", authError?.message ?? "Invalid credentials.");
         return;
       }
 
       const { data: profile, error: profileError } = await withTimeout(
         supabase
           .from("employees")
-          .select("role, language_preferences")
+          .select("role")
           .eq("id", authData.user.id)
           .single()
       );
 
       if (profileError || !profile?.role) {
         await supabase.auth.signOut();
-        Alert.alert(copy.signInFailedTitle, "Employee role record was not found.");
+        Alert.alert("Sign in failed", "Employee role record was not found.");
         return;
       }
 
       const route = roleRoutes[profile.role];
       if (!route) {
         await supabase.auth.signOut();
-        Alert.alert(copy.signInFailedTitle, `Unsupported role: ${profile.role}`);
+        Alert.alert("Sign in failed", `Unsupported role: ${profile.role}`);
         return;
-      }
-
-      // English on login is treated as "no override" to preserve user's saved preference.
-      const selectedLanguage = publicLanguage;
-      const currentPreferredLanguage = normalizeLanguagePreference(
-        profile.language_preferences
-      );
-
-      if (selectedLanguage !== "English") {
-        const { error: updateByIdError } = await withTimeout(
-          supabase
-            .from("employees")
-            .update({ language_preferences: selectedLanguage })
-            .eq("id", authData.user.id)
-        );
-
-        if (updateByIdError && authData.user.email) {
-          await withTimeout(
-            supabase
-              .from("employees")
-              .update({ language_preferences: selectedLanguage })
-              .eq("email", authData.user.email)
-          );
-        }
-
-        setLanguagePreference(selectedLanguage);
-          setPublicLanguagePreference(selectedLanguage);
-      } else {
-          const effectiveLanguage = currentPreferredLanguage ?? "English";
-          setLanguagePreference(effectiveLanguage);
-          setPublicLanguagePreference(effectiveLanguage);
       }
 
       router.replace(route);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : copy.unexpectedError;
-      Alert.alert(copy.signInFailedTitle, message);
+        error instanceof Error ? error.message : "Unexpected error during sign in.";
+      Alert.alert("Sign in failed", message);
     } finally {
       setLoading(false);
     }
@@ -286,11 +144,7 @@ export default function LoginScreen() {
         />
 
         
-        <Pressable
-          style={[styles.langBtn, { top: langTop, right: langRight }]}
-          hitSlop={12}
-          onPress={() => router.push("/translate")}
-        >
+        <Pressable style={[styles.langBtn, { top: langTop, right: langRight }]} hitSlop={12} onPress={() => {}}>
           <Image
             source={require("../assets/translation.png")}
             style={[styles.langIcon, { width: langSize, height: langSize }]}
@@ -304,15 +158,15 @@ export default function LoginScreen() {
           showsVerticalScrollIndicator={false}
         >
           <View style={[styles.content, { paddingTop: topPad, paddingHorizontal: horizontalPadding }]}> 
-            <Text style={[styles.welcome, { fontSize: welcomeFontSize, marginTop: welcomeMarginTop }]}>{copy.welcomeBack}</Text>
-            <Text style={[styles.hint, { fontSize: hintFontSize }]}>{copy.enterDetails}</Text>
+            <Text style={[styles.welcome, { fontSize: welcomeFontSize, marginTop: welcomeMarginTop }]}>WELCOME BACK</Text>
+            <Text style={[styles.hint, { fontSize: hintFontSize }]}>Please enter your details</Text>
 
-            <Text style={[styles.fieldLabel, { fontSize: labelFontSize }]}>{copy.emailAddress}</Text>
+            <Text style={[styles.fieldLabel, { fontSize: labelFontSize }]}>Email Address:</Text>
             <View style={[styles.inputWrap, { height: inputHeight }]}> 
             <TextInput
               value={email}
               onChangeText={setEmail}
-              placeholder={copy.emailPlaceholder}
+              placeholder="Enter your email address ..."
               placeholderTextColor="rgba(0,0,0,0.45)"
               keyboardType="email-address"
               autoCapitalize="none"
@@ -321,12 +175,12 @@ export default function LoginScreen() {
             />
             </View>
 
-            <Text style={[styles.passwordLabel, { fontSize: labelFontSize }]}>{copy.password}</Text>
+            <Text style={[styles.passwordLabel, { fontSize: labelFontSize }]}>Password:</Text>
             <View style={[styles.inputWrap, { height: inputHeight }]}> 
             <TextInput
               value={password}
               onChangeText={setPassword}
-              placeholder={copy.passwordPlaceholder}
+              placeholder="Enter your password ..."
               placeholderTextColor="rgba(0,0,0,0.45)"
               secureTextEntry={!showPassword}
               autoCapitalize="none"
@@ -352,23 +206,11 @@ export default function LoginScreen() {
                 hitSlop={10}
               >
                 <View style={[styles.checkbox, rememberMe && styles.checkboxOn]} />
-                <Text
-                  style={[styles.rememberText, authMetaTextStyle]}
-                  numberOfLines={1}
-                  disableDynamicFontSize
-                >
-                  {copy.rememberMe}
-                </Text>
+                <Text style={[styles.rememberText, { fontSize: bodyFontSize }]}>Remember me</Text>
               </Pressable>
 
-              <Pressable onPress={() => {}} hitSlop={10} style={styles.forgotWrap}>
-                <Text
-                  style={[styles.forgot, authMetaTextStyle]}
-                  numberOfLines={1}
-                  disableDynamicFontSize
-                >
-                  {copy.forgotPassword}
-                </Text>
+              <Pressable onPress={() => {}} hitSlop={10}>
+                <Text style={[styles.forgot, { fontSize: bodyFontSize }]}>Forgot password?</Text>
               </Pressable>
             </View>
 
@@ -376,7 +218,7 @@ export default function LoginScreen() {
               {loading ? (
                 <ActivityIndicator color={BLUE} />
               ) : (
-                <Text style={[styles.signInText, { fontSize: signInTextSize }]}>{copy.signIn}</Text>
+                <Text style={[styles.signInText, { fontSize: signInTextSize }]}>SIGN IN</Text>
               )}
             </Pressable>
           </View>
@@ -445,17 +287,10 @@ const styles = StyleSheet.create({
     marginTop: 15,
     flexDirection: "row",
     justifyContent: "space-between",
-    gap: 12,
     alignItems: "center",
   },
 
-  rememberWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flex: 1,
-    minWidth: 0,
-  },
+  rememberWrap: { flexDirection: "row", alignItems: "center", gap: 8 },
   checkbox: {
     width: 14,
     height: 14,
@@ -464,21 +299,13 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   checkboxOn: { backgroundColor: ORANGE },
-  rememberText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600", flexShrink: 1 },
-
-  forgotWrap: {
-    flexShrink: 1,
-    maxWidth: "45%",
-    alignItems: "flex-end",
-  },
+  rememberText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
 
   forgot: {
     color: ORANGE,
     fontSize: 16,
     textDecorationLine: "underline",
     fontWeight: "600",
-    textAlign: "right",
-    flexShrink: 1,
   },
 
   signInBtn: {
