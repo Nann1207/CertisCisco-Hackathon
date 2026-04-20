@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
@@ -41,6 +41,9 @@ export default function AssignmentAlertModal() {
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
   const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
   const [activeAssignment, setActiveAssignment] = useState<AlertAssignment | null>(null);
+  const acknowledgedIdsRef = useRef<Set<string>>(new Set());
+  const dismissedMapRef = useRef<Record<string, string>>({});
+  const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   const storageKey = useMemo(() => {
     if (!userId) return null;
@@ -55,6 +58,14 @@ export default function AssignmentAlertModal() {
   const stopVibration = () => {
     Vibration.cancel();
   };
+
+  useEffect(() => {
+    acknowledgedIdsRef.current = acknowledgedIds;
+  }, [acknowledgedIds]);
+
+  useEffect(() => {
+    dismissedMapRef.current = dismissedMap;
+  }, [dismissedMap]);
 
   const parseIncident = useCallback((row: AssignmentRow) => {
     if (Array.isArray(row.incidents)) {
@@ -82,12 +93,14 @@ export default function AssignmentAlertModal() {
 
       const prunedAckSet = new Set(Array.from(ackSet).filter((id) => activeIds.has(id)));
       if (prunedAckSet.size !== ackSet.size) {
+        acknowledgedIdsRef.current = prunedAckSet;
         setAcknowledgedIds(prunedAckSet);
         await AsyncStorage.setItem(`${STORAGE_KEY_PREFIX}:${activeUserId}`, JSON.stringify(Array.from(prunedAckSet)));
       }
 
       const prunedDismissed = Object.fromEntries(Object.entries(dismissed).filter(([id]) => activeIds.has(id)));
       if (JSON.stringify(prunedDismissed) !== JSON.stringify(dismissed)) {
+        dismissedMapRef.current = prunedDismissed;
         setDismissedMap(prunedDismissed);
         await AsyncStorage.setItem(`${DISMISS_STORAGE_KEY_PREFIX}:${activeUserId}`, JSON.stringify(prunedDismissed));
       }
@@ -142,6 +155,8 @@ export default function AssignmentAlertModal() {
       const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
 
       if (!alive) return;
+      acknowledgedIdsRef.current = ids;
+      dismissedMapRef.current = dismissed;
       setAcknowledgedIds(ids);
       setDismissedMap(dismissed);
       await fetchActiveAssignments(currentUserId, ids, dismissed);
@@ -155,7 +170,10 @@ export default function AssignmentAlertModal() {
       setUserId(nextUserId);
 
       if (!nextUserId) {
+        acknowledgedIdsRef.current = new Set();
+        dismissedMapRef.current = {};
         setAcknowledgedIds(new Set());
+        setDismissedMap({});
         setActiveAssignment(null);
         setVisible(false);
         stopVibration();
@@ -169,6 +187,8 @@ export default function AssignmentAlertModal() {
       const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${nextUserId}`;
       const storedDismissed = await AsyncStorage.getItem(dKey);
       const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
+      acknowledgedIdsRef.current = ids;
+      dismissedMapRef.current = dismissed;
       setAcknowledgedIds(ids);
       setDismissedMap(dismissed);
       await fetchActiveAssignments(nextUserId, ids, dismissed);
@@ -185,7 +205,7 @@ export default function AssignmentAlertModal() {
     if (!userId || loading) return;
 
     const channel = supabase
-      .channel(`assignment-alert-${userId}`)
+      .channel(`assignment-alert-${userId}-${channelNonceRef.current}`)
       .on(
         "postgres_changes",
         {
@@ -195,7 +215,7 @@ export default function AssignmentAlertModal() {
           filter: `officer_id=eq.${userId}`,
         },
         async () => {
-          await fetchActiveAssignments(userId, acknowledgedIds, dismissedMap);
+          await fetchActiveAssignments(userId, acknowledgedIdsRef.current, dismissedMapRef.current);
         }
       )
       .subscribe();
@@ -203,7 +223,7 @@ export default function AssignmentAlertModal() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [acknowledgedIds, fetchActiveAssignments, loading, userId]);
+  }, [fetchActiveAssignments, loading, userId]);
 
   useEffect(() => {
     if (!visible) {
@@ -219,6 +239,7 @@ export default function AssignmentAlertModal() {
 
     const next = new Set(acknowledgedIds);
     next.add(activeAssignment.assignmentId);
+    acknowledgedIdsRef.current = next;
     setAcknowledgedIds(next);
 
     if (storageKey) {
@@ -229,6 +250,7 @@ export default function AssignmentAlertModal() {
       const nextDismissed = { ...dismissedMap };
       delete nextDismissed[activeAssignment.assignmentId];
       setDismissedMap(nextDismissed);
+      dismissedMapRef.current = nextDismissed;
       await AsyncStorage.setItem(storageDismissKey, JSON.stringify(nextDismissed));
     }
 
@@ -247,6 +269,7 @@ export default function AssignmentAlertModal() {
     const id = activeAssignment.assignmentId;
     const next = { ...dismissedMap, [id]: new Date().toISOString() };
     setDismissedMap(next);
+    dismissedMapRef.current = next;
     const key = storageDismissKey ?? (userId ? `${DISMISS_STORAGE_KEY_PREFIX}:${userId}` : null);
     if (key) await AsyncStorage.setItem(key, JSON.stringify(next));
 

@@ -37,6 +37,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
   const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
   const acknowledgedIdsRef = useRef<Set<string>>(new Set());
+  const dismissedMapRef = useRef<Record<string, string>>({});
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const storageKey = useMemo(() => {
     if (!userId) return null;
@@ -50,6 +51,10 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   const stopVibration = () => {
     Vibration.cancel();
   };
+
+  useEffect(() => {
+    dismissedMapRef.current = dismissedMap;
+  }, [dismissedMap]);
 
   const fetchActiveIncidents = useCallback(
     async (activeUserId: string, ackSet: Set<string>, dismissed: Record<string, string> = {}) => {
@@ -122,6 +127,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
         acknowledgedIdsRef.current = ids;
         setAcknowledgedIds(ids);
         setDismissedMap(dismissed);
+        dismissedMapRef.current = dismissed;
         setLoading(false);
         await fetchActiveIncidents(supervisorId, ids, dismissed);
       })();
@@ -156,6 +162,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
       acknowledgedIdsRef.current = ids;
       setAcknowledgedIds(ids);
       setDismissedMap(dismissed);
+      dismissedMapRef.current = dismissed;
       await fetchActiveIncidents(currentUserId, ids, dismissed);
       if (alive) setLoading(false);
     };
@@ -185,6 +192,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
       acknowledgedIdsRef.current = ids;
       setAcknowledgedIds(ids);
       setDismissedMap(dismissed);
+      dismissedMapRef.current = dismissed;
       await fetchActiveIncidents(nextUserId, ids, dismissed);
     });
 
@@ -209,7 +217,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
           filter: `supervisor_id=eq.${userId}`,
         },
         async () => {
-          await fetchActiveIncidents(userId, acknowledgedIdsRef.current, dismissedMap);
+          await fetchActiveIncidents(userId, acknowledgedIdsRef.current, dismissedMapRef.current);
         }
       )
       .subscribe();
@@ -217,7 +225,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchActiveIncidents, loading, userId, dismissedMap]);
+  }, [fetchActiveIncidents, loading, userId]);
 
   useEffect(() => {
     if (!visible) {
@@ -245,6 +253,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
       const nextDismissed = { ...dismissedMap };
       delete nextDismissed[activeIncident.incidentId];
       setDismissedMap(nextDismissed);
+      dismissedMapRef.current = nextDismissed;
       await AsyncStorage.setItem(storageDismissKey, JSON.stringify(nextDismissed));
     }
 
@@ -263,6 +272,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     const id = activeIncident.incidentId;
     const next = { ...dismissedMap, [id]: new Date().toISOString() };
     setDismissedMap(next);
+    dismissedMapRef.current = next;
     const key = storageDismissKey ?? (userId ? `${DISMISS_STORAGE_KEY_PREFIX}:${userId}` : null);
     if (key) await AsyncStorage.setItem(key, JSON.stringify(next));
 

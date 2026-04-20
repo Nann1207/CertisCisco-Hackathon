@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
 	ActivityIndicator,
 	Alert,
@@ -17,7 +18,7 @@ import * as Location from "expo-location";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ChevronLeft } from "lucide-react-native";
+import { BellRing, ChevronLeft, ClipboardPen, PhoneCall } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { supabase } from "../../lib/supabase";
@@ -42,9 +43,28 @@ type AssignmentGuardRow = {
 	assignment_id: string;
 	incident_id: string | null;
 	active_status: boolean | null;
+	shift_id?: string | null;
+	supervisor_id?: string | null;
+};
+
+type ShiftSupervisorRow = {
+	supervisor_id: string | null;
+	shift_start: string | null;
+};
+
+type SupervisorContactRow = {
+	phone?: string | null;
+};
+
+type IncidentProgressState = {
+	isArrived: boolean;
+	predictionAnswer: "TRUE" | "FALSE" | null;
+	earlyChecked: Record<string, true>;
+	sopChecked: Record<string, true>;
 };
 
 const NEARBY_DISTANCE_METERS = 120;
+const INCIDENT_PROGRESS_STORAGE_PREFIX = "current_incident_progress";
 const DEFAULT_EARLY_CHECKLIST = [
 	"Acknowledge - Confirm via radio you are responding",
 	"Visual Scan - Watch for suspects blending into the crowd",
@@ -94,6 +114,7 @@ export default function CurrentIncidentScreen() {
 	const [loading, setLoading] = useState(true);
 	const [incident, setIncident] = useState<IncidentRow | null>(null);
 	const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+	const [currentSupervisorId, setCurrentSupervisorId] = useState<string | null>(null);
 	const [supervisorPhone, setSupervisorPhone] = useState<string>("999");
 	const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number } | null>(null);
 	const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
@@ -107,6 +128,8 @@ export default function CurrentIncidentScreen() {
 	const [checklistLoading, setChecklistLoading] = useState(true);
 
 	const [showBackupModal, setShowBackupModal] = useState(false);
+	const [showBackupSuccessModal, setShowBackupSuccessModal] = useState(false);
+	const [backupSuccessCount, setBackupSuccessCount] = useState<number>(1);
 	const [backupCount, setBackupCount] = useState("1");
 	const [backupReason, setBackupReason] = useState("");
 	const [showReportModeModal, setShowReportModeModal] = useState(false);
@@ -114,6 +137,12 @@ export default function CurrentIncidentScreen() {
 	const [modalMapRegion, setModalMapRegion] = useState<Region | null>(null);
 	const modalMapRef = useRef<MapView | null>(null);
 	const [cctvUris, setCctvUris] = useState<string[]>([]);
+	const hasHydratedProgressRef = useRef(false);
+
+	const progressStorageKey = useMemo(() => {
+		if (!currentUserId || !incidentId) return null;
+		return `${INCIDENT_PROGRESS_STORAGE_PREFIX}:${currentUserId}:${incidentId}`;
+	}, [currentUserId, incidentId]);
 
 	useEffect(() => {
 		let alive = true;
@@ -143,7 +172,7 @@ export default function CurrentIncidentScreen() {
 
 			const { data: assignmentData, error: assignmentError } = await supabase
 				.from("incident_assignments")
-				.select("assignment_id, incident_id, active_status")
+				.select("assignment_id, incident_id, active_status, shift_id, supervisor_id")
 				.eq("incident_id", incidentId)
 				.eq("officer_id", userId)
 				.eq("active_status", true)
@@ -177,22 +206,41 @@ export default function CurrentIncidentScreen() {
 
 			setIncident(incidentData as IncidentRow);
 
-			const { data: shiftRows } = await supabase
-				.from("shifts")
-				.select("supervisor_id, shift_start")
-				.eq("officer_id", userId)
-				.order("shift_start", { ascending: false })
-				.limit(10);
+			let supervisorId = assignmentData?.supervisor_id ?? null;
+			if (!supervisorId && assignmentData?.shift_id) {
+				const { data: assignedShift } = await supabase
+					.from("shifts")
+					.select("supervisor_id, shift_start")
+					.eq("shift_id", assignmentData.shift_id)
+					.maybeSingle<ShiftSupervisorRow>();
 
-			const supervisorId = (shiftRows?.[0] as { supervisor_id?: string } | undefined)?.supervisor_id;
+				supervisorId = assignedShift?.supervisor_id ?? null;
+			}
+
+			if (!supervisorId) {
+				const { data: shiftRows } = await supabase
+					.from("shifts")
+					.select("supervisor_id, shift_start")
+					.eq("officer_id", userId)
+					.order("shift_start", { ascending: false })
+					.limit(10);
+
+				supervisorId =
+					((shiftRows ?? []) as ShiftSupervisorRow[]).find((shift) => Boolean(shift.supervisor_id))
+						?.supervisor_id ?? null;
+			}
+
 			if (supervisorId) {
+				setCurrentSupervisorId(supervisorId);
 				const { data: supervisor } = await supabase
 					.from("employees")
-					.select("phone_number")
+					.select("phone")
 					.eq("id", supervisorId)
 					.maybeSingle();
 
-				const maybePhone = (supervisor as { phone_number?: string } | null)?.phone_number;
+				const maybePhone =
+					(supervisor as SupervisorContactRow | null)?.phone ??
+					null;
 				if (maybePhone) setSupervisorPhone(maybePhone);
 			}
 
@@ -333,12 +381,90 @@ export default function CurrentIncidentScreen() {
 	}, [incident]);
 
 	useEffect(() => {
-		setEarlyChecked({});
+		setEarlyChecked((prev) =>
+			Object.fromEntries(
+				Object.entries(prev).filter(([item]) => earlyChecklist.includes(item))
+			) as Record<string, true>
+		);
 	}, [earlyChecklist]);
 
 	useEffect(() => {
-		setSopChecked({});
+		setSopChecked((prev) =>
+			Object.fromEntries(
+				Object.entries(prev).filter(([item]) => sopChecklist.includes(item))
+			) as Record<string, true>
+		);
 	}, [sopChecklist]);
+
+	useEffect(() => {
+		hasHydratedProgressRef.current = false;
+
+		if (!progressStorageKey) {
+			setIsArrived(false);
+			setPredictionAnswer(null);
+			setEarlyChecked({});
+			setSopChecked({});
+			return;
+		}
+
+		let active = true;
+
+		const loadSavedProgress = async () => {
+			try {
+				const stored = await AsyncStorage.getItem(progressStorageKey);
+				if (!active) return;
+
+				if (stored) {
+					const parsed = JSON.parse(stored) as Partial<IncidentProgressState>;
+					setIsArrived(Boolean(parsed.isArrived));
+					setPredictionAnswer(
+						parsed.predictionAnswer === "TRUE" || parsed.predictionAnswer === "FALSE"
+							? parsed.predictionAnswer
+							: null
+					);
+					setEarlyChecked((parsed.earlyChecked ?? {}) as Record<string, true>);
+					setSopChecked((parsed.sopChecked ?? {}) as Record<string, true>);
+				} else {
+					setIsArrived(false);
+					setPredictionAnswer(null);
+					setEarlyChecked({});
+					setSopChecked({});
+				}
+			} catch (error) {
+				console.warn("[currentIncident] failed to load saved progress:", error);
+			} finally {
+				if (active) {
+					hasHydratedProgressRef.current = true;
+				}
+			}
+		};
+
+		void loadSavedProgress();
+
+		return () => {
+			active = false;
+		};
+	}, [progressStorageKey]);
+
+	useEffect(() => {
+		if (!progressStorageKey || !hasHydratedProgressRef.current) return;
+
+		const saveProgress = async () => {
+			try {
+				const payload: IncidentProgressState = {
+					isArrived,
+					predictionAnswer,
+					earlyChecked,
+					sopChecked,
+				};
+				await AsyncStorage.setItem(progressStorageKey, JSON.stringify(payload));
+			} catch (error) {
+				console.warn("[currentIncident] failed to save progress:", error);
+			}
+		};
+
+		void saveProgress();
+	}, [earlyChecked, isArrived, predictionAnswer, progressStorageKey, sopChecked]);
 
 	const incidentTitle = useMemo(() => {
 		const category = (incident?.incident_category ?? "Incident").toString();
@@ -387,25 +513,47 @@ export default function CurrentIncidentScreen() {
 		const checkedSopActions = sopChecklist.filter((item) => Boolean(sopChecked[item]));
 
 		setShowReportModeModal(false);
-		router.push({
-			pathname: "/securityofficer/shift-reports",
-			params: {
-				incidentId: incident.id,
-				reportType: nextReportType,
-				checkedEarlyActions: JSON.stringify(checkedEarlyActions),
-				checkedSopActions: JSON.stringify(checkedSopActions),
-			},
-		});
+		const proceed = async () => {
+			if (progressStorageKey) {
+				try {
+					await AsyncStorage.removeItem(progressStorageKey);
+				} catch (error) {
+					console.warn("[currentIncident] failed to clear saved progress:", error);
+				}
+			}
+
+			router.push({
+				pathname: "/securityofficer/shift-reports",
+				params: {
+					incidentId: incident.id,
+					reportType: nextReportType,
+					checkedEarlyActions: JSON.stringify(checkedEarlyActions),
+					checkedSopActions: JSON.stringify(checkedSopActions),
+				},
+			});
+		};
+
+		void proceed();
 	};
 
 	const onCallSupervisor = async () => {
 		const tel = `tel:${supervisorPhone}`;
-		const canOpen = await Linking.canOpenURL(tel);
-		if (!canOpen) {
-			Alert.alert("Call failed", "Unable to open phone dialer on this device.");
-			return;
+		try {
+			const canOpen = await Linking.canOpenURL(tel);
+			if (!canOpen) {
+				router.push({
+					pathname: "/securityofficer/phonecalls",
+					params: currentSupervisorId ? { supervisorId: currentSupervisorId } : undefined,
+				});
+				return;
+			}
+			await Linking.openURL(tel);
+		} catch {
+			router.push({
+				pathname: "/securityofficer/phonecalls",
+				params: currentSupervisorId ? { supervisorId: currentSupervisorId } : undefined,
+			});
 		}
-		await Linking.openURL(tel);
 	};
 
 	const onConfirmBackup = async () => {
@@ -418,8 +566,6 @@ export default function CurrentIncidentScreen() {
 		const requestedCount = Number.parseInt(backupCount, 10);
 		const sanitizedCount = Number.isFinite(requestedCount) ? Math.max(1, requestedCount) : 1;
 		const reason = backupReason.trim();
-		const requestedAt = new Date().toISOString();
-
 		const { data: assignment } = await supabase
 			.from("incident_assignments")
 			.select("assignment_id")
@@ -436,54 +582,30 @@ export default function CurrentIncidentScreen() {
 			return;
 		}
 
-		const candidatePayloads: Record<string, unknown>[] = [
-			{
+		const { error: updateError } = await supabase
+			.from("incident_assignments")
+			.update({
 				backup_requested: true,
-				backup_requested_count: sanitizedCount,
+				backup_amount: sanitizedCount,
 				backup_reason: reason || null,
-				backup_requested_at: requestedAt,
-			},
-			{
-				request_backup: true,
-				request_backup_count: sanitizedCount,
-				request_backup_reason: reason || null,
-				request_backup_at: requestedAt,
-			},
-			{
-				needs_backup: true,
-				requested_officer_count: sanitizedCount,
-				backup_reason: reason || null,
-				backup_requested_at: requestedAt,
-			},
-		];
-
-		let requestSaved = false;
-		for (const payload of candidatePayloads) {
-			const { error } = await supabase
-				.from("incident_assignments")
-				.update(payload)
-				.eq("assignment_id", assignmentId)
-				.eq("officer_id", currentUserId)
-				.eq("active_status", true);
-
-			if (!error) {
-				requestSaved = true;
-				break;
-			}
-		}
+			})
+			.eq("assignment_id", assignmentId)
+			.eq("officer_id", currentUserId)
+			.eq("active_status", true);
 
 		setShowBackupModal(false);
 		setBackupReason("");
 		setBackupCount("1");
 
-		if (requestSaved) {
-			Alert.alert("Backup Requested", `Requested ${sanitizedCount} officer(s).`);
+		if (!updateError) {
+			setBackupSuccessCount(sanitizedCount);
+			setShowBackupSuccessModal(true);
 			return;
 		}
 
 		Alert.alert(
-			"Backup Request Logged",
-			"Backup request could not be persisted to database columns. Please ask your supervisor directly while schema updates are pending."
+			"Backup Request Failed",
+			updateError.message || "Unable to save your backup request."
 		);
 	};
 
@@ -696,7 +818,10 @@ export default function CurrentIncidentScreen() {
 							<>
 								<View style={styles.actionsRow}>
 									<Pressable style={[styles.actionBtn, styles.backupBtn]} onPress={() => setShowBackupModal(true)}>
-										<Text style={styles.actionBtnText}>Request Backup</Text>
+										<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+											<BellRing size={16} color="#9C2222" />
+											<Text style={styles.actionBtnText}>Request Backup</Text>
+										</View>
 									</Pressable>
 									<Pressable
 										style={[styles.actionBtn, styles.hotlineBtn]}
@@ -704,7 +829,10 @@ export default function CurrentIncidentScreen() {
 											void onCallSupervisor();
 										}}
 									>
-										<Text style={styles.hotlineBtnText}>Supervisor</Text>
+										<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+											<PhoneCall size={16} color="#5A6E85" />
+											<Text style={styles.hotlineBtnText}>Supervisor</Text>
+										</View>
 									</Pressable>
 								</View>
 
@@ -767,7 +895,10 @@ export default function CurrentIncidentScreen() {
 								end={{ x: 1, y: 1 }}
 								style={styles.markArrivedBtn}
 							>
-								<Text style={styles.primaryBtnText}>Incident Report</Text>
+								<View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+									<ClipboardPen size={19} color="#FFFFFF" />
+									<Text style={styles.primaryBtnText}>Incident Report</Text>
+								</View>
 							</LinearGradient>
 						</Pressable>
 					</View>
@@ -842,45 +973,84 @@ export default function CurrentIncidentScreen() {
 				visible={showBackupModal}
 				transparent
 				animationType="fade"
+				presentationStyle="overFullScreen"
+				statusBarTranslucent
+				navigationBarTranslucent
 				onRequestClose={() => setShowBackupModal(false)}
-				>
-					<View style={styles.modalBackdrop}>
-						<View style={styles.modalCard}>
-							<Pressable style={styles.modalCloseIconBtn} onPress={() => setShowBackupModal(false)}>
-								<Text style={styles.modalCloseIconText}>×</Text>
-							</Pressable>
-							<Text style={styles.modalTitle}>REQUEST BACKUP</Text>
-							<Text style={styles.modalSubtitle}>Pick the amount of officer(s) for backup</Text>
+			>
+				<View style={styles.backupModalBackdrop}>
+					<LinearGradient
+						colors={["#FFECEB", "#F4DFEF", "#170075"]}
+						locations={[0.08, 0.52, 1]}
+						start={{ x: 0.08, y: 0.02 }}
+						end={{ x: 0.88, y: 1 }}
+						style={styles.backupModalCard}
+					>
+						<Pressable style={styles.backupModalCloseIconBtn} onPress={() => setShowBackupModal(false)}>
+							<Text style={styles.backupModalCloseIconText}>×</Text>
+						</Pressable>
+						<Text style={styles.backupModalTitle}>REQUEST BACKUP</Text>
+						<Text style={styles.backupModalSubtitle}>Pick the amount of officer(s) for backup</Text>
 
-						<View style={styles.backupCountRow}>
-							{["1", "2", "3", "4", "5+"].map((count) => (
-								<Pressable
-									key={count}
-									style={[
-										styles.backupCountBtn,
-										backupCount === count ? styles.backupCountBtnActive : null,
-									]}
-									onPress={() => setBackupCount(count)}
-								>
-									<Text style={styles.backupCountText}>{count}</Text>
-								</Pressable>
-							))}
+						<View style={styles.backupModalCountGrid}>
+							{["1", "2", "3", "4", "5+"].map((count) => {
+								const selected = backupCount === count;
+								return (
+									<Pressable
+										key={count}
+										style={[styles.backupModalCountTileWrap, selected ? styles.backupModalCountTileWrapActive : null]}
+										onPress={() => setBackupCount(count)}
+									>
+										<LinearGradient
+											colors={selected ? ["#0E2D52", "#1A4A7A"] : ["#36475B", "#EF5449"]}
+											start={{ x: 0.1, y: 0 }}
+											end={{ x: 0.9, y: 1 }}
+											style={styles.backupModalCountTile}
+										>
+											<View style={styles.backupModalPeopleRow}>
+												{Array.from({ length: count === "1" ? 1 : count === "2" ? 2 : count === "3" ? 3 : count === "4" ? 4 : 5 }).map((_, index) => (
+													<View
+														key={`${count}-${index}`}
+														style={[styles.backupModalPerson, index > 0 ? styles.backupModalPersonOffset : null]}
+													>
+														<View style={styles.backupModalPersonHead} />
+														<View style={styles.backupModalPersonBody} />
+													</View>
+												))}
+											</View>
+											<Text style={styles.backupModalCountText}>{count}</Text>
+										</LinearGradient>
+									</Pressable>
+								);
+							})}
 						</View>
 
-						<Text style={styles.modalInputLabel}>Reason:</Text>
-						<TextInput
-							style={styles.modalInput}
-							value={backupReason}
-							onChangeText={setBackupReason}
-							placeholder="..."
-							placeholderTextColor="#64748B"
-							multiline
-						/>
+						<Text style={styles.backupModalInputLabel}>Short Reason:</Text>
+						<View style={styles.backupModalInputShell}>
+							<TextInput
+								style={styles.backupModalInput}
+								value={backupReason}
+								onChangeText={(value) => setBackupReason(value.slice(0, 80))}
+								placeholder="..."
+								placeholderTextColor="#40304D"
+								maxLength={80}
+								multiline
+								textAlignVertical="top"
+							/>
+							<Text style={styles.backupModalCharCount}>({backupReason.length}/80 characters)</Text>
+						</View>
 
-						<Pressable style={styles.modalConfirmBtn} onPress={onConfirmBackup}>
-							<Text style={styles.modalConfirmBtnText}>CONFIRM</Text>
+						<Pressable style={styles.backupModalConfirmWrap} onPress={onConfirmBackup}>
+							<LinearGradient
+								colors={["#0E2D52", "#09213D"]}
+								start={{ x: 0.5, y: 0 }}
+								end={{ x: 0.5, y: 1 }}
+								style={styles.backupModalConfirmBtn}
+							>
+								<Text style={styles.backupModalConfirmText}>CONFIRM</Text>
+							</LinearGradient>
 						</Pressable>
-					</View>
+					</LinearGradient>
 				</View>
 			</Modal>
 
@@ -912,6 +1082,38 @@ export default function CurrentIncidentScreen() {
 							onPress={() => onOpenIncidentReport("Resolved")}
 						>
 							<Text style={[styles.modeBtnText, styles.modeBtnTextResolved]}>Resolved</Text>
+						</Pressable>
+					</View>
+				</View>
+			</Modal>
+
+			<Modal
+				visible={showBackupSuccessModal}
+				transparent
+				animationType="fade"
+				presentationStyle="overFullScreen"
+				statusBarTranslucent
+				navigationBarTranslucent
+				onRequestClose={() => setShowBackupSuccessModal(false)}
+			>
+				<View style={styles.successModalBackdrop}>
+					<View style={styles.successModalCard}>
+						<Text style={styles.successModalEyebrow}>BACKUP REQUEST SENT</Text>
+						<Text style={styles.successModalTitle}>Help is on the way</Text>
+						<Text style={styles.successModalBody}>
+							Requested {backupSuccessCount} officer(s) for support.{"\n"}
+							Your supervisor can now review the request.
+						</Text>
+
+						<Pressable style={styles.successModalButtonWrap} onPress={() => setShowBackupSuccessModal(false)}>
+							<LinearGradient
+								colors={["#0E2D52", "#09213D"]}
+								start={{ x: 0.5, y: 0 }}
+								end={{ x: 0.5, y: 1 }}
+								style={styles.successModalButton}
+							>
+								<Text style={styles.successModalButtonText}>OK</Text>
+							</LinearGradient>
 						</Pressable>
 					</View>
 				</View>
@@ -1227,6 +1429,8 @@ const styles = StyleSheet.create({
 		borderRadius: 999,
 		alignItems: "center",
 		justifyContent: "center",
+		flexDirection: "row",
+		gap: 8,
 	},
 	floatingArrivedArea: {
 		position: "absolute",
@@ -1284,6 +1488,8 @@ const styles = StyleSheet.create({
 		borderColor: "rgba(160,176,192,0.4)",
 		alignItems: "center",
 		justifyContent: "center",
+		flexDirection: "row",
+		gap: 6,
 		shadowColor: "#0E2D52",
 		shadowOpacity: 0.1,
 		shadowRadius: 6,
@@ -1499,6 +1705,228 @@ const styles = StyleSheet.create({
 		fontSize: 14,
 		fontWeight: "900",
 		color: "#FFFFFF",
+	},
+	backupModalBackdrop: {
+		flex: 1,
+		backgroundColor: "rgba(0,0,0,0.73)",
+		alignItems: "center",
+		justifyContent: "center",
+		paddingHorizontal: 16,
+	},
+	backupModalCard: {
+		width: "100%",
+		maxWidth: 362,
+		minHeight: 537,
+		borderRadius: 27,
+		borderWidth: 3,
+		borderColor: "#2A008D",
+		paddingHorizontal: 26,
+		paddingTop: 18,
+		paddingBottom: 18,
+	},
+	backupModalCloseIconBtn: {
+		alignSelf: "flex-end",
+		width: 32,
+		height: 32,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	backupModalCloseIconText: {
+		fontSize: 26,
+		lineHeight: 26,
+		fontWeight: "700",
+		color: "#0E2D52",
+	},
+	backupModalTitle: {
+		marginTop: 4,
+		fontSize: 20,
+		lineHeight: 22,
+		fontWeight: "800",
+		textAlign: "center",
+		color: "#0E2D52",
+	},
+	backupModalSubtitle: {
+		marginTop: 2,
+		fontSize: 11,
+		lineHeight: 13,
+		fontWeight: "700",
+		textAlign: "center",
+		color: "rgba(85,55,106,0.65)",
+	},
+	backupModalCountGrid: {
+		marginTop: 18,
+		flexDirection: "row",
+		flexWrap: "wrap",
+		justifyContent: "flex-start",
+		columnGap: 14,
+		rowGap: 16,
+	},
+	backupModalCountTileWrap: {
+		width: "30%",
+		minWidth: 87,
+		borderRadius: 14,
+	},
+	backupModalCountTileWrapActive: {
+		shadowColor: "#FFFFFF",
+		shadowOpacity: 0.9,
+		shadowRadius: 6,
+		shadowOffset: { width: 0, height: 0 },
+		elevation: 6,
+	},
+	backupModalCountTile: {
+		height: 113,
+		borderRadius: 14,
+		alignItems: "center",
+		justifyContent: "space-between",
+		paddingTop: 24,
+		paddingBottom: 12,
+	},
+	backupModalPeopleRow: {
+		flexDirection: "row",
+		alignItems: "flex-end",
+		justifyContent: "center",
+		minHeight: 42,
+	},
+	backupModalPerson: {
+		alignItems: "center",
+	},
+	backupModalPersonOffset: {
+		marginLeft: -3,
+	},
+	backupModalPersonHead: {
+		width: 12,
+		height: 12,
+		borderRadius: 6,
+		borderWidth: 2.5,
+		borderColor: "#FFFFFF",
+	},
+	backupModalPersonBody: {
+		marginTop: 4,
+		width: 18,
+		height: 12,
+		borderTopLeftRadius: 9,
+		borderTopRightRadius: 9,
+		borderWidth: 2.5,
+		borderBottomWidth: 0,
+		borderColor: "#FFFFFF",
+	},
+	backupModalCountText: {
+		fontSize: 24,
+		lineHeight: 22,
+		fontWeight: "700",
+		textAlign: "center",
+		color: "#FFFFFF",
+	},
+	backupModalInputLabel: {
+		marginTop: 18,
+		fontSize: 13,
+		lineHeight: 17,
+		fontWeight: "400",
+		letterSpacing: 0.26,
+		color: "#000000",
+	},
+	backupModalInputShell: {
+		marginTop: 6,
+		height: 82,
+		borderRadius: 19,
+		borderWidth: 1,
+		borderColor: "#2A008D",
+		backgroundColor: "rgba(239,232,244,0.56)",
+		paddingHorizontal: 14,
+		paddingTop: 8,
+		paddingBottom: 8,
+	},
+	backupModalInput: {
+		flex: 1,
+		fontSize: 14,
+		lineHeight: 17,
+		color: "#000000",
+		paddingHorizontal: 0,
+		paddingVertical: 0,
+	},
+	backupModalCharCount: {
+		marginTop: 4,
+		fontSize: 14,
+		lineHeight: 17,
+		textAlign: "right",
+		color: "#000000",
+	},
+	backupModalConfirmWrap: {
+		marginTop: 16,
+		alignSelf: "center",
+	},
+	backupModalConfirmBtn: {
+		width: 160,
+		height: 40,
+		borderRadius: 12,
+		borderWidth: 1,
+		borderColor: "rgba(170,195,199,0.4)",
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	backupModalConfirmText: {
+		fontSize: 15,
+		lineHeight: 20,
+		fontWeight: "700",
+		color: "#E6E6E6",
+	},
+	successModalBackdrop: {
+		flex: 1,
+		backgroundColor: "rgba(5,16,30,0.68)",
+		alignItems: "center",
+		justifyContent: "center",
+		paddingHorizontal: 24,
+	},
+	successModalCard: {
+		width: "100%",
+		maxWidth: 340,
+		borderRadius: 26,
+		backgroundColor: "#F8EEE8",
+		borderWidth: 2,
+		borderColor: "#C46A4A",
+		paddingHorizontal: 24,
+		paddingTop: 24,
+		paddingBottom: 22,
+	},
+	successModalEyebrow: {
+		fontSize: 16,
+		fontWeight: "800",
+		letterSpacing: 1.2,
+		textAlign: "center",
+		color: "#B45309",
+	},
+	successModalTitle: {
+		marginTop: 20,
+		fontSize: 24,
+		lineHeight: 28,
+		fontWeight: "900",
+		textAlign: "center",
+		color: "#0E2D52",
+	},
+	successModalBody: {
+		marginTop: 10,
+		fontSize: 14,
+		lineHeight: 20,
+		fontWeight: "600",
+		textAlign: "center",
+		color: "#334155",
+	},
+	successModalButtonWrap: {
+		marginTop: 18,
+		alignSelf: "center",
+	},
+	successModalButton: {
+		minWidth: 152,
+		height: 42,
+		paddingHorizontal: 18,
+		borderRadius: 12,
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	successModalButtonText: {
+		fontSize: 15,
+		fontWeight: "800",
+		color: "#E6E6E6",
 	},
 	modeCard: {
 		width: "100%",

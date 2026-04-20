@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
   Alert,
@@ -15,11 +16,13 @@ import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import * as Location from "expo-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { BellRing, Check, ChevronLeft, ClipboardPen, PhoneCall } from "lucide-react-native";
+import { BellRing, ChevronLeft, ClipboardPen, PhoneCall } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
 import { supabase } from "../../lib/supabase";
+
+const BACKUP_ACK_STORAGE_PREFIX = "sso_backup_ack";
 
 type IncidentRow = {
   incident_id: string;
@@ -89,7 +92,12 @@ export default function SsoIncidentAfterAssignPage() {
   const [cctvUris, setCctvUris] = useState<string[]>([]);
 
   const addBackupPulse = useRef(new Animated.Value(0)).current;
-  const channelNonceRef = useRef(0);
+  const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const acknowledgedBackupRequestIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    acknowledgedBackupRequestIdsRef.current = acknowledgedBackupRequestIds;
+  }, [acknowledgedBackupRequestIds]);
 
   useEffect(() => {
     if (!backupAttentionActive) {
@@ -101,12 +109,12 @@ export default function SsoIncidentAfterAssignPage() {
       Animated.sequence([
         Animated.timing(addBackupPulse, {
           toValue: 1,
-          duration: 750,
+          duration: 900,
           useNativeDriver: true,
         }),
         Animated.timing(addBackupPulse, {
           toValue: 0,
-          duration: 750,
+          duration: 900,
           useNativeDriver: true,
         }),
       ])
@@ -209,8 +217,6 @@ export default function SsoIncidentAfterAssignPage() {
   useEffect(() => {
     if (!incidentId) return;
 
-    channelNonceRef.current += 1;
-
     const channel = supabase
       .channel(`sso-incident-after-${incidentId}-${channelNonceRef.current}`)
       .on(
@@ -224,7 +230,7 @@ export default function SsoIncidentAfterAssignPage() {
         async () => {
           await refreshAssignedOfficers(
             incidentId,
-            acknowledgedBackupRequestIds,
+            acknowledgedBackupRequestIdsRef.current,
             setAssignedOfficers,
             setShowBackupRequestModal,
             setBackupAttentionActive,
@@ -237,7 +243,31 @@ export default function SsoIncidentAfterAssignPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [acknowledgedBackupRequestIds, incidentId]);
+  }, [incidentId]);
+
+  useEffect(() => {
+    let active = true;
+    const initFromStorage = async () => {
+      if (!incidentId) return;
+      try {
+        const key = `${BACKUP_ACK_STORAGE_PREFIX}:${incidentId}`;
+        const stored = await AsyncStorage.getItem(key);
+        if (!active) return;
+        if (stored) {
+          // Supervisor has previously acknowledged this request and
+          // backup assignment is pending; resume the attention pulse.
+          setBackupAttentionActive(true);
+        }
+      } catch (err) {
+        console.warn("[sso] failed to read backup ack state:", err);
+      }
+    };
+
+    void initFromStorage();
+    return () => {
+      active = false;
+    };
+  }, [incidentId]);
 
   useEffect(() => {
     let watcher: Location.LocationSubscription | null = null;
@@ -288,6 +318,19 @@ export default function SsoIncidentAfterAssignPage() {
     inputRange: [0, 1],
     outputRange: [1, 1.06],
   });
+  const addBackupGlowScale = addBackupPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.03],
+  });
+  const addBackupGlowOpacity = addBackupPulse.interpolate({
+    inputRange: [0, 0.15, 0.85, 1],
+    outputRange: [0.35, 0.95, 0.95, 0.35],
+  });
+  const addBackupGlowTranslate = addBackupPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-170, 170],
+  });
+  const isTwoOfficerLayout = assignedOfficers.length === 2;
 
   const onOpenMapModal = () => {
     setModalMapRegion(incidentRegion);
@@ -314,7 +357,9 @@ export default function SsoIncidentAfterAssignPage() {
   };
 
   const onOpenAddBackup = () => {
-    setBackupAttentionActive(false);
+    // Keep the attention pulse active while the supervisor navigates
+    // to the add-backup screen; we'll clear it when backup officers
+    // are actually assigned in `add-backup.tsx`.
     router.push(`/sso/add-backup?incidentId=${incidentId}`);
   };
 
@@ -422,7 +467,44 @@ export default function SsoIncidentAfterAssignPage() {
           </View>
 
           <View style={styles.actionRowTop}>
-            <Animated.View style={backupAttentionActive ? { transform: [{ scale: addBackupScale }] } : null}>
+            <Animated.View style={[styles.addBackupAttentionWrap, backupAttentionActive ? { transform: [{ scale: addBackupScale }] } : null]}>
+              {backupAttentionActive ? (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.addBackupGlowRing,
+                    {
+                      opacity: addBackupGlowOpacity,
+                      transform: [{ scale: addBackupGlowScale }],
+                    },
+                  ]}
+                >
+                  <Animated.View
+                    style={[
+                      styles.addBackupGlowSweep,
+                      {
+                        transform: [{ translateX: addBackupGlowTranslate }],
+                      },
+                    ]}
+                  >
+                    <LinearGradient
+                      colors={[
+                        "rgba(255,0,0,0)",
+                        "rgba(255,59,59,0.85)",
+                        "rgba(255,255,255,0.9)",
+                        "rgba(168,85,247,1)",
+                        "rgba(255,255,255,0.88)",
+                        "rgba(59,130,246,0.95)",
+                        "rgba(59,130,246,0)",
+                      ]}
+                      locations={[0, 0.14, 0.28, 0.48, 0.62, 0.78, 1]}
+                      start={{ x: 0, y: 0.5 }}
+                      end={{ x: 1, y: 0.5 }}
+                      style={styles.addBackupGlowSweepGradient}
+                    />
+                  </Animated.View>
+                </Animated.View>
+              ) : null}
               <Pressable style={[styles.actionChip, styles.actionChipWarm]} onPress={onOpenAddBackup}>
                 <BellRing size={16} color="#9C2222" />
                 <Text style={styles.actionChipWarmText}>Add Backup</Text>
@@ -443,10 +525,13 @@ export default function SsoIncidentAfterAssignPage() {
           </View>
 
           <Text style={styles.sectionLabel}>Assigned Officers</Text>
-          <View style={styles.assignedStrip}>
+          <View style={[styles.assignedStrip, isTwoOfficerLayout ? styles.assignedStripTwoItems : null]}>
             {assignedOfficers.length > 0 ? (
               assignedOfficers.map((officer) => (
-                <View key={officer.assignmentId} style={styles.assignedOfficerItem}>
+                <View
+                  key={officer.assignmentId}
+                  style={[styles.assignedOfficerItem, isTwoOfficerLayout ? styles.assignedOfficerItemTwo : null]}
+                >
                   <OfficerAvatar profilePhotoUrl={officer.profilePhotoUrl} officerName={officer.officerName} />
                   <Text style={styles.assignedOfficerName} numberOfLines={1}>
                     {officer.officerName}
@@ -476,9 +561,23 @@ export default function SsoIncidentAfterAssignPage() {
         </ScrollView>
       </View>
 
-      <Modal visible={showBackupRequestModal} transparent animationType="fade" onRequestClose={() => {}}>
+      <Modal
+        visible={showBackupRequestModal}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => {}}
+      >
         <View style={styles.requestBackdrop}>
-          <View style={styles.requestCard}>
+          <LinearGradient
+            colors={["#FFEAD7", "#9d84b9", "#6700D5"]}
+            locations={[0.4, 0.7, 1]}
+            start={{ x: 0.1, y: 0.08 }}
+            end={{ x: 0.92, y: 1 }}
+            style={styles.requestCard}
+          >
             <Text style={styles.requestTitle}>REQUEST BACKUP</Text>
             <Text style={styles.requestSubText}>
               {backupRequestDetails?.reason || "Your officers requested additional backup support."}
@@ -488,11 +587,44 @@ export default function SsoIncidentAfterAssignPage() {
               {backupRequestDetails?.requestedCount ?? 1} officer(s) for backup
             </Text>
             <Text style={styles.requestAttentionText}>Please attend to request immediately</Text>
+            <View style={styles.requestAlertRule} />
 
             <Pressable
               style={styles.requestAcknowledgeBtn}
-              onPress={() => {
+              onPress={async () => {
+                if (backupRequestDetails?.assignmentId) {
+                  const { error } = await supabase
+                    .from("incident_assignments")
+                    .update({
+                      backup_requested: false,
+                      backup_amount: null,
+                      backup_reason: null,
+                    })
+                    .eq("assignment_id", backupRequestDetails.assignmentId);
+
+                  if (error) {
+                    Alert.alert("Acknowledge failed", error.message);
+                    return;
+                  }
+                }
+
+                // Persist that supervisor acknowledged the request so the
+                // attention pulse can survive navigation/reload until
+                // backup officers are actually assigned.
+                try {
+                  if (incidentId) {
+                    const key = `${BACKUP_ACK_STORAGE_PREFIX}:${incidentId}`;
+                    await AsyncStorage.setItem(
+                      key,
+                      JSON.stringify({ acknowledgedAt: new Date().toISOString(), assignmentId: backupRequestDetails?.assignmentId ?? null })
+                    );
+                  }
+                } catch (err) {
+                  console.warn("[sso] failed to persist backup ack:", err);
+                }
+
                 setShowBackupRequestModal(false);
+                // Start the attention animation once acknowledged.
                 setBackupAttentionActive(true);
                 if (backupRequestDetails?.assignmentId) {
                   setAcknowledgedBackupRequestIds((prev) => {
@@ -503,9 +635,16 @@ export default function SsoIncidentAfterAssignPage() {
                 }
               }}
             >
-              <Text style={styles.requestAcknowledgeText}>{"I ACKNOWLEDGE\nTHIS REQUEST"}</Text>
+              <LinearGradient
+                colors={["#0E2D52", "#09213D"]}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={styles.requestAcknowledgeBtnGradient}
+              >
+                <Text style={styles.requestAcknowledgeText}>I ACKNOWLEDGE THIS REQUEST</Text>
+              </LinearGradient>
             </Pressable>
-          </View>
+          </LinearGradient>
         </View>
       </Modal>
 
@@ -614,13 +753,17 @@ async function refreshAssignedOfficers(
 
   const pendingRequest = rows.find((row, index) => {
     const dynamic = row as Record<string, unknown>;
+    const hasBackupAmount =
+      dynamic.backup_amount !== null &&
+      dynamic.backup_amount !== undefined &&
+      String(dynamic.backup_amount).trim().length > 0;
     const requested = Boolean(
       dynamic.backup_requested ??
         dynamic.request_backup ??
         dynamic.backup_request ??
         dynamic.request_additional_officers ??
         dynamic.needs_backup
-    );
+    ) || hasBackupAmount;
 
     if (!requested) return false;
     const assignmentId =
@@ -636,6 +779,7 @@ async function refreshAssignedOfficers(
         : `${pendingRequest.officer_id ?? "officer"}-request`;
 
     const countRaw =
+      dynamic.backup_amount ??
       dynamic.backup_requested_count ??
       dynamic.request_backup_count ??
       dynamic.requested_officer_count ??
@@ -660,7 +804,9 @@ async function refreshAssignedOfficers(
       reason,
     });
     setShowBackupRequestModal(true);
-    setBackupAttentionActive(true);
+    // Keep the attention animation off while the modal prompts the supervisor.
+    // The animation should begin after the supervisor acknowledges the request.
+    setBackupAttentionActive(false);
     return;
   }
 
@@ -815,6 +961,36 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
+  addBackupAttentionWrap: {
+    position: "relative",
+  },
+  addBackupGlowRing: {
+    position: "absolute",
+    top: -7,
+    bottom: -7,
+    left: -10,
+    right: -10,
+    borderRadius: 999,
+    backgroundColor: "rgba(168, 85, 247, 0.18)",
+    overflow: "hidden",
+    shadowColor: "#A855F7",
+    shadowOpacity: 0.92,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 18,
+  },
+  addBackupGlowSweep: {
+    position: "absolute",
+    top: -16,
+    bottom: -16,
+    left: -28,
+    width: 68,
+    justifyContent: "center",
+  },
+  addBackupGlowSweepGradient: {
+    flex: 1,
+    borderRadius: 999,
+  },
   actionChip: {
     minHeight: 30,
     borderRadius: 999,
@@ -885,10 +1061,17 @@ const styles = StyleSheet.create({
     minHeight: 86,
     justifyContent: "space-between",
   },
+  assignedStripTwoItems: {
+    justifyContent: "flex-start",
+    columnGap: 28,
+  },
   assignedOfficerItem: {
     width: "30%",
     minWidth: 92,
     alignItems: "center",
+  },
+  assignedOfficerItemTwo: {
+    width: 110,
   },
   assignedAvatar: {
     width: 56,
@@ -968,67 +1151,85 @@ const styles = StyleSheet.create({
   },
   requestBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(10, 22, 38, 0.62)",
+    backgroundColor: "rgba(0, 0, 0, 0.73)",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 18,
   },
   requestCard: {
     width: "100%",
-    maxWidth: 390,
-    borderRadius: 28,
+    maxWidth: 362,
+    minHeight: 253,
+    borderRadius: 27,
     borderWidth: 3,
-    borderColor: "#A21CAF",
-    backgroundColor: "#F4E6D8",
-    paddingHorizontal: 20,
+    borderColor: "#650B89",
+    paddingHorizontal: 24,
     paddingTop: 20,
-    paddingBottom: 16,
+    paddingBottom: 14,
   },
   requestTitle: {
-    color: "#10345F",
-    fontSize: 42,
+    color: "#0E2D52",
+    fontSize: 22,
+    lineHeight: 22,
     fontWeight: "900",
     textAlign: "center",
   },
   requestSubText: {
-    marginTop: 8,
-    color: "#6B7280",
+    marginTop: 4,
+    color: "rgba(85, 55, 106, 0.65)",
     textAlign: "center",
-    fontSize: 15,
+    fontSize: 13,
+    lineHeight: 13,
     fontWeight: "700",
   },
   requestNameText: {
-    marginTop: 14,
+    marginTop: 30,
     color: "#111827",
     textAlign: "center",
-    fontSize: 20,
-    lineHeight: 26,
+    fontSize: 23,
+    lineHeight: 22,
     fontWeight: "900",
   },
   requestAttentionText: {
-    marginTop: 12,
-    color: "#DC2626",
-    textDecorationLine: "underline",
+    marginTop: 8,
+    color: "#D70B0B",
     textAlign: "center",
-    fontSize: 22,
-    fontWeight: "700",
+    fontSize: 12,
+    lineHeight: 22,
+    fontWeight: "600",
+    textShadowColor: "rgba(255, 255, 255, 0.76)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4.3,
+  },
+  requestAlertRule: {
+    alignSelf: "center",
+    marginTop: 2,
+    width: 201,
+    borderTopWidth: 2,
+    borderTopColor: "#E20000",
   },
   requestAcknowledgeBtn: {
-    marginTop: 16,
-    height: 52,
-    borderRadius: 14,
-    backgroundColor: "#0B2D57",
+    alignSelf: "center",
+    marginTop: 14,
+    width: 292,
+    height: 51,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  requestAcknowledgeBtnGradient: {
+    flex: 1,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#1C8ED8",
+    borderColor: "rgba(170, 195, 199, 0.4)",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
   },
   requestAcknowledgeText: {
-    color: "#FFFFFF",
+    color: "#E6E6E6",
     textAlign: "center",
-    fontSize: 16,
-    fontWeight: "900",
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "700",
   },
   modalWrap: {
     flex: 1,

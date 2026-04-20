@@ -10,7 +10,7 @@ import {
   Image,
   ActivityIndicator,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../lib/supabase";
 
@@ -20,6 +20,18 @@ type Contact = {
   color: string;
   iconName: keyof typeof Ionicons.glyphMap;
   imageUrl?: string | null;
+};
+
+type ShiftSupervisorRow = {
+  supervisor_id: string | null;
+  shift_start: string | null;
+};
+
+type SupervisorEmployeeRow = {
+  first_name?: string | null;
+  last_name?: string | null;
+  phone?: string | null;
+  profile_photo_path?: string | null;
 };
 
 const GOVERNMENT: Contact[] = [
@@ -113,23 +125,60 @@ function Section({ title, contacts }: { title: string; contacts: Contact[] }) {
 
 export default function PhoneCallsPage() {
   const router = useRouter();
+  const { supervisorId: supervisorIdParam } = useLocalSearchParams<{ supervisorId?: string }>();
 
   const [ssoContact, setSsoContact] = useState<Contact | null>(null);
   const [loadingSso, setLoadingSso] = useState(false);
 
   useEffect(() => {
-    const loadSsoSophie = async () => {
+    const loadSupervisorContact = async () => {
       setLoadingSso(true);
+
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user.id ?? null;
+
+      if (sessionError || !userId) {
+        setSsoContact(null);
+        setLoadingSso(false);
+        return;
+      }
+
+      let supervisorId = supervisorIdParam ?? null;
+
+      if (!supervisorId) {
+        const { data: shiftRows, error: shiftError } = await supabase
+          .from("shifts")
+          .select("supervisor_id, shift_start")
+          .eq("officer_id", userId)
+          .order("shift_start", { ascending: false })
+          .limit(10);
+
+        if (shiftError) {
+          console.error("loadSupervisorContact shift error:", shiftError);
+          setSsoContact(null);
+          setLoadingSso(false);
+          return;
+        }
+
+        supervisorId =
+          ((shiftRows ?? []) as ShiftSupervisorRow[]).find((shift) => Boolean(shift.supervisor_id))
+            ?.supervisor_id ?? null;
+      }
+
+      if (!supervisorId) {
+        setSsoContact(null);
+        setLoadingSso(false);
+        return;
+      }
 
       const { data, error } = await supabase
         .from("employees")
-        .select("first_name,last_name,phone,profile_photo_path,role,emp_id")
-        .eq("emp_id", "EMP002")
-        .eq("role", "Senior Security Officer")
+        .select("first_name,last_name,phone,profile_photo_path")
+        .eq("id", supervisorId)
         .maybeSingle();
 
       if (error) {
-        console.error("loadSsoSophie error:", error);
+        console.error("loadSupervisorContact employee error:", error);
         setSsoContact(null);
         setLoadingSso(false);
         return;
@@ -141,11 +190,12 @@ export default function PhoneCallsPage() {
         return;
       }
 
-      const imageUrl = await getProfilePhotoUrl(data.profile_photo_path ?? null);
+      const employee = data as SupervisorEmployeeRow;
+      const imageUrl = await getProfilePhotoUrl(employee.profile_photo_path ?? null);
 
       setSsoContact({
-        name: `${data.first_name || ""} ${data.last_name || ""}`.trim() || "Sophie",
-        number: data.phone || "",
+        name: `${employee.first_name || ""} ${employee.last_name || ""}`.trim() || "Supervisor",
+        number: employee.phone || "",
         color: "#7C3AED",
         iconName: "person-outline",
         imageUrl,
@@ -154,8 +204,8 @@ export default function PhoneCallsPage() {
       setLoadingSso(false);
     };
 
-    loadSsoSophie();
-  }, []);
+    void loadSupervisorContact();
+  }, [supervisorIdParam]);
 
   const companyContacts = useMemo<Contact[]>(() => {
     const supervisor: Contact =
