@@ -139,6 +139,40 @@ def _call_sealion_chat(messages, *, temperature=0.4):
     return content
 
 
+def _call_checklist_sealion_chat(messages, *, temperature=0.4):
+    api_key = os.getenv("SEALION_API_KEY")
+    base_url = os.getenv("SEALION_BASE_URL")
+    model = (os.getenv("CHECKLISTSEALION_MODEL") or os.getenv("SEALION_MODEL") or "").strip()
+
+    if not api_key or not base_url or not model:
+        raise RuntimeError(
+            "Missing SEALION_API_KEY / SEALION_BASE_URL / CHECKLISTSEALION_MODEL (or SEALION_MODEL fallback) in backend/.env"
+        )
+
+    url = base_url.rstrip("/") + "/chat/completions"
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    resp = requests.post(url, headers=headers, json=payload, timeout=60)
+
+    if resp.status_code >= 400:
+        raise RuntimeError(f"SeaLion API error {resp.status_code}: {resp.text}")
+
+    data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+    return content
+
+
 def generate_quiz_from_steps(*, category: str, title: str, steps: list, num_questions: int):
     # Build compact SOP text for prompt
     sop_lines = []
@@ -903,7 +937,7 @@ Rules:
 """.strip()
 
     try:
-        raw = _call_sealion_chat(
+        raw = _call_checklist_sealion_chat(
             [
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
@@ -944,7 +978,7 @@ Return the same count and same phases:
 }}
 """.strip()
     try:
-        raw = _call_sealion_chat(
+        raw = _call_checklist_sealion_chat(
             [
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
@@ -1028,7 +1062,7 @@ Rules:
     doc_sop_candidates = _candidate_actions_from_rows(doc_rows, early=False, incident_payload=incident_payload)
 
     try:
-        raw = _call_sealion_chat(
+        raw = _call_checklist_sealion_chat(
             [
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},

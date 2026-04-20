@@ -645,7 +645,11 @@ export default function CurrentIncidentScreen() {
 											<View style={[styles.checkbox, earlyChecked[item] ? styles.checkboxChecked : null]}>
 												{earlyChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
 											</View>
-											<Text style={[styles.lineItemText, earlyChecked[item] ? styles.lineItemTextChecked : null]}>
+											<Text
+												style={[styles.lineItemText, earlyChecked[item] ? styles.lineItemTextChecked : null]}
+												disableDynamicFontSize
+												adjustsFontSizeToFit={false}
+											>
 												{item}
 											</Text>
 										</Pressable>
@@ -698,7 +702,11 @@ export default function CurrentIncidentScreen() {
 											<View style={[styles.checkbox, sopChecked[item] ? styles.checkboxChecked : null]}>
 												{sopChecked[item] ? <Text style={styles.checkboxTick}>✓</Text> : null}
 											</View>
-											<Text style={[styles.lineItemText, sopChecked[item] ? styles.lineItemTextChecked : null]}>
+											<Text
+												style={[styles.lineItemText, sopChecked[item] ? styles.lineItemTextChecked : null]}
+												disableDynamicFontSize
+												adjustsFontSizeToFit={false}
+											>
 												{item}
 											</Text>
 										</Pressable>
