@@ -71,7 +71,7 @@ type UpcomingShift = {
 
 type ActiveIncidentRow = {
   incident_id: string;
-  incident_category: string | null;
+  incident_name: string | null;
   active_status: boolean | null;
   created_at: string | null;
 };
