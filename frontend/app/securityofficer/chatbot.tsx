@@ -1096,7 +1096,7 @@ export default function ChatBotPage() {
             ? {
                 ...reply,
                 answer: cleanBotAnswer(
-                  `${getFallbackAnswer(trimmedPrompt)}\n\nSEA-LION is unavailable right now, so this fallback SOP response is shown.`
+                  `${getFallbackAnswer(trimmedPrompt)}\n\n(Showing offline SOP guidance.)`
                 ),
                 loading: false,
               }
@@ -1265,7 +1265,10 @@ export default function ChatBotPage() {
         <Pressable style={styles.backButton} onPress={() => router.replace(`${appRoutePrefix}/home` as any)} hitSlop={10}>
           <ChevronLeft size={28} color="#FFFFFF" strokeWidth={3} />
         </Pressable>
-        <Text style={styles.headerTitle}>Chat Bot</Text>
+        <View style={styles.headerTitleWrap}>
+          <Image source={CONVO_BOT_IMAGE} style={styles.headerBotIcon} resizeMode="contain" />
+          <Text style={styles.headerTitle}>Chat Bot</Text>
+        </View>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -1345,7 +1348,7 @@ export default function ChatBotPage() {
               {reply.loading ? (
                 <View style={styles.loadingRow}>
                   <ActivityIndicator color="#16518E" />
-                  <Text style={styles.loadingText}>Checking SOP with SEA-LION...</Text>
+                  <Text style={styles.loadingText}>Loading...</Text>
                 </View>
               ) : (
                 <>
@@ -1411,7 +1414,7 @@ export default function ChatBotPage() {
             disabled={!input.trim() || isAsking}
             hitSlop={8}
           >
-            <SendHorizontal size={16} color="#FFFFFF" strokeWidth={2.6} />
+            {isAsking ? <ActivityIndicator color="#FFFFFF" /> : <SendHorizontal size={16} color="#FFFFFF" strokeWidth={2.6} />}
           </Pressable>
         </View>
       </View>
@@ -1445,7 +1448,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerTitle: {
-    flex: 1,
     color: "#FFFFFF",
     fontFamily: "Inter",
     fontStyle: "normal",
@@ -1453,7 +1455,17 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontWeight: "600",
     textAlign: "center",
-    marginHorizontal: 10,
+    marginLeft: 10,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerBotIcon: {
+    width: 30,
+    height: 30,
   },
   headerSpacer: {
     width: 40,
