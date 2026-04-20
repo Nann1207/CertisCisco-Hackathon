@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
+import { Animated, Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -39,6 +39,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   const acknowledgedIdsRef = useRef<Set<string>>(new Set());
   const dismissedMapRef = useRef<Record<string, string>>({});
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const buttonRotate = useRef(new Animated.Value(0)).current;
   const storageKey = useMemo(() => {
     if (!userId) return null;
     return `${STORAGE_KEY_PREFIX}:${userId}`;
@@ -237,6 +238,31 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     return () => stopVibration();
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible) {
+      buttonRotate.setValue(0);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.timing(buttonRotate, {
+        toValue: 1,
+        duration: 2200,
+        useNativeDriver: true,
+      })
+    );
+
+    loop.start();
+    return () => {
+      loop.stop();
+    };
+  }, [buttonRotate, visible]);
+
+  const buttonBorderRotate = buttonRotate.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
   const onAcknowledge = async () => {
     if (!activeIncident) return;
 
@@ -310,9 +336,26 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
             to this incident.
         </Text>
 
-          <Pressable style={styles.ackButton} onPress={() => { void onAcknowledge(); }}>
-            <Text style={styles.ackButtonText}>{"I ACKNOWLEDGE\nTHIS ASSIGNMENT"}</Text>
-          </Pressable>
+          <View style={styles.ackButtonShell}>
+            <View style={styles.ackButtonMask}>
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.ackButtonBorderSpinner, { transform: [{ rotate: buttonBorderRotate }] }]}
+              >
+                <LinearGradient
+                  colors={["rgba(255,255,255,0)", "#71D2FF", "#F4FAFF", "#71D2FF", "rgba(255,255,255,0)"]}
+                  locations={[0, 0.22, 0.5, 0.78, 1]}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  style={styles.ackButtonBorderGlow}
+                />
+              </Animated.View>
+              <View pointerEvents="none" style={styles.ackButtonMaskFill} />
+              <Pressable style={styles.ackButton} onPress={() => { void onAcknowledge(); }}>
+                <Text style={styles.ackButtonText}>{"I ACKNOWLEDGE\nTHIS ASSIGNMENT"}</Text>
+              </Pressable>
+            </View>
+          </View>
         </LinearGradient>
       </View>
     </Modal>
@@ -373,16 +416,44 @@ const styles = StyleSheet.create({
     textDecorationLine: "underline",
     fontWeight: "700",
   },
-  ackButton: {
+  ackButtonShell: {
     marginTop: 18,
+  },
+  ackButtonMask: {
+    position: "relative",
     height: 52,
     borderRadius: 14,
+    overflow: "hidden",
+  },
+  ackButtonBorderSpinner: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    width: 176,
+    height: 176,
+    marginLeft: -88,
+    marginTop: -88,
+  },
+  ackButtonBorderGlow: {
+    flex: 1,
+  },
+  ackButtonMaskFill: {
+    position: "absolute",
+    top: 1,
+    right: 1,
+    bottom: 1,
+    left: 1,
+    borderRadius: 13,
     backgroundColor: "#0B2D57",
-    borderWidth: 1,
-    borderColor: "#1C8ED8",
+  },
+  ackButton: {
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
+    zIndex: 1,
   },
   ackButtonText: {
     fontSize: 16,

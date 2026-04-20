@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
   Alert,
@@ -367,18 +366,7 @@ export default function SsoAddBackupPage() {
       return;
     }
 
-      // Clear persisted acknowledgement so the supervisor attention pulse
-      // is stopped when returning to the incident view.
-      try {
-        if (incidentId) {
-          const key = `sso_backup_ack:${incidentId}`;
-          await AsyncStorage.removeItem(key);
-        }
-      } catch (err) {
-        console.warn("[sso] failed to clear backup ack state:", err);
-      }
-
-      router.replace(`/sso/incident-after-assign?incidentId=${incidentId}`);
+    router.replace(`/sso/incident-after-assign?incidentId=${incidentId}`);
   };
 
   return (

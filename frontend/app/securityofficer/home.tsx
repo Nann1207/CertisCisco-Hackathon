@@ -31,6 +31,7 @@ import { generateShiftNotifications, type NotificationItem } from "../../lib/not
 import { styles } from "../../styles/securityofficer/home.styles";
 
 const DISPLAY_TIME_ZONE = "Asia/Singapore";
+const ASSIGNMENT_ACK_STORAGE_PREFIX = "assignment_acknowledged_ids";
 
 type Profile = {
   id: string;
@@ -240,6 +241,7 @@ export default function Home() {
 
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       const userId = sessionData.session?.user.id;
+      let acknowledgedAssignmentIds = new Set<string>();
       if (userId) {
         setAuthUserId(userId);
         try {
@@ -247,8 +249,12 @@ export default function Home() {
           const stored = await AsyncStorage.getItem(key);
           const parsed = stored ? (JSON.parse(stored) as Record<string, string>) : {};
           setDismissedMap(parsed);
+
+          const ackKey = `${ASSIGNMENT_ACK_STORAGE_PREFIX}:${userId}`;
+          const storedAckIds = await AsyncStorage.getItem(ackKey);
+          acknowledgedAssignmentIds = new Set<string>(storedAckIds ? (JSON.parse(storedAckIds) as string[]) : []);
         } catch (err) {
-          console.warn("Failed loading dismissed notifications:", err);
+          console.warn("Failed loading officer home storage:", err);
         }
       }
 
@@ -398,6 +404,7 @@ export default function Home() {
           } satisfies ActiveHomeIncident;
         })
         .filter((item): item is ActiveHomeIncident => Boolean(item))
+        .filter((item) => acknowledgedAssignmentIds.has(item.assignment_id))
         .sort((a, b) => toMillis(b.assigned_at) - toMillis(a.assigned_at));
 
       if (!alive) return;

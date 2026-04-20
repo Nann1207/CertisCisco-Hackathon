@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
   Alert,
@@ -21,8 +20,6 @@ import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
 import { supabase } from "../../lib/supabase";
-
-const BACKUP_ACK_STORAGE_PREFIX = "sso_backup_ack";
 
 type IncidentRow = {
   incident_id: string;
@@ -92,6 +89,7 @@ export default function SsoIncidentAfterAssignPage() {
   const [cctvUris, setCctvUris] = useState<string[]>([]);
 
   const addBackupPulse = useRef(new Animated.Value(0)).current;
+  const addBackupRotate = useRef(new Animated.Value(0)).current;
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const acknowledgedBackupRequestIdsRef = useRef<Set<string>>(new Set());
 
@@ -125,6 +123,30 @@ export default function SsoIncidentAfterAssignPage() {
       loop.stop();
     };
   }, [addBackupPulse, backupAttentionActive]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const spin = () => {
+      addBackupRotate.setValue(0);
+
+      Animated.timing(addBackupRotate, {
+        toValue: 1,
+        duration: 3600,
+        useNativeDriver: true,
+        isInteraction: false,
+      }).start(({ finished }) => {
+        if (!finished || cancelled) return;
+        spin();
+      });
+    };
+
+    spin();
+    return () => {
+      cancelled = true;
+      addBackupRotate.stopAnimation();
+    };
+  }, [addBackupRotate, backupAttentionActive, showBackupRequestModal]);
 
   useEffect(() => {
     let alive = true;
@@ -246,30 +268,6 @@ export default function SsoIncidentAfterAssignPage() {
   }, [incidentId]);
 
   useEffect(() => {
-    let active = true;
-    const initFromStorage = async () => {
-      if (!incidentId) return;
-      try {
-        const key = `${BACKUP_ACK_STORAGE_PREFIX}:${incidentId}`;
-        const stored = await AsyncStorage.getItem(key);
-        if (!active) return;
-        if (stored) {
-          // Supervisor has previously acknowledged this request and
-          // backup assignment is pending; resume the attention pulse.
-          setBackupAttentionActive(true);
-        }
-      } catch (err) {
-        console.warn("[sso] failed to read backup ack state:", err);
-      }
-    };
-
-    void initFromStorage();
-    return () => {
-      active = false;
-    };
-  }, [incidentId]);
-
-  useEffect(() => {
     let watcher: Location.LocationSubscription | null = null;
     let active = true;
 
@@ -326,9 +324,9 @@ export default function SsoIncidentAfterAssignPage() {
     inputRange: [0, 0.15, 0.85, 1],
     outputRange: [0.35, 0.95, 0.95, 0.35],
   });
-  const addBackupGlowTranslate = addBackupPulse.interpolate({
+  const addBackupBorderRotate = addBackupRotate.interpolate({
     inputRange: [0, 1],
-    outputRange: [-170, 170],
+    outputRange: ["0deg", "360deg"],
   });
   const isTwoOfficerLayout = assignedOfficers.length === 2;
 
@@ -357,9 +355,6 @@ export default function SsoIncidentAfterAssignPage() {
   };
 
   const onOpenAddBackup = () => {
-    // Keep the attention pulse active while the supervisor navigates
-    // to the add-backup screen; we'll clear it when backup officers
-    // are actually assigned in `add-backup.tsx`.
     router.push(`/sso/add-backup?incidentId=${incidentId}`);
   };
 
@@ -468,43 +463,44 @@ export default function SsoIncidentAfterAssignPage() {
 
           <View style={styles.actionRowTop}>
             <Animated.View style={[styles.addBackupAttentionWrap, backupAttentionActive ? { transform: [{ scale: addBackupScale }] } : null]}>
-              {backupAttentionActive ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.addBackupGlowRing,
+                  backupAttentionActive
+                    ? {
+                        opacity: addBackupGlowOpacity,
+                        transform: [{ scale: addBackupGlowScale }],
+                      }
+                    : styles.addBackupGlowRingIdle,
+                ]}
+              >
                 <Animated.View
-                  pointerEvents="none"
                   style={[
-                    styles.addBackupGlowRing,
+                    styles.addBackupGlowSweep,
                     {
-                      opacity: addBackupGlowOpacity,
-                      transform: [{ scale: addBackupGlowScale }],
+                      transform: [{ rotate: addBackupBorderRotate }],
                     },
                   ]}
                 >
-                  <Animated.View
-                    style={[
-                      styles.addBackupGlowSweep,
-                      {
-                        transform: [{ translateX: addBackupGlowTranslate }],
-                      },
+                  <LinearGradient
+                    colors={[
+                      "rgba(255,255,255,0)",
+                      "rgba(255,255,255,0.4)",
+                      "#431068",
+                      "#e23500",
+                      "#5e24fc",
+                      "rgba(255,255,255,0.25)",
+                      "rgba(255,255,255,0)",
                     ]}
-                  >
-                    <LinearGradient
-                      colors={[
-                        "rgba(255,0,0,0)",
-                        "rgba(255,59,59,0.85)",
-                        "rgba(255,255,255,0.9)",
-                        "rgba(168,85,247,1)",
-                        "rgba(255,255,255,0.88)",
-                        "rgba(59,130,246,0.95)",
-                        "rgba(59,130,246,0)",
-                      ]}
-                      locations={[0, 0.14, 0.28, 0.48, 0.62, 0.78, 1]}
-                      start={{ x: 0, y: 0.5 }}
-                      end={{ x: 1, y: 0.5 }}
-                      style={styles.addBackupGlowSweepGradient}
-                    />
-                  </Animated.View>
+                    locations={[0, 0.1, 0.34, 0.6, 0.85, 0.94, 1]}
+                    start={{ x: 0.5, y: 0 }}
+                    end={{ x: 0.5, y: 1 }}
+                    style={styles.addBackupGlowSweepGradient}
+                  />
                 </Animated.View>
-              ) : null}
+                <View style={styles.addBackupGlowMaskFill} />
+              </Animated.View>
               <Pressable style={[styles.actionChip, styles.actionChipWarm]} onPress={onOpenAddBackup}>
                 <BellRing size={16} color="#9C2222" />
                 <Text style={styles.actionChipWarmText}>Add Backup</Text>
@@ -591,40 +587,8 @@ export default function SsoIncidentAfterAssignPage() {
 
             <Pressable
               style={styles.requestAcknowledgeBtn}
-              onPress={async () => {
-                if (backupRequestDetails?.assignmentId) {
-                  const { error } = await supabase
-                    .from("incident_assignments")
-                    .update({
-                      backup_requested: false,
-                      backup_amount: null,
-                      backup_reason: null,
-                    })
-                    .eq("assignment_id", backupRequestDetails.assignmentId);
-
-                  if (error) {
-                    Alert.alert("Acknowledge failed", error.message);
-                    return;
-                  }
-                }
-
-                // Persist that supervisor acknowledged the request so the
-                // attention pulse can survive navigation/reload until
-                // backup officers are actually assigned.
-                try {
-                  if (incidentId) {
-                    const key = `${BACKUP_ACK_STORAGE_PREFIX}:${incidentId}`;
-                    await AsyncStorage.setItem(
-                      key,
-                      JSON.stringify({ acknowledgedAt: new Date().toISOString(), assignmentId: backupRequestDetails?.assignmentId ?? null })
-                    );
-                  }
-                } catch (err) {
-                  console.warn("[sso] failed to persist backup ack:", err);
-                }
-
+              onPress={() => {
                 setShowBackupRequestModal(false);
-                // Start the attention animation once acknowledged.
                 setBackupAttentionActive(true);
                 if (backupRequestDetails?.assignmentId) {
                   setAcknowledgedBackupRequestIds((prev) => {
@@ -804,13 +768,12 @@ async function refreshAssignedOfficers(
       reason,
     });
     setShowBackupRequestModal(true);
-    // Keep the attention animation off while the modal prompts the supervisor.
-    // The animation should begin after the supervisor acknowledges the request.
-    setBackupAttentionActive(false);
+    setBackupAttentionActive(true);
     return;
   }
 
   setBackupRequestDetails(null);
+  setBackupAttentionActive(false);
 }
 
 function OfficerAvatar({ profilePhotoUrl, officerName }: { profilePhotoUrl: string | null; officerName: string }) {
@@ -966,30 +929,45 @@ const styles = StyleSheet.create({
   },
   addBackupGlowRing: {
     position: "absolute",
-    top: -7,
-    bottom: -7,
-    left: -10,
-    right: -10,
+    top: -3,
+    bottom: -3,
+    left: -3,
+    right: -3,
     borderRadius: 999,
-    backgroundColor: "rgba(168, 85, 247, 0.18)",
+    backgroundColor: "rgba(70, 15, 122, 0.18)",
     overflow: "hidden",
     shadowColor: "#A855F7",
-    shadowOpacity: 0.92,
-    shadowRadius: 30,
+    shadowOpacity: 0.55,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 0 },
-    elevation: 18,
+    elevation: 10,
+  },
+  addBackupGlowRingIdle: {
+    opacity: 0.72,
   },
   addBackupGlowSweep: {
     position: "absolute",
-    top: -16,
-    bottom: -16,
-    left: -28,
-    width: 68,
-    justifyContent: "center",
+    top: "50%",
+    left: "50%",
+    width: 148,
+    height: 148,
+    marginLeft: -74,
+    marginTop: -74,
+    alignItems: "center",
   },
   addBackupGlowSweepGradient: {
-    flex: 1,
+    width: 34,
+    height: 84,
     borderRadius: 999,
+  },
+  addBackupGlowMaskFill: {
+    position: "absolute",
+    top: 1,
+    right: 1,
+    bottom: 1,
+    left: 1,
+    borderRadius: 999,
+    backgroundColor: "#ffa15e",
   },
   actionChip: {
     minHeight: 30,
