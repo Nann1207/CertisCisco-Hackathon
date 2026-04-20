@@ -102,6 +102,27 @@ cd frontend
 npm install
 ```
 
+To prevent errors: Install these additional frontend packages used by the project:
+
+```bash
+npm install @supabase/supabase-js
+npm install lucide-react-native
+npm install @expo/vector-icons
+npm install @react-navigation/native @react-navigation/bottom-tabs @react-navigation/elements
+npm install react-native-maps react-native-svg
+npm install expo-location
+npm install react-native-safe-area-context react-native-screens react-native-gesture-handler react-native-reanimated
+npm install react-native-qrcode-svg react-native-svg
+npx expo install expo-image-picker
+npx expo install expo-video
+npx expo install expo-notifications
+npx expo install expo-device
+npx expo install react-native-modal
+npm i react-native-image-zoom-viewer
+npx expo install react-native-webview
+npm i react-native-youtube-iframe
+```
+
 3. Create or update `frontend/.env` with the required Expo public variables:
 
 ```env
