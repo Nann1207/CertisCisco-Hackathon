@@ -276,7 +276,15 @@ function applySourceCasing(source: string, translated: string) {
   return translated;
 }
 
-export async function translateWithGoogle(text: string, language: LanguagePreference): Promise<string> {
+function showTranslationDownAlert(message: string, technicalError?: string) {
+  if (translationDownAlertShown) return;
+  translationDownAlertShown = true;
+
+  const detail = __DEV__ && technicalError ? `\n\nTechnical details: ${technicalError}` : "";
+  Alert.alert("Translation currently down", `${message}${detail}`);
+}
+
+export async function translateText(text: string, language: LanguagePreference): Promise<string> {
   const normalized = text.trim();
   if (!normalized || language === "English") {
     return text;
@@ -316,24 +324,17 @@ export async function translateWithGoogle(text: string, language: LanguagePrefer
       }),
     });
   } catch {
-    if (!translationDownAlertShown) {
-      translationDownAlertShown = true;
-      Alert.alert(
-        "Translation currently down",
-        "Translation is currently down. Your content is still available in English, and we will restore translation shortly."
-      );
-    }
+    showTranslationDownAlert(
+      "Translation is currently down. Your content is still available in English, and we will restore translation shortly."
+    );
     return text;
   }
 
   if (!response.ok) {
-    if (!translationDownAlertShown) {
-      translationDownAlertShown = true;
-      Alert.alert(
-        "Translation currently down",
-        "Translation is currently down. Your content is still available in English, and we will restore translation shortly."
-      );
-    }
+    showTranslationDownAlert(
+      "Translation is currently down. Your content is still available in English, and we will restore translation shortly.",
+      `HTTP ${response.status}`
+    );
     return text;
   }
 
@@ -341,17 +342,15 @@ export async function translateWithGoogle(text: string, language: LanguagePrefer
     translatedText?: string;
     translationStatus?: string;
     userMessage?: string;
+    technicalError?: string;
   };
 
   if (body.translationStatus === "down") {
-    if (!translationDownAlertShown) {
-      translationDownAlertShown = true;
-      Alert.alert(
-        "Translation currently down",
-        body.userMessage ??
-          "Translation is currently down. Your content is still available in English, and we will restore translation shortly."
-      );
-    }
+    showTranslationDownAlert(
+      body.userMessage ??
+        "Translation is currently down. Your content is still available in English, and we will restore translation shortly.",
+      body.technicalError
+    );
     return text;
   }
 
@@ -361,3 +360,5 @@ export async function translateWithGoogle(text: string, language: LanguagePrefer
   translationCache.set(cacheKey, translated);
   return translated;
 }
+
+export const translateWithGoogle = translateText;

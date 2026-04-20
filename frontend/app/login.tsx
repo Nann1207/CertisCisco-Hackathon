@@ -144,7 +144,11 @@ export default function LoginScreen() {
         />
 
         
-        <Pressable style={[styles.langBtn, { top: langTop, right: langRight }]} hitSlop={12} onPress={() => {}}>
+        <Pressable
+          style={[styles.langBtn, { top: langTop, right: langRight }]}
+          hitSlop={12}
+          onPress={() => router.push("/translate")}
+        >
           <Image
             source={require("../assets/translation.png")}
             style={[styles.langIcon, { width: langSize, height: langSize }]}

@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import Text from "../../../components/TranslatedText";
@@ -24,6 +25,9 @@ type SupervisorIncidentAlertModalProps = {
   supervisorId?: string | null;
 };
 
+const STORAGE_KEY_PREFIX = "supervisor_incident_acknowledged_ids";
+const DISMISS_STORAGE_KEY_PREFIX = "supervisor_incident_dismissed_map";
+
 export default function SupervisorIncidentAlertModal({ supervisorId = null }: SupervisorIncidentAlertModalProps) {
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
@@ -31,67 +35,96 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   const [visible, setVisible] = useState(false);
   const [activeIncident, setActiveIncident] = useState<AlertIncident | null>(null);
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
+  const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
   const acknowledgedIdsRef = useRef<Set<string>>(new Set());
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const storageKey = useMemo(() => {
+    if (!userId) return null;
+    return `${STORAGE_KEY_PREFIX}:${userId}`;
+  }, [userId]);
+  const storageDismissKey = useMemo(() => {
+    if (!userId) return null;
+    return `${DISMISS_STORAGE_KEY_PREFIX}:${userId}`;
+  }, [userId]);
 
   const stopVibration = () => {
     Vibration.cancel();
   };
 
-  const fetchActiveIncidents = useCallback(async (activeUserId: string, ackSet: Set<string>) => {
-    const { data, error } = await supabase
-      .from("incidents")
-      .select("incident_id, incident_category, location_name, location_description, active_status, created_at")
-      .eq("supervisor_id", activeUserId)
-      .eq("active_status", true)
-      .order("created_at", { ascending: false })
-      .limit(20);
+  const fetchActiveIncidents = useCallback(
+    async (activeUserId: string, ackSet: Set<string>, dismissed: Record<string, string> = {}) => {
+      const { data, error } = await supabase
+        .from("incidents")
+        .select("incident_id, incident_category, location_name, location_description, active_status, created_at")
+        .eq("supervisor_id", activeUserId)
+        .eq("active_status", true)
+        .order("created_at", { ascending: false })
+        .limit(20);
 
-    if (error) {
-      console.warn("[SupervisorIncidentAlertModal] incidents query failed", error.message);
-      return;
-    }
+      if (error) {
+        console.warn("[SupervisorIncidentAlertModal] incidents query failed", error.message);
+        return;
+      }
 
-    const rows = (data as IncidentRow[] | null) ?? [];
-    const activeIds = new Set(rows.map((row) => row.incident_id).filter(Boolean));
+      const rows = (data as IncidentRow[] | null) ?? [];
+      const activeIds = new Set(rows.map((row) => row.incident_id).filter(Boolean));
 
-    const prunedAckSet = new Set(Array.from(ackSet).filter((id) => activeIds.has(id)));
-    if (prunedAckSet.size !== ackSet.size) {
-      acknowledgedIdsRef.current = prunedAckSet;
-      setAcknowledgedIds(prunedAckSet);
-    }
+      const prunedAckSet = new Set(Array.from(ackSet).filter((id) => activeIds.has(id)));
+      if (prunedAckSet.size !== ackSet.size) {
+        acknowledgedIdsRef.current = prunedAckSet;
+        setAcknowledgedIds(prunedAckSet);
+        await AsyncStorage.setItem(`${STORAGE_KEY_PREFIX}:${activeUserId}`, JSON.stringify(Array.from(prunedAckSet)));
+      }
 
-    const effectiveAckSet = prunedAckSet.size !== ackSet.size ? prunedAckSet : ackSet;
-    const next = rows.find((row) => row.incident_id && !effectiveAckSet.has(row.incident_id));
+      const prunedDismissed = Object.fromEntries(Object.entries(dismissed).filter(([id]) => activeIds.has(id)));
+      if (JSON.stringify(prunedDismissed) !== JSON.stringify(dismissed)) {
+        setDismissedMap(prunedDismissed);
+        await AsyncStorage.setItem(`${DISMISS_STORAGE_KEY_PREFIX}:${activeUserId}`, JSON.stringify(prunedDismissed));
+      }
 
-    if (!next) {
-      setActiveIncident(null);
-      setVisible(false);
-      stopVibration();
-      return;
-    }
+      const effectiveAckSet = prunedAckSet.size !== ackSet.size ? prunedAckSet : ackSet;
+      const next = rows.find((row) => row.incident_id && !effectiveAckSet.has(row.incident_id) && !prunedDismissed[row.incident_id]);
 
-    const category = (next.incident_category ?? "New Incident").toUpperCase();
-    const location = (next.location_name ?? next.location_description ?? "Location Pending").trim();
+      if (!next) {
+        setActiveIncident(null);
+        setVisible(false);
+        stopVibration();
+        return;
+      }
 
-    setActiveIncident({
-      incidentId: next.incident_id,
-      title: `${category}${location ? ` AT ${location.toUpperCase()}` : ""}`,
-      locationText: location || "Location Pending",
-    });
-    setVisible(true);
-  }, []);
+      const category = (next.incident_category ?? "New Incident").toUpperCase();
+      const location = (next.location_name ?? next.location_description ?? "Location Pending").trim();
+
+      setActiveIncident({
+        incidentId: next.incident_id,
+        title: `${category}${location ? ` AT ${location.toUpperCase()}` : ""}`,
+        locationText: location || "Location Pending",
+      });
+      setVisible(true);
+    },
+    []
+  );
 
   useEffect(() => {
     let alive = true;
 
     if (supervisorId) {
       setUserId(supervisorId);
-      const ids = new Set<string>();
-      acknowledgedIdsRef.current = ids;
-      setAcknowledgedIds(ids);
-      setLoading(false);
-      void fetchActiveIncidents(supervisorId, ids);
+      void (async () => {
+        const key = `${STORAGE_KEY_PREFIX}:${supervisorId}`;
+        const stored = await AsyncStorage.getItem(key);
+        const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
+
+        const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${supervisorId}`;
+        const storedDismissed = await AsyncStorage.getItem(dKey);
+        const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
+
+        acknowledgedIdsRef.current = ids;
+        setAcknowledgedIds(ids);
+        setDismissedMap(dismissed);
+        setLoading(false);
+        await fetchActiveIncidents(supervisorId, ids, dismissed);
+      })();
       return () => {
         alive = false;
         stopVibration();
@@ -111,11 +144,19 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
         return;
       }
 
-      const ids = new Set<string>();
+      const key = `${STORAGE_KEY_PREFIX}:${currentUserId}`;
+      const stored = await AsyncStorage.getItem(key);
+      const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
+
+      const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${currentUserId}`;
+      const storedDismissed = await AsyncStorage.getItem(dKey);
+      const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
 
       if (!alive) return;
+      acknowledgedIdsRef.current = ids;
       setAcknowledgedIds(ids);
-      await fetchActiveIncidents(currentUserId, ids);
+      setDismissedMap(dismissed);
+      await fetchActiveIncidents(currentUserId, ids, dismissed);
       if (alive) setLoading(false);
     };
 
@@ -134,10 +175,17 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
         return;
       }
 
-      const ids = new Set<string>();
+      const key = `${STORAGE_KEY_PREFIX}:${nextUserId}`;
+      const stored = await AsyncStorage.getItem(key);
+      const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
+
+      const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${nextUserId}`;
+      const storedDismissed = await AsyncStorage.getItem(dKey);
+      const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
       acknowledgedIdsRef.current = ids;
       setAcknowledgedIds(ids);
-      await fetchActiveIncidents(nextUserId, ids);
+      setDismissedMap(dismissed);
+      await fetchActiveIncidents(nextUserId, ids, dismissed);
     });
 
     return () => {
@@ -161,7 +209,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
           filter: `supervisor_id=eq.${userId}`,
         },
         async () => {
-          await fetchActiveIncidents(userId, acknowledgedIdsRef.current);
+          await fetchActiveIncidents(userId, acknowledgedIdsRef.current, dismissedMap);
         }
       )
       .subscribe();
@@ -169,7 +217,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchActiveIncidents, loading, userId]);
+  }, [fetchActiveIncidents, loading, userId, dismissedMap]);
 
   useEffect(() => {
     if (!visible) {
@@ -189,9 +237,37 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     acknowledgedIdsRef.current = next;
     setAcknowledgedIds(next);
 
+    if (storageKey) {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
+    }
+
+    if (storageDismissKey) {
+      const nextDismissed = { ...dismissedMap };
+      delete nextDismissed[activeIncident.incidentId];
+      setDismissedMap(nextDismissed);
+      await AsyncStorage.setItem(storageDismissKey, JSON.stringify(nextDismissed));
+    }
+
     setVisible(false);
     stopVibration();
     router.push(`/sso/incident-before-assign?incidentId=${activeIncident.incidentId}`);
+  };
+
+  const onDismiss = async () => {
+    if (!activeIncident) {
+      setVisible(false);
+      stopVibration();
+      return;
+    }
+
+    const id = activeIncident.incidentId;
+    const next = { ...dismissedMap, [id]: new Date().toISOString() };
+    setDismissedMap(next);
+    const key = storageDismissKey ?? (userId ? `${DISMISS_STORAGE_KEY_PREFIX}:${userId}` : null);
+    if (key) await AsyncStorage.setItem(key, JSON.stringify(next));
+
+    setVisible(false);
+    stopVibration();
   };
 
   return (
@@ -202,7 +278,9 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
       presentationStyle="overFullScreen"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={() => {}}
+      onRequestClose={() => {
+        void onDismiss();
+      }}
     >
       <View style={styles.backdrop}>
         <LinearGradient

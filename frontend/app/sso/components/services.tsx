@@ -11,6 +11,7 @@ import {
 import { useRouter } from "expo-router";
 import {
   Bell,
+  Bot,
   CalendarDays,
   CreditCard,
   FileText,
@@ -100,7 +101,7 @@ export default function ServicesModal({ visible, onClose }: ServicesModalProps) 
     { id: "sops", label: "SOPs", Icon: ListChecks, href: "/sso/sop" },
     { id: "settings", label: "Settings", Icon: Settings, href: "/sso/settings" },
     { id: "languages", label: "Languages", Icon: Languages, href: "/sso/languages" },
-    { id: "translate", label: "Translate", Icon: Languages, href: "/sso/translate" },
+    { id: "translate", label: "Translate", Icon: Bot, href: "/sso/chatbot" },
     { id: "profile", label: "Profile", Icon: UserCircle2, href: "/sso/profile" },
     {
       id: "logout",

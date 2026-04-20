@@ -11,6 +11,7 @@ import {
 	TextInput,
 	View,
 } from "react-native";
+import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { ChevronDown, ChevronLeft } from "lucide-react-native";
@@ -70,12 +71,65 @@ const INCIDENT_CATEGORIES = [
 	"Suspicious Person",
 ] as const;
 
+function getDefaultIncidentReportApiUrl() {
+	const configuredChecklistUrl = process.env.EXPO_PUBLIC_INCIDENT_CHECKLIST_API_URL?.trim();
+	if (configuredChecklistUrl) {
+		return configuredChecklistUrl.replace(
+			/\/incident\/checklist\/generate\/?$/,
+			"/incident/report/generate"
+		);
+	}
+
+	const hostUri = (Constants.expoConfig as { hostUri?: string } | null)?.hostUri;
+	const host = hostUri?.split(":")[0] ?? "localhost";
+	return `http://${host}:5001/incident/report/generate`;
+}
+
+const INCIDENT_REPORT_API_URL =
+	process.env.EXPO_PUBLIC_INCIDENT_REPORT_API_URL ?? getDefaultIncidentReportApiUrl();
+
+function parseChecklistActions(raw: string | string[] | undefined): string[] {
+	const serialized = Array.isArray(raw) ? raw[0] : raw;
+	if (!serialized) return [];
+
+	try {
+		const parsed = JSON.parse(serialized);
+		if (!Array.isArray(parsed)) return [];
+
+		const actions: string[] = [];
+		const seen = new Set<string>();
+		for (const item of parsed) {
+			const text = typeof item === "string" ? item.trim() : "";
+			if (!text) continue;
+			const key = text.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			actions.push(text);
+		}
+		return actions;
+	} catch {
+		return [];
+	}
+}
+
 export default function CreateReportScreen() {
 	const router = useRouter();
-	const { incidentId, reportType: routeReportType } = useLocalSearchParams<{ incidentId?: string; reportType?: string }>();
+	const {
+		incidentId,
+		reportType: routeReportType,
+		checkedEarlyActions: routeCheckedEarlyActions,
+		checkedSopActions: routeCheckedSopActions,
+	} = useLocalSearchParams<{
+		incidentId?: string;
+		reportType?: string;
+		checkedEarlyActions?: string;
+		checkedSopActions?: string;
+	}>();
 
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
+	const [draftGenerating, setDraftGenerating] = useState(false);
+	const [draftHydrated, setDraftHydrated] = useState(false);
 
 	const [reportType, setReportType] = useState<ReportType>(
 		routeReportType === "Resolved" ? "Resolved" : "Handover"
@@ -95,6 +149,21 @@ export default function CreateReportScreen() {
 
 	const [now, setNow] = useState(new Date());
 
+	const selectedChecklistActions = useMemo(() => {
+		const early = parseChecklistActions(routeCheckedEarlyActions);
+		const sop = parseChecklistActions(routeCheckedSopActions);
+		const merged = [...early, ...sop];
+		const deduped: string[] = [];
+		const seen = new Set<string>();
+		for (const item of merged) {
+			const key = item.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			deduped.push(item);
+		}
+		return deduped;
+	}, [routeCheckedEarlyActions, routeCheckedSopActions]);
+
 	useEffect(() => {
 		const timer = setInterval(() => {
 			setNow(new Date());
@@ -110,6 +179,10 @@ export default function CreateReportScreen() {
 			setReportType("Handover");
 		}
 	}, [routeReportType]);
+
+	useEffect(() => {
+		setDraftHydrated(false);
+	}, [incidentId, routeReportType, routeCheckedEarlyActions, routeCheckedSopActions]);
 
 	useEffect(() => {
 		let alive = true;
@@ -251,6 +324,80 @@ export default function CreateReportScreen() {
 	const startTimeText = createdAtDate ? formatTime(createdAtDate) : "-";
 	const nowTimeText = formatTime(now);
 
+	useEffect(() => {
+		if (loading || draftHydrated || !selectedIncident) return;
+
+		let active = true;
+		const generateDraft = async () => {
+			setDraftGenerating(true);
+			try {
+				const response = await fetch(INCIDENT_REPORT_API_URL, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						report_type: reportType,
+						incident: {
+							incident_id: selectedIncident.id,
+							incident_category: selectedIncident.incident_category ?? null,
+							location_unit_no: selectedIncident.location_unit_no ?? null,
+							location_description: selectedIncident.location_description ?? null,
+							created_at: selectedIncident.created_at ?? null,
+						},
+						checked_actions: selectedChecklistActions,
+						duty_officer_name: dutyOfficerName,
+						supervisor_name: supervisorName,
+					}),
+				});
+
+				const body = (await response.json().catch(() => ({}))) as {
+					incident_description?: unknown;
+					handover_instructions?: unknown;
+					error?: unknown;
+				};
+
+				if (!response.ok) {
+					const errorMessage =
+						typeof body.error === "string"
+							? body.error
+							: `Incident report draft API failed (${response.status})`;
+					throw new Error(errorMessage);
+				}
+				if (!active) return;
+
+				const descriptionDraft =
+					typeof body.incident_description === "string" ? body.incident_description.trim() : "";
+				const handoverDraft =
+					typeof body.handover_instructions === "string" ? body.handover_instructions.trim() : "";
+
+				if (descriptionDraft) {
+					setIncidentDescription((prev) => (prev.trim() ? prev : descriptionDraft));
+				}
+				if (handoverDraft) {
+					setHandoverInstructions((prev) => (prev.trim() ? prev : handoverDraft));
+				}
+			} catch (error) {
+				console.warn("[createReport] incident report draft fallback:", error);
+			} finally {
+				if (!active) return;
+				setDraftGenerating(false);
+				setDraftHydrated(true);
+			}
+		};
+
+		void generateDraft();
+		return () => {
+			active = false;
+		};
+	}, [
+		draftHydrated,
+		dutyOfficerName,
+		loading,
+		reportType,
+		selectedChecklistActions,
+		selectedIncident,
+		supervisorName,
+	]);
+
 	const onSubmit = async () => {
 		if (saving) return;
 
@@ -306,20 +453,25 @@ export default function CreateReportScreen() {
 			return;
 		}
 
-		const { error: closeAssignmentError } = await supabase
-			.from("incident_assignments")
-			.update({ active_status: false })
-			.eq("officer_id", authUserId)
-			.eq("incident_id", selectedIncident.id)
-			.eq("active_status", true);
+		if (reportType === "Resolved") {
+			const { error: closeAssignmentError } = await supabase
+				.from("incident_assignments")
+				.update({ active_status: false })
+				.eq("officer_id", authUserId)
+				.eq("incident_id", selectedIncident.id)
+				.eq("active_status", true);
 
-		setSaving(false);
+			setSaving(false);
 
-		if (closeAssignmentError) {
-			Alert.alert(
-				"Submitted with warning",
-				"Report was submitted, but the assignment could not be closed automatically. Please refresh and try again."
-			);
+			if (closeAssignmentError) {
+				Alert.alert(
+					"Submitted with warning",
+					"Report was submitted, but the assignment could not be closed automatically. Please refresh and try again."
+				);
+				return;
+			}
+		} else {
+			setSaving(false);
 		}
 
 		setSubmittedReportType(reportType);
@@ -411,6 +563,15 @@ export default function CreateReportScreen() {
 
 						<Text style={styles.label}>Duty Officer Name:</Text>
 						<FieldBox value={dutyOfficerName} />
+
+						{draftGenerating ? (
+							<View style={styles.draftHintRow}>
+								<ActivityIndicator color="#F59E0B" size="small" />
+								<Text style={styles.draftHintText}>
+									Generating draft from incident details and selected checklist actions...
+								</Text>
+							</View>
+						) : null}
 
 						<Text style={styles.label}>Incident Description:</Text>
 						<TextInput
@@ -627,6 +788,19 @@ const styles = StyleSheet.create({
 		fontSize: 15,
 		fontWeight: "600",
 		color: "#0F172A",
+	},
+	draftHintRow: {
+		marginTop: 6,
+		marginBottom: 4,
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
+	},
+	draftHintText: {
+		flex: 1,
+		fontSize: 12,
+		fontWeight: "600",
+		color: "#FFF7ED",
 	},
 	categoryDropdownTrigger: {
 		height: 44,

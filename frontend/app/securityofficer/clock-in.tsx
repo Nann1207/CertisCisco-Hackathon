@@ -3,7 +3,7 @@ import { View, StyleSheet, Pressable, Image, ScrollView, Alert, useWindowDimensi
 
 import Text from "../../components/TranslatedText";
 
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, useSegments } from "expo-router";
 import { ChevronLeft, Clock3 } from "lucide-react-native";
 import MapView, { Marker } from "react-native-maps";
 import * as Location from "expo-location";
@@ -38,6 +38,10 @@ export default function ClockInScreen() {
     const [devAllowClockIn, setDevAllowClockIn] = useState(false);
     const isDev = __DEV__ || process.env.NODE_ENV === "development";
   const router = useRouter();
+  const segments = useSegments();
+  const isSsoRoute = segments.includes("sso");
+  const shiftOwnerColumn = isSsoRoute ? "supervisor_id" : "officer_id";
+  const homePath = isSsoRoute ? "/sso/home" : "/securityofficer/home";
   const { shiftData } = useLocalSearchParams();
   const { width, height } = useWindowDimensions();
   const mapRef = useRef<MapView | null>(null);
@@ -129,7 +133,7 @@ export default function ClockInScreen() {
       .from("shifts")
       .update({ clockin_time: clockedInAt, clockout_time: null })
       .eq("shift_id", shift.id)
-      .eq("officer_id", userId);
+      .eq(shiftOwnerColumn, userId);
 
     error = firstTry.error;
 
@@ -144,7 +148,7 @@ export default function ClockInScreen() {
       .from("shifts")
       .select("clockin_time")
       .eq("shift_id", shift.id)
-      .eq("officer_id", userId)
+      .eq(shiftOwnerColumn, userId)
       .maybeSingle();
 
     if (verifyError || !verifyRow?.clockin_time) {
@@ -157,7 +161,7 @@ export default function ClockInScreen() {
     }
 
     router.replace({
-      pathname: "/securityofficer/home",
+      pathname: homePath,
       params: {
         clockedInShiftId: shift.id,
         clockedInAt,
@@ -425,7 +429,7 @@ export default function ClockInScreen() {
         <Pressable
           style={[styles.backButton, width < 360 ? { width: 34, height: 34 } : null]}
           onPress={() =>
-            router.canGoBack() ? router.back() : router.replace("/securityofficer/home")
+            router.canGoBack() ? router.back() : router.replace(homePath)
           }
         >
           <ChevronLeft size={24} color="#ffffff" />

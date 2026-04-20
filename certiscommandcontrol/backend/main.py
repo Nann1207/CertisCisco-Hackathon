@@ -35,10 +35,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ALLOWED_SUPERVISOR_ROLES = {"security supervisor", "senior security officer"}
+ALLOWED_SUPERVISOR_ROLES = {"senior security officer"}
 SUPERVISOR_ROLE_PRIORITY = {
     "senior security officer": 0,
-    "security supervisor": 1,
 }
 SERVICE_SUPABASE_CLIENT = None
 
@@ -378,7 +377,7 @@ def select_fallback_supervisor(sb) -> Optional[Dict[str, Any]]:
     rows = (
         sb.table("employees")
         .select("id,emp_id,first_name,last_name,role,phone")
-        .in_("role", ["Senior Security Officer", "Security Supervisor"])
+        .in_("role", ["Senior Security Officer"])
         .execute()
     ).data or []
     if not rows:

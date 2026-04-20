@@ -24,12 +24,17 @@ type IncidentRow = {
   active_status: boolean | null;
 };
 
+type ReportRow = {
+  incident_id: string | null;
+};
+
 export default function SsoIncidentsScreen() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [incidents, setIncidents] = useState<IncidentRow[]>([]);
+  const [reports, setReports] = useState<ReportRow[]>([]);
 
   const load = async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
@@ -61,7 +66,33 @@ export default function SsoIncidentsScreen() {
       return;
     }
 
-    setIncidents((data as IncidentRow[] | null) ?? []);
+    const nextIncidents = (data as IncidentRow[] | null) ?? [];
+    setIncidents(nextIncidents);
+
+    const incidentIds = nextIncidents.map((item) => item.incident_id).filter(Boolean);
+
+    if (incidentIds.length === 0) {
+      setReports([]);
+      if (!isRefresh) setLoading(false);
+      if (isRefresh) setRefreshing(false);
+      return;
+    }
+
+    const { data: reportRows, error: reportError } = await supabase
+      .from("reports")
+      .select("incident_id")
+      .in("incident_id", incidentIds)
+      .order("created_at", { ascending: false })
+      .limit(500);
+
+    if (reportError) {
+      if (!isRefresh) setLoading(false);
+      if (isRefresh) setRefreshing(false);
+      Alert.alert("Load failed", reportError.message);
+      return;
+    }
+
+    setReports((reportRows as ReportRow[] | null) ?? []);
     if (!isRefresh) setLoading(false);
     if (isRefresh) setRefreshing(false);
   };
@@ -70,9 +101,25 @@ export default function SsoIncidentsScreen() {
     void load();
   }, []);
 
+  const reportedIncidentIds = useMemo(
+    () => new Set(reports.map((report) => report.incident_id).filter((id): id is string => Boolean(id))),
+    [reports]
+  );
+
   const activeIncidents = useMemo(
-    () => incidents.filter((incident) => Boolean(incident.active_status)),
-    [incidents]
+    () =>
+      incidents.filter(
+        (incident) => Boolean(incident.active_status) && !reportedIncidentIds.has(incident.incident_id)
+      ),
+    [incidents, reportedIncidentIds]
+  );
+
+  const postShiftOngoingIncidents = useMemo(
+    () =>
+      incidents.filter(
+        (incident) => Boolean(incident.active_status) && reportedIncidentIds.has(incident.incident_id)
+      ),
+    [incidents, reportedIncidentIds]
   );
 
   const pastIncidents = useMemo(
@@ -136,6 +183,21 @@ export default function SsoIncidentsScreen() {
                 onPress={() => {
                   void onOpenActiveIncident(incident.incident_id);
                 }}
+              />
+            ))
+          )}
+
+          <SectionTitle title="Post Shift - Ongoing" />
+          {postShiftOngoingIncidents.length === 0 ? (
+            <EmptyText text="No post-shift ongoing incidents." />
+          ) : (
+            postShiftOngoingIncidents.map((incident) => (
+              <IncidentCard
+                key={`post-shift-${incident.incident_id}`}
+                incident={incident}
+                tone="active"
+                ctaLabel="View Reports"
+                onPress={() => router.push("/sso/reports")}
               />
             ))
           )}

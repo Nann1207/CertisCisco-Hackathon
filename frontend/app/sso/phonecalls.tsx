@@ -82,37 +82,28 @@ function Section({ title, contacts }: { title: string; contacts: Contact[] }) {
 export default function SsoPhoneCallsScreen() {
   const router = useRouter();
 
-  const [ssoContact, setSsoContact] = useState<Contact | null>(null);
-  const [loadingSso, setLoadingSso] = useState(false);
+  const [ssContact, setSsContact] = useState<Contact | null>(null);
+  const [loadingSs, setLoadingSs] = useState(false);
 
   useEffect(() => {
     let alive = true;
 
-    const loadCurrentSso = async () => {
-      setLoadingSso(true);
-
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user.id ?? null;
-
-      if (sessionError || !userId) {
-        if (alive) {
-          setSsoContact(null);
-          setLoadingSso(false);
-        }
-        return;
-      }
+    const loadCurrentSs = async () => {
+      setLoadingSs(true);
 
       const { data, error } = await supabase
         .from("employees")
         .select("first_name,last_name,phone,profile_photo_path,role")
-        .eq("id", userId)
+        .eq("role", "Security Supervisor")
+        .order("first_name", { ascending: true })
+        .limit(1)
         .maybeSingle();
 
       if (!alive) return;
 
       if (error || !data) {
-        setSsoContact(null);
-        setLoadingSso(false);
+        setSsContact(null);
+        setLoadingSs(false);
         return;
       }
 
@@ -120,18 +111,18 @@ export default function SsoPhoneCallsScreen() {
 
       if (!alive) return;
 
-      setSsoContact({
-        name: `${data.first_name || ""} ${data.last_name || ""}`.trim() || "Senior Security Officer",
+      setSsContact({
+        name: `${data.first_name || ""} ${data.last_name || ""}`.trim() || "Security Supervisor",
         number: data.phone || "",
         color: "#7C3AED",
         iconName: "person-outline",
         imageUrl,
       });
 
-      setLoadingSso(false);
+      setLoadingSs(false);
     };
 
-    void loadCurrentSso();
+    void loadCurrentSs();
 
     return () => {
       alive = false;
@@ -139,9 +130,9 @@ export default function SsoPhoneCallsScreen() {
   }, []);
 
   const companyContacts = useMemo<Contact[]>(() => {
-    const currentSso: Contact =
-      ssoContact ??
-      (loadingSso
+    const currentSs: Contact =
+      ssContact ??
+      (loadingSs
         ? {
             name: "Loading...",
             number: "",
@@ -149,7 +140,7 @@ export default function SsoPhoneCallsScreen() {
             iconName: "person-outline",
           }
         : {
-            name: "Senior Security Officer",
+            name: "Security Supervisor",
             number: "",
             color: "#7C3AED",
             iconName: "person-outline",
@@ -162,8 +153,8 @@ export default function SsoPhoneCallsScreen() {
       iconName: "people-outline",
     };
 
-    return [currentSso, controlRoom];
-  }, [loadingSso, ssoContact]);
+    return [currentSs, controlRoom];
+  }, [loadingSs, ssContact]);
 
   return (
     <View style={styles.root}>
@@ -182,10 +173,10 @@ export default function SsoPhoneCallsScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <Section title="Government contacts" contacts={GOVERNMENT} />
 
-        {loadingSso ? (
+        {loadingSs ? (
           <View style={styles.loadingRow}>
             <ActivityIndicator size="small" />
-            <Text style={styles.loadingText}>Loading SSO contact...</Text>
+            <Text style={styles.loadingText}>Loading Security Supervisor contact...</Text>
           </View>
         ) : null}
 
