@@ -5,7 +5,7 @@ Integrated security platform that detects incidents captured on CCTV in a web ap
 
 ## Team
 
-`team Null`
+`Team Null`
 
 - Joshe D/O Chantiramugan
 - Vania Graciella Kwee
