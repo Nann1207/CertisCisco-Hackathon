@@ -55,6 +55,15 @@ type ShiftRow = {
 	shift_start: string;
 };
 
+type IncidentAssignmentStatusRow = {
+	officer_id: string | null;
+	active_status: boolean | null;
+};
+
+type ResolvedReportStatusRow = {
+	officer_id: string | null;
+};
+
 type EmployeeName = {
 	first_name: string | null;
 	last_name: string | null;
@@ -453,7 +462,7 @@ export default function CreateReportScreen() {
 			return;
 		}
 
-		if (reportType === "Resolved") {
+		if (reportType === "Resolved" || reportType === "Handover") {
 			const { error: closeAssignmentError } = await supabase
 				.from("incident_assignments")
 				.update({ active_status: false })
@@ -469,6 +478,75 @@ export default function CreateReportScreen() {
 					"Report was submitted, but the assignment could not be closed automatically. Please refresh and try again."
 				);
 				return;
+			}
+
+			if (reportType === "Resolved") {
+				const { data: assignmentRows, error: assignmentStatusError } = await supabase
+					.from("incident_assignments")
+					.select("officer_id, active_status")
+					.eq("incident_id", selectedIncident.id);
+
+				if (assignmentStatusError) {
+					Alert.alert(
+						"Submitted with warning",
+						"Report was submitted, but incident completion could not be checked automatically. Please refresh and try again."
+					);
+					return;
+				}
+
+				const incidentAssignments = (assignmentRows as IncidentAssignmentStatusRow[] | null) ?? [];
+				const hasAnyActiveAssignment = incidentAssignments.some((row) => Boolean(row.active_status));
+
+				if (!hasAnyActiveAssignment) {
+					const assignedOfficerIds = new Set(
+						incidentAssignments
+							.map((row) => row.officer_id)
+							.filter((id): id is string => typeof id === "string" && id.length > 0)
+					);
+
+					let allAssignmentsResolved = assignedOfficerIds.size > 0;
+
+					if (allAssignmentsResolved) {
+						const { data: resolvedReportRows, error: resolvedReportsError } = await supabase
+							.from("reports")
+							.select("officer_id")
+							.eq("incident_id", selectedIncident.id)
+							.eq("report_type", "Resolved");
+
+						if (resolvedReportsError) {
+							Alert.alert(
+								"Submitted with warning",
+								"Report was submitted, but resolved reports could not be verified automatically. Please refresh and try again."
+							);
+							return;
+						}
+
+						const resolvedOfficerIds = new Set(
+							((resolvedReportRows as ResolvedReportStatusRow[] | null) ?? [])
+								.map((row) => row.officer_id)
+								.filter((id): id is string => typeof id === "string" && id.length > 0)
+						);
+
+						allAssignmentsResolved = Array.from(assignedOfficerIds).every((officerId) =>
+							resolvedOfficerIds.has(officerId)
+						);
+					}
+
+					if (allAssignmentsResolved) {
+						const { error: closeIncidentError } = await supabase
+							.from("incidents")
+							.update({ active_status: false })
+							.eq("incident_id", selectedIncident.id);
+
+						if (closeIncidentError) {
+							Alert.alert(
+								"Submitted with warning",
+								"Report was submitted, but the incident could not be closed automatically. Please refresh and try again."
+							);
+							return;
+						}
+					}
+				}
 			}
 		} else {
 			setSaving(false);
