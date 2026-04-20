@@ -5,11 +5,13 @@ import {
   Image,
   ImageBackground,
   Pressable,
+  ScrollView,
   StyleSheet,
-  Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
+import Text from "../components/TranslatedText";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { Eye, EyeOff } from "lucide-react-native";
@@ -20,7 +22,7 @@ const BLUE = "#0E2D52";
 const roleRoutes: Record<string, string> = {
   "Security Officer": "/securityofficer/home",
   "Senior Security Officer": "/sso/home",
-  "Security Supervisor": "/securitysupervisor/home",
+  "Security Supervisor": "/sso/home",
 };
 const REQUEST_TIMEOUT_MS = 15000;
 
@@ -43,12 +45,32 @@ async function withTimeout<T>(
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+
+  const horizontalPadding = Math.round(clamp(width * 0.07, 18, 32));
+  const topPad = Math.round(clamp(height * 0.06, 26, 56));
+  const welcomeMarginTop = Math.round(clamp(height * 0.07, 22, 90));
+  const welcomeFontSize = Math.round(clamp(width * 0.092, 30, 40));
+  const hintFontSize = Math.round(clamp(width * 0.055, 17, 24));
+  const labelFontSize = Math.round(clamp(width * 0.045, 15, 19));
+  const bodyFontSize = Math.round(clamp(width * 0.04, 14, 16));
+  const inputFontSize = Math.round(clamp(width * 0.045, 15, 19));
+  const inputHeight = Math.round(clamp(height * 0.06, 44, 50));
+  const signInTextSize = Math.round(clamp(width * 0.058, 19, 24));
+  const logoWidth = Math.round(clamp(width * 0.52, 160, 220));
+  const logoHeight = Math.round(clamp(logoWidth * 0.42, 66, 92));
+  const bottomPad = Math.round(clamp(height * 0.05, 24, 60));
+  const langTop = Math.round(clamp(height * 0.06, 20, 54));
+  const langRight = Math.round(clamp(width * 0.05, 12, 20));
+  const langSize = Math.round(clamp(width * 0.12, 40, 52));
 
   async function onSignIn() {
     if (loading) return;
@@ -122,20 +144,29 @@ export default function LoginScreen() {
         />
 
         
-        <Pressable style={styles.langBtn} hitSlop={12} onPress={() => {}}>
+        <Pressable
+          style={[styles.langBtn, { top: langTop, right: langRight }]}
+          hitSlop={12}
+          onPress={() => router.push("/translate")}
+        >
           <Image
             source={require("../assets/translation.png")}
-            style={styles.langIcon}
+            style={[styles.langIcon, { width: langSize, height: langSize }]}
             resizeMode="contain"
           />
         </Pressable>
 
-        <View style={styles.content}>
-          <Text style={styles.welcome}>WELCOME BACK</Text>
-          <Text style={styles.hint}>Please enter your details</Text>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={[styles.content, { paddingTop: topPad, paddingHorizontal: horizontalPadding }]}> 
+            <Text style={[styles.welcome, { fontSize: welcomeFontSize, marginTop: welcomeMarginTop }]}>WELCOME BACK</Text>
+            <Text style={[styles.hint, { fontSize: hintFontSize }]}>Please enter your details</Text>
 
-          <Text style={styles.fieldLabel}>Email Address:</Text>
-          <View style={styles.inputWrap}>
+            <Text style={[styles.fieldLabel, { fontSize: labelFontSize }]}>Email Address:</Text>
+            <View style={[styles.inputWrap, { height: inputHeight }]}> 
             <TextInput
               value={email}
               onChangeText={setEmail}
@@ -144,12 +175,12 @@ export default function LoginScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
-              style={styles.input}
+              style={[styles.input, { fontSize: inputFontSize, height: inputHeight }]}
             />
-          </View>
+            </View>
 
-          <Text style={styles.passwordLabel}>Password:</Text>
-          <View style={styles.inputWrap}>
+            <Text style={[styles.passwordLabel, { fontSize: labelFontSize }]}>Password:</Text>
+            <View style={[styles.inputWrap, { height: inputHeight }]}> 
             <TextInput
               value={password}
               onChangeText={setPassword}
@@ -157,11 +188,11 @@ export default function LoginScreen() {
               placeholderTextColor="rgba(0,0,0,0.45)"
               secureTextEntry={!showPassword}
               autoCapitalize="none"
-              style={[styles.input, { paddingRight: 64 }]}
+              style={[styles.input, { paddingRight: 64, fontSize: inputFontSize, height: inputHeight }]}
             />
             <Pressable
               onPress={() => setShowPassword((s) => !s)}
-              style={styles.eyeBtn}
+              style={[styles.eyeBtn, { height: inputHeight }]}
               hitSlop={10}
             >
               {showPassword ? (
@@ -170,41 +201,41 @@ export default function LoginScreen() {
                 <Eye size={18} color="rgba(0,0,0,0.45)" />
               )}
             </Pressable>
+            </View>
+
+            <View style={styles.row}>
+              <Pressable
+                onPress={() => setRememberMe((v) => !v)}
+                style={styles.rememberWrap}
+                hitSlop={10}
+              >
+                <View style={[styles.checkbox, rememberMe && styles.checkboxOn]} />
+                <Text style={[styles.rememberText, { fontSize: bodyFontSize }]}>Remember me</Text>
+              </Pressable>
+
+              <Pressable onPress={() => {}} hitSlop={10}>
+                <Text style={[styles.forgot, { fontSize: bodyFontSize }]}>Forgot password?</Text>
+              </Pressable>
+            </View>
+
+            <Pressable onPress={onSignIn} style={[styles.signInBtn, { height: inputHeight }]}> 
+              {loading ? (
+                <ActivityIndicator color={BLUE} />
+              ) : (
+                <Text style={[styles.signInText, { fontSize: signInTextSize }]}>SIGN IN</Text>
+              )}
+            </Pressable>
           </View>
 
-          <View style={styles.row}>
-            <Pressable
-              onPress={() => setRememberMe((v) => !v)}
-              style={styles.rememberWrap}
-              hitSlop={10}
-            >
-              <View style={[styles.checkbox, rememberMe && styles.checkboxOn]} />
-              <Text style={styles.rememberText}>Remember me</Text>
-            </Pressable>
-
-            <Pressable onPress={() => {}} hitSlop={10}>
-              <Text style={styles.forgot}>Forgot password?</Text>
-            </Pressable>
+          <View style={[styles.bottomBrand, { bottom: bottomPad }]}> 
+            <Image
+              source={require("../assets/fortis-logo.png")}
+              style={[styles.bottomMark, { width: logoWidth, height: logoHeight }]}
+              resizeMode="contain"
+            />
+            <Text style={[styles.bottomCertis, { fontSize: Math.round(clamp(width * 0.05, 16, 22)) }]}>Certis Cisco</Text>
           </View>
-
-          <Pressable onPress={onSignIn} style={styles.signInBtn}>
-            {loading ? (
-              <ActivityIndicator color={BLUE} />
-            ) : (
-              <Text style={styles.signInText}>SIGN IN</Text>
-            )}
-          </Pressable>
-        </View>
-
-        
-        <View style={styles.bottomBrand}>
-          <Image
-            source={require("../assets/fortis-logo.png")}
-            style={styles.bottomMark}
-            resizeMode="contain"
-          />
-          <Text style={styles.bottomCertis}>Certis Cisco</Text>
-        </View>
+        </ScrollView>
       </ImageBackground>
     </View>
   );
@@ -214,12 +245,12 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BLUE },
   bg: { flex: 1 },
 
-  langBtn: { position: "absolute", right: 18, top: 54, zIndex: 10 },
+  langBtn: { position: "absolute", zIndex: 10 },
   langIcon: { width: 48, height: 48 },
 
   content: { paddingTop: 120, paddingHorizontal: 28 },
 
-  welcome: { color: "#FFFFFF", fontSize: 40, fontWeight: "600",textAlign: "center", marginTop: 90, },
+  welcome: { color: "#FFFFFF", fontSize: 40, fontWeight: "600", textAlign: "center", marginTop: 90 },
   hint: {
     marginTop: 8,
     marginBottom: 10,
@@ -272,7 +303,7 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   checkboxOn: { backgroundColor: ORANGE },
-  rememberText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600", },
+  rememberText: { color: "#FFFFFF", fontSize: 16, fontWeight: "600" },
 
   forgot: {
     color: ORANGE,
@@ -304,6 +335,6 @@ const styles = StyleSheet.create({
   bottomMark: {
     width: 200,
     height: 84,
-    marginBottom: 25,
+    marginBottom: 14,
   },
 });

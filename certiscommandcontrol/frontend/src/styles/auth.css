@@ -1,0 +1,105 @@
+/* Background */
+.authShell {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #F68D2C 0%, #0E2D52 100%);
+  font-family: 'ABeeZee', sans-serif;
+}
+
+/* Card */
+.authCard {
+  width: 480px;
+  padding: 50px 40px;
+  border-radius: 40px;
+  background: rgba(101, 97, 97, 0.5);
+  backdrop-filter: blur(10px);
+  text-align: center;
+}
+
+/* Logo */
+.authLogoImg {
+  width: 220px;
+  margin-bottom: 1px;
+}
+
+/* Subtitle */
+.authSub {
+  font-size: 22px;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 20px;
+}
+
+/* Welcome */
+.authWelcome {
+  font-size: 28px;
+  color: white;
+  margin-bottom: 30px;
+}
+
+/* Form */
+.authForm {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  text-align: left;
+}
+
+/* Labels */
+.authLabel {
+  color: white;
+  font-size: 16px;
+}
+
+/* Inputs */
+.authInput {
+  height: 55px;
+  border-radius: 30px;
+  border: 1px solid rgba(255, 149, 28, 0.4);
+  background: #1C1C1C;
+  padding: 0 20px;
+  color: white;
+  font-size: 16px;
+}
+
+/* Row (remember + forgot) */
+.authRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+
+.authRemember {
+  color: white;
+}
+
+.authForgot {
+  color: #FF951C;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* Button */
+.authBtn {
+  height: 55px;
+  border-radius: 30px;
+  background: #FF951C;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  margin-top: 10px;
+  color: #ffffff; /* makes text white */
+  font-weight: bold;
+}
+
+.authBtn:hover {
+  opacity: 0.9;
+}
+
+
+.authError {
+  color: #ff6b6b;
+  font-size: 13px;
+}

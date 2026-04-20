@@ -1,0 +1,318 @@
+.dashShell{
+    min-height: 100vh;
+    display:flex;
+    flex-direction: column;
+    background: linear-gradient(
+        180deg,
+        #1a3558 25%,
+        #0E2D52 100%
+    );
+  }
+  
+  .dashTopbar{
+    display:flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border);
+    background: #7997bc43 25%;
+    backdrop-filter: blur(10px);
+  }
+  
+  .dashBrand{ display:flex; gap:12px; align-items:center; }
+  .dashLogoImg{
+    width: 140px;
+    height: auto;
+    display: block;
+  }
+  .dashTitle{ font-weight: 900; letter-spacing: 0.4px; }
+  .dashSub{ color: var(--muted); font-size: 18px; margin-top:2px; }
+  
+  .dashActions{ display:flex; gap:10px; align-items:center; }
+  
+  .btnGhost{
+    height: 38px;
+    padding: 0 12px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-weight: 700;
+    cursor:pointer;
+  }
+  
+  .statusPill{
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 999px;
+    display:flex;
+    align-items:center;
+    font-weight: 900;
+    letter-spacing: 0.7px;
+    border: 1px solid var(--border);
+  }
+  .statusOk{
+    background: rgba(255,59,59,0.12);
+    border-color: rgba(255,59,59,0.35);
+    color: rgba(255,230,230,0.92);
+  }
+  .statusDanger{
+    background: rgba(255,59,59,0.12);
+    border-color: rgba(255,59,59,0.35);
+    color: rgba(255,230,230,0.92);
+  }
+  
+  .dashMain{
+    display:grid;
+    grid-template-columns: 1fr 520px;
+    gap: 14px;
+    padding: 14px;
+  }
+  
+  .gridPanel{
+    display:flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  
+  .grid2x2{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  
+  .tile{
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.05);
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+  }
+  
+  .tileDrag{
+    outline: 3px solid rgba(122,162,255,0.55);
+    box-shadow: 0 0 0 6px rgba(122,162,255,0.12);
+  }
+  
+  .tileHeader{
+    display:flex;
+    justify-content: space-between;
+    align-items:center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.18);
+  }
+  
+  .tileLabel{
+    font-weight: 900;
+    letter-spacing: 0.3px;
+  }
+  
+  .tileRight{ display:flex; gap: 10px; align-items:center; }
+  .tileTag{
+    color: var(--muted);
+    font-size: 12px;
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.04);
+  }
+  
+  .tileBtn{
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 10px;
+    border: 1px solid rgba(122,162,255,0.35);
+    background: rgba(122,162,255,0.15);
+    color: var(--text);
+    font-weight: 800;
+    cursor:pointer;
+  }
+  
+  .tileBody{ position: relative; aspect-ratio: 16/9; }
+  .tileVideo{
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display:block;
+    background: #000;
+  }
+  
+  .tilePlaceholder{
+    width: 100%;
+    height: 100%;
+    display:flex;
+    flex-direction: column;
+    align-items:center;
+    justify-content:center;
+    color: rgba(255,255,255,0.82);
+    text-align:center;
+    gap: 6px;
+  }
+  .tileHint{ color: var(--muted); font-size: 12px; }
+  
+  .threatOverlay{
+    position:absolute;
+    inset:0;
+    background: rgba(255, 26, 26, 0.26);
+    border: 2px solid rgba(255, 59, 59, 0.55);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  
+  .threatOverlayText{
+    font-weight: 1000;
+    letter-spacing: 1px;
+    font-size: 20px;
+    text-align:center;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid rgba(255,255,255,0.16);
+  }
+  .threatOverlaySub{
+    display:block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: rgba(255,255,255,0.8);
+    font-weight: 700;
+  }
+  
+  .banner{
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+    font-weight: 900;
+    background: rgba(255,255,255,0.06);
+  }
+  .bannerOk{
+    border-color: rgba(61,220,151,0.28);
+    background: rgba(61,220,151,0.08);
+  }
+  .bannerDanger{
+    border-color: rgba(255,59,59,0.28);
+    background: rgba(255,59,59,0.08);
+  }
+  
+  .rightPanel{
+    display:flex;
+    flex-direction: column;
+  }
+  
+  .panelCard{
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.06);
+    padding: 14px;
+    box-shadow: var(--shadow);
+  }
+  
+  .panelTitle{ font-weight: 1000; letter-spacing: 0.4px; }
+  .panelHeadline{
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: rgba(0,0,0,0.18);
+    font-weight: 900;
+  }
+  .panelHeadline.danger{
+    border-color: rgba(255,59,59,0.35);
+    background: rgba(255,59,59,0.10);
+    color: rgba(255,230,230,0.95);
+  }
+  
+  .panelGrid{
+    display:grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  
+  .panelSection{
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px;
+    background: rgba(255,255,255,0.04);
+  }
+  
+  .panelSectionTitle{
+    font-weight: 900;
+    color: rgba(255,255,255,0.88);
+    margin-bottom: 10px;
+  }
+  
+  .kv{
+    display:grid;
+    grid-template-columns: 140px 1fr;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px dashed rgba(255,255,255,0.10);
+  }
+  .kv:last-child{ border-bottom: 0; }
+  .k{ color: var(--muted); font-size: 12px; }
+  .v{ font-weight: 800; }
+  
+  .panelTextareaLabel{
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+  }
+  
+  .panelTextarea{
+    width: 100%;
+    min-height: 90px;
+    margin-top: 8px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(10, 16, 29, 0.55);
+    color: var(--text);
+    padding: 10px;
+    resize: vertical;
+  }
+  
+  .chips{ display:flex; flex-wrap:wrap; gap: 8px; }
+  .chip{
+    border-radius: 999px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.04);
+    font-weight: 800;
+    font-size: 12px;
+  }
+  .chipSub{ color: var(--muted); font-weight: 800; margin-left: 6px; }
+  
+  .panelNote{
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  
+  .panelButtons{
+    display:flex;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  
+  .btnPrimary{
+    height: 40px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(61,220,151,0.35);
+    background: rgba(61,220,151,0.18);
+    color: rgba(230,255,245,0.95);
+    font-weight: 900;
+    cursor:pointer;
+  }
+  
+  .frameRow{ display:flex; gap: 10px; flex-wrap: wrap; }
+  .frameImg{
+    width: 112px;
+    height: 72px;
+    object-fit: cover;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+  }
