@@ -9,7 +9,7 @@ import {
   StyleSheet,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { ChevronLeft, CircleAlert, CircleCheckBig, MapPin } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
@@ -97,9 +97,12 @@ export default function SsoIncidentsScreen() {
     if (isRefresh) setRefreshing(false);
   };
 
-  useEffect(() => {
-    void load();
-  }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      void load();
+      return () => {};
+    }, [])
+  );
 
   const reportedIncidentIds = useMemo(
     () => new Set(reports.map((report) => report.incident_id).filter((id): id is string => Boolean(id))),

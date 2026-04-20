@@ -62,6 +62,8 @@ type IncidentAssignmentStatusRow = {
 
 type ResolvedReportStatusRow = {
 	officer_id: string | null;
+	report_type: string | null;
+	created_at: string | null;
 };
 
 type EmployeeName = {
@@ -507,28 +509,32 @@ export default function CreateReportScreen() {
 					let allAssignmentsResolved = assignedOfficerIds.size > 0;
 
 					if (allAssignmentsResolved) {
-						const { data: resolvedReportRows, error: resolvedReportsError } = await supabase
+						const { data: incidentReportRows, error: incidentReportsError } = await supabase
 							.from("reports")
-							.select("officer_id")
+							.select("officer_id, report_type, created_at")
 							.eq("incident_id", selectedIncident.id)
-							.eq("report_type", "Resolved");
+							.order("created_at", { ascending: false });
 
-						if (resolvedReportsError) {
+						if (incidentReportsError) {
 							Alert.alert(
 								"Submitted with warning",
-								"Report was submitted, but resolved reports could not be verified automatically. Please refresh and try again."
+								"Report was submitted, but incident reports could not be verified automatically. Please refresh and try again."
 							);
 							return;
 						}
 
-						const resolvedOfficerIds = new Set(
-							((resolvedReportRows as ResolvedReportStatusRow[] | null) ?? [])
-								.map((row) => row.officer_id)
-								.filter((id): id is string => typeof id === "string" && id.length > 0)
-						);
+						const latestReportTypeByOfficer = new Map<string, string>();
+						for (const row of ((incidentReportRows as ResolvedReportStatusRow[] | null) ?? [])) {
+							const officerId = typeof row.officer_id === "string" ? row.officer_id : null;
+							if (!officerId || latestReportTypeByOfficer.has(officerId)) continue;
 
-						allAssignmentsResolved = Array.from(assignedOfficerIds).every((officerId) =>
-							resolvedOfficerIds.has(officerId)
+							const normalizedReportType =
+								typeof row.report_type === "string" ? row.report_type.trim().toLowerCase() : "";
+							latestReportTypeByOfficer.set(officerId, normalizedReportType);
+						}
+
+						allAssignmentsResolved = Array.from(assignedOfficerIds).every(
+							(officerId) => latestReportTypeByOfficer.get(officerId) === "resolved"
 						);
 					}
 
