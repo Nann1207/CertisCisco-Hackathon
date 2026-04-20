@@ -12,6 +12,7 @@ import {
   Modal,
 } from "react-native";
 import Text from "../../components/TranslatedText";
+import ServicesModal from "./components/services";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
@@ -26,6 +27,7 @@ import {
 } from "lucide-react-native";
 import { Ionicons } from "@expo/vector-icons";
 import NotificationsModal from "./components/NotificationsModal";
+import AssignmentAlertModal from "./components/AssignmentAlertModal";
 import { generateShiftNotifications, type NotificationItem } from "../../lib/notifications";
 
 import { styles } from "../../styles/securityofficer/home.styles";
@@ -80,6 +82,13 @@ type ActiveHomeIncident = {
   assigned_at: string | null;
 };
 
+type AcknowledgedAssignment = {
+  assignmentId: string;
+  incidentId: string;
+  incidentName: string;
+  locationUnitNo: string;
+};
+
 type IncidentAssignmentRow = {
   assignment_id: string;
   incident_id: string | null;
@@ -123,6 +132,7 @@ export default function Home() {
   const [notificationsList, setNotificationsList] = useState<NotificationItem[]>([]);
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
+  const [showServices, setShowServices] = useState(false);
 
   const NOTIF_DISMISS_PREFIX = "notifications_dismissed";
 
@@ -522,7 +532,7 @@ export default function Home() {
     setActiveClockedInShiftId(null);
     setIsSavingShiftAction(false);
     router.push({
-      pathname: "/securityofficer/reports",
+      pathname: "/securityofficer/shift-reports",
       params: {
         shiftId: shiftToClockOut.id,
       },
@@ -549,6 +559,16 @@ export default function Home() {
     router.push({
       pathname: "/securityofficer/clock-in",
       params: { shiftData: JSON.stringify(todayShift) },
+    });
+  };
+
+  const handleAssignmentAcknowledged = (assignment: AcknowledgedAssignment) => {
+    setActiveIncident({
+      assignment_id: assignment.assignmentId,
+      incident_id: assignment.incidentId,
+      incident_name: assignment.incidentName,
+      active_status: true,
+      assigned_at: new Date().toISOString(),
     });
   };
 
@@ -655,7 +675,7 @@ export default function Home() {
           <QuickAction label="ID Card" Icon={CreditCard} onPress={() => router.push("/securityofficer/id-card")} />
           <QuickAction label="Incidents" Icon={ShieldAlert} onPress={() => router.push("/securityofficer/incidents")} />
           <QuickAction label="Reports" Icon={FileText} onPress={() => router.push("/securityofficer/reports")} />
-          <QuickAction label="All Services" Icon={Grid3X3} onPress={() => router.push("/securityofficer/services")} />
+          <QuickAction label="All Services" Icon={Grid3X3} onPress={() => setShowServices(true)} />
         </View>
       </ImageBackground>
 
@@ -853,6 +873,15 @@ export default function Home() {
           </View>
         </View>
       </Modal>
+      <ServicesModal
+        visible={showServices}
+        onClose={() => setShowServices(false)}
+      />
+      <AssignmentAlertModal
+        officerId={authUserId}
+        currentShiftId={todayShift?.id ?? null}
+        onAcknowledgeAssignment={handleAssignmentAcknowledged}
+      />
     </View>
   );
 }

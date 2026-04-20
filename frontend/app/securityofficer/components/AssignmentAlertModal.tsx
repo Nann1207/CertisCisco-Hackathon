@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";import { Animated, Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
@@ -8,6 +9,7 @@ import { supabase } from "../../../lib/supabase";
 type AssignmentRow = {
   assignment_id: string;
   incident_id: string | null;
+  shift_id: string | null;
   assigned_at: string | null;
   active_status: boolean | null;
   incidents:
@@ -40,9 +42,15 @@ const DISMISS_STORAGE_KEY_PREFIX = "assignment_dismissed_map";
 
 type AssignmentAlertModalProps = {
   officerId?: string | null;
+  currentShiftId?: string | null;
+  onAcknowledgeAssignment?: (assignment: AlertAssignment) => void;
 };
 
-export default function AssignmentAlertModal({ officerId = null }: AssignmentAlertModalProps) {
+export default function AssignmentAlertModal({
+  officerId = null,
+  currentShiftId = null,
+  onAcknowledgeAssignment,
+}: AssignmentAlertModalProps) {
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -53,8 +61,6 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
   const acknowledgedIdsRef = useRef<Set<string>>(new Set());
   const dismissedMapRef = useRef<Record<string, string>>({});
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  const waveProgress = useRef(new Animated.Value(0)).current;
-
   const buttonRotate = useRef(new Animated.Value(0)).current;
 
   const storageKey = useMemo(() => {
@@ -87,13 +93,26 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
   }, []);
 
   const fetchActiveAssignments = useCallback(
-    async (activeUserId: string, ackSet: Set<string>, dismissed: Record<string, string> = {}) => {
+    async (
+      activeUserId: string,
+      shiftId: string | null,
+      ackSet: Set<string>,
+      dismissed: Record<string, string> = {}
+    ) => {
+      if (!shiftId) {
+        setActiveAssignment(null);
+        setVisible(false);
+        stopVibration();
+        return;
+      }
+
       const { data, error } = await supabase
         .from("incident_assignments")
         .select(
-          "assignment_id, incident_id, assigned_at, active_status, incidents(incident_name, incident_category, location_name, location_description, location_unit_no)"
+          "assignment_id, incident_id, shift_id, assigned_at, active_status, incidents(incident_name, incident_category, location_name, location_description, location_unit_no)"
         )
         .eq("officer_id", activeUserId)
+        .eq("shift_id", shiftId)
         .eq("active_status", true)
         .order("assigned_at", { ascending: false })
         .limit(20);
@@ -104,7 +123,7 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
       }
 
       const rows = (data as AssignmentRow[] | null) ?? [];
-      const activeIds = new Set(rows.map((r) => r.assignment_id).filter(Boolean));
+      const activeIds = new Set(rows.map((row) => row.assignment_id).filter(Boolean));
 
       const prunedAckSet = new Set(Array.from(ackSet).filter((id) => activeIds.has(id)));
       if (prunedAckSet.size !== ackSet.size) {
@@ -121,7 +140,12 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
       }
 
       const effectiveAckSet = prunedAckSet.size !== ackSet.size ? prunedAckSet : ackSet;
-      const next = rows.find((row) => row.incident_id && !effectiveAckSet.has(row.assignment_id) && !prunedDismissed[row.assignment_id]);
+      const next = rows.find(
+        (row) =>
+          row.incident_id &&
+          !effectiveAckSet.has(row.assignment_id) &&
+          !prunedDismissed[row.assignment_id]
+      );
 
       if (!next || !next.incident_id) {
         setActiveAssignment(null);
@@ -136,7 +160,9 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
         incident?.incident_category ??
         "New Incident"
       ).toUpperCase();
-      const locationUnitNo = incident?.location_unit_no?.trim() ? `#${incident.location_unit_no.trim()}` : "Location Unit Pending";
+      const locationUnitNo = incident?.location_unit_no?.trim()
+        ? `${incident.location_unit_no.trim()}`
+        : "Location Unit Pending";
 
       setActiveAssignment({
         assignmentId: next.assignment_id,
@@ -159,17 +185,18 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
         const stored = await AsyncStorage.getItem(key);
         const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
 
-        const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${officerId}`;
-        const storedDismissed = await AsyncStorage.getItem(dKey);
+        const dismissKey = `${DISMISS_STORAGE_KEY_PREFIX}:${officerId}`;
+        const storedDismissed = await AsyncStorage.getItem(dismissKey);
         const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
 
         acknowledgedIdsRef.current = ids;
+        dismissedMapRef.current = dismissed;
         setAcknowledgedIds(ids);
         setDismissedMap(dismissed);
-        dismissedMapRef.current = dismissed;
         setLoading(false);
-        await fetchActiveAssignments(officerId, ids, dismissed);
+        await fetchActiveAssignments(officerId, currentShiftId, ids, dismissed);
       })();
+
       return () => {
         alive = false;
         stopVibration();
@@ -193,8 +220,8 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
       const stored = await AsyncStorage.getItem(key);
       const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
 
-      const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${currentUserId}`;
-      const storedDismissed = await AsyncStorage.getItem(dKey);
+      const dismissKey = `${DISMISS_STORAGE_KEY_PREFIX}:${currentUserId}`;
+      const storedDismissed = await AsyncStorage.getItem(dismissKey);
       const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
 
       if (!alive) return;
@@ -202,7 +229,7 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
       dismissedMapRef.current = dismissed;
       setAcknowledgedIds(ids);
       setDismissedMap(dismissed);
-      await fetchActiveAssignments(currentUserId, ids, dismissed);
+      await fetchActiveAssignments(currentUserId, currentShiftId, ids, dismissed);
       if (alive) setLoading(false);
     };
 
@@ -214,9 +241,9 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
 
       if (!nextUserId) {
         acknowledgedIdsRef.current = new Set();
+        dismissedMapRef.current = {};
         setAcknowledgedIds(new Set());
         setDismissedMap({});
-        dismissedMapRef.current = {};
         setActiveAssignment(null);
         setVisible(false);
         stopVibration();
@@ -227,14 +254,14 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
       const stored = await AsyncStorage.getItem(key);
       const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
 
-      const dKey = `${DISMISS_STORAGE_KEY_PREFIX}:${nextUserId}`;
-      const storedDismissed = await AsyncStorage.getItem(dKey);
+      const dismissKey = `${DISMISS_STORAGE_KEY_PREFIX}:${nextUserId}`;
+      const storedDismissed = await AsyncStorage.getItem(dismissKey);
       const dismissed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
       acknowledgedIdsRef.current = ids;
       dismissedMapRef.current = dismissed;
       setAcknowledgedIds(ids);
       setDismissedMap(dismissed);
-      await fetchActiveAssignments(nextUserId, ids, dismissed);
+      await fetchActiveAssignments(nextUserId, currentShiftId, ids, dismissed);
     });
 
     return () => {
@@ -242,7 +269,13 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
       authListener.data.subscription.unsubscribe();
       stopVibration();
     };
-  }, [fetchActiveAssignments, officerId]);
+  }, [currentShiftId, fetchActiveAssignments, officerId]);
+
+  useEffect(() => {
+    if (!userId || loading) return;
+
+    void fetchActiveAssignments(userId, currentShiftId, acknowledgedIdsRef.current, dismissedMapRef.current);
+  }, [currentShiftId, fetchActiveAssignments, loading, userId]);
 
   useEffect(() => {
     if (!userId || loading) return;
@@ -258,7 +291,7 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
           filter: `officer_id=eq.${userId}`,
         },
         async () => {
-          await fetchActiveAssignments(userId, acknowledgedIdsRef.current, dismissedMapRef.current);
+          await fetchActiveAssignments(userId, currentShiftId, acknowledgedIdsRef.current, dismissedMapRef.current);
         }
       )
       .subscribe();
@@ -266,36 +299,17 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchActiveAssignments, loading, userId]);
+  }, [currentShiftId, fetchActiveAssignments, loading, userId]);
 
   useEffect(() => {
     if (!visible) {
       stopVibration();
       return;
     }
+
     Vibration.vibrate([0, 1000, 650], true);
     return () => stopVibration();
   }, [visible]);
-
-  useEffect(() => {
-    if (!visible) {
-      waveProgress.setValue(0);
-      return;
-    }
-
-    const loop = Animated.loop(
-      Animated.timing(waveProgress, {
-        toValue: 1,
-        duration: 3200,
-        useNativeDriver: true,
-      })
-    );
-
-    loop.start();
-    return () => {
-      loop.stop();
-    };
-  }, [visible, waveProgress]);
 
   useEffect(() => {
     if (!visible) {
@@ -317,18 +331,6 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
     };
   }, [buttonRotate, visible]);
 
-  const waveTranslatePrimary = waveProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-260, 260],
-  });
-  const waveTranslateSecondary = waveProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-320, 220],
-  });
-  const waveTranslateTertiary = waveProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [-220, 300],
-  });
   const buttonBorderRotate = buttonRotate.interpolate({
     inputRange: [0, 1],
     outputRange: ["0deg", "360deg"],
@@ -354,6 +356,7 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
       await AsyncStorage.setItem(storageDismissKey, JSON.stringify(nextDismissed));
     }
 
+    onAcknowledgeAssignment?.(activeAssignment);
     setVisible(false);
     stopVibration();
     router.push(`/securityofficer/currentIncident?incidentId=${activeAssignment.incidentId}`);
@@ -396,56 +399,6 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
           end={{ x: 0.9, y: 1 }}
           style={styles.card}
         >
-          <View pointerEvents="none" style={styles.waveField}>
-            <Animated.View
-              style={[
-                styles.waveRibbon,
-                styles.waveRibbonTop,
-                { transform: [{ translateX: waveTranslatePrimary }, { rotate: "-5deg" }] },
-              ]}
-            >
-              <LinearGradient
-                colors={["rgba(255,255,255,0)", "rgba(255,210,160,0.55)", "rgba(255,120,98,0.82)", "rgba(255,255,255,0)"]}
-                locations={[0, 0.22, 0.6, 1]}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={styles.waveRibbonFill}
-              />
-            </Animated.View>
-
-            <Animated.View
-              style={[
-                styles.waveRibbon,
-                styles.waveRibbonMiddle,
-                { transform: [{ translateX: waveTranslateSecondary }, { rotate: "4deg" }] },
-              ]}
-            >
-              <LinearGradient
-                colors={["rgba(255,255,255,0)", "rgba(255,233,199,0.38)", "rgba(255,168,94,0.68)", "rgba(255,255,255,0)"]}
-                locations={[0, 0.18, 0.56, 1]}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={styles.waveRibbonFill}
-              />
-            </Animated.View>
-
-            <Animated.View
-              style={[
-                styles.waveRibbon,
-                styles.waveRibbonBottom,
-                { transform: [{ translateX: waveTranslateTertiary }, { rotate: "-3deg" }] },
-              ]}
-            >
-              <LinearGradient
-                colors={["rgba(255,255,255,0)", "rgba(255,188,146,0.34)", "rgba(255,106,69,0.62)", "rgba(255,255,255,0)"]}
-                locations={[0, 0.25, 0.58, 1]}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={styles.waveRibbonFill}
-              />
-            </Animated.View>
-          </View>
-
           <View style={styles.cardContent}>
             <Text style={styles.incidentTitle}>{activeAssignment?.incidentName ?? "NEW INCIDENT"}</Text>
             <Text style={styles.unitText}>{activeAssignment?.locationUnitNo ?? "Location Unit Pending"}</Text>
@@ -468,7 +421,12 @@ export default function AssignmentAlertModal({ officerId = null }: AssignmentAle
                   />
                 </Animated.View>
                 <View pointerEvents="none" style={styles.ackButtonMaskFill} />
-                <Pressable style={styles.ackButton} onPress={() => { void onAcknowledge(); }}>
+                <Pressable
+                  style={styles.ackButton}
+                  onPress={() => {
+                    void onAcknowledge();
+                  }}
+                >
                   <Text style={styles.ackButtonText}>{"I ACKNOWLEDGE\nTHIS ASSIGNMENT"}</Text>
                 </Pressable>
               </View>
@@ -499,33 +457,6 @@ const styles = StyleSheet.create({
     paddingTop: 22,
     paddingBottom: 16,
     overflow: "hidden",
-  },
-  waveField: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  waveRibbon: {
-    position: "absolute",
-    left: -120,
-    width: 260,
-    borderRadius: 999,
-    overflow: "hidden",
-    opacity: 0.95,
-  },
-  waveRibbonTop: {
-    top: 22,
-    height: 90,
-  },
-  waveRibbonMiddle: {
-    top: 110,
-    height: 118,
-  },
-  waveRibbonBottom: {
-    bottom: 14,
-    height: 104,
-  },
-  waveRibbonFill: {
-    flex: 1,
-    borderRadius: 999,
   },
   cardContent: {
     zIndex: 1,
@@ -598,22 +529,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 12,
     zIndex: 1,
-ze: 13,
-    fontWeight: "800",
-    color: "#B91C1C",
-    textAlign: "center",
-    textDecorationLine: "underline",
-  },
-  ackButton: {
-    marginTop: 18,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: "#0B2D57",
-    borderWidth: 1,
-    borderColor: "#1C8ED8",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 12,
   },
   ackButtonText: {
     fontSize: 15,

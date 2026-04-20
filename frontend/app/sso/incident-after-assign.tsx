@@ -69,6 +69,59 @@ type BackupRequestDetails = {
   reason: string;
 };
 
+function getAssignmentId(row: AssignmentRow, fallbackSuffix: string) {
+  return typeof row.assignment_id === "string" ? row.assignment_id : `${row.officer_id ?? "officer"}-${fallbackSuffix}`;
+}
+
+function hasRequestedBackup(row: AssignmentRow) {
+  const dynamic = row as Record<string, unknown>;
+  const rawRequested =
+    dynamic.backup_requested ??
+    dynamic.request_backup ??
+    dynamic.backup_request ??
+    dynamic.request_additional_officers ??
+    dynamic.needs_backup;
+
+  const normalizedRequested =
+    rawRequested === true ||
+    rawRequested === 1 ||
+    rawRequested === "1" ||
+    String(rawRequested ?? "").trim().toLowerCase() === "true";
+
+  const hasBackupAmount =
+    dynamic.backup_amount !== null &&
+    dynamic.backup_amount !== undefined &&
+    String(dynamic.backup_amount).trim().length > 0 &&
+    Number.parseInt(String(dynamic.backup_amount), 10) > 0;
+
+  return normalizedRequested || hasBackupAmount;
+}
+
+function toBackupRequestDetails(row: AssignmentRow, fallbackSuffix: string): BackupRequestDetails {
+  const dynamic = row as Record<string, unknown>;
+  const countRaw =
+    dynamic.backup_amount ??
+    dynamic.backup_requested_count ??
+    dynamic.request_backup_count ??
+    dynamic.requested_officer_count ??
+    dynamic.backup_count ??
+    1;
+  const requestedCount = Math.max(1, Number.parseInt(String(countRaw), 10) || 1);
+
+  const reasonRaw =
+    dynamic.backup_reason ??
+    dynamic.request_backup_reason ??
+    dynamic.backup_request_reason ??
+    "";
+
+  return {
+    assignmentId: getAssignmentId(row, fallbackSuffix),
+    requesterName: (typeof row.officer_name === "string" ? row.officer_name : "") || "Assigned Officer",
+    requestedCount,
+    reason: String(reasonRaw ?? "").trim(),
+  };
+}
+
 export default function SsoIncidentAfterAssignPage() {
   const router = useRouter();
   const { incidentId } = useLocalSearchParams<{ incidentId?: string }>();
@@ -193,13 +246,13 @@ export default function SsoIncidentAfterAssignPage() {
       setIncident(incidentData as IncidentRow);
       await refreshAssignedOfficers(
         incidentId,
-        acknowledgedBackupRequestIds,
+        acknowledgedBackupRequestIdsRef.current,
         setAssignedOfficers,
         setShowBackupRequestModal,
         setBackupAttentionActive,
         setBackupRequestDetails
       );
-      setLoading(false);
+      if (alive) setLoading(false);
     };
 
     void load();
@@ -207,6 +260,19 @@ export default function SsoIncidentAfterAssignPage() {
     return () => {
       alive = false;
     };
+  }, [incidentId]);
+
+  useEffect(() => {
+    if (!incidentId) return;
+
+    void refreshAssignedOfficers(
+      incidentId,
+      acknowledgedBackupRequestIds,
+      setAssignedOfficers,
+      setShowBackupRequestModal,
+      setBackupAttentionActive,
+      setBackupRequestDetails
+    );
   }, [acknowledgedBackupRequestIds, incidentId]);
 
   useEffect(() => {
@@ -463,44 +529,44 @@ export default function SsoIncidentAfterAssignPage() {
 
           <View style={styles.actionRowTop}>
             <Animated.View style={[styles.addBackupAttentionWrap, backupAttentionActive ? { transform: [{ scale: addBackupScale }] } : null]}>
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  styles.addBackupGlowRing,
-                  backupAttentionActive
-                    ? {
-                        opacity: addBackupGlowOpacity,
-                        transform: [{ scale: addBackupGlowScale }],
-                      }
-                    : styles.addBackupGlowRingIdle,
-                ]}
-              >
+              {backupAttentionActive ? (
                 <Animated.View
+                  pointerEvents="none"
                   style={[
-                    styles.addBackupGlowSweep,
+                    styles.addBackupGlowRing,
                     {
-                      transform: [{ rotate: addBackupBorderRotate }],
+                      opacity: addBackupGlowOpacity,
+                      transform: [{ scale: addBackupGlowScale }],
                     },
                   ]}
                 >
-                  <LinearGradient
-                    colors={[
-                      "rgba(255,255,255,0)",
-                      "rgba(255,255,255,0.4)",
-                      "#431068",
-                      "#e23500",
-                      "#5e24fc",
-                      "rgba(255,255,255,0.25)",
-                      "rgba(255,255,255,0)",
+                  <Animated.View
+                    style={[
+                      styles.addBackupGlowSweep,
+                      {
+                        transform: [{ rotate: addBackupBorderRotate }],
+                      },
                     ]}
-                    locations={[0, 0.1, 0.34, 0.6, 0.85, 0.94, 1]}
-                    start={{ x: 0.5, y: 0 }}
-                    end={{ x: 0.5, y: 1 }}
-                    style={styles.addBackupGlowSweepGradient}
-                  />
+                  >
+                    <LinearGradient
+                      colors={[
+                        "rgba(255,255,255,0)",
+                        "rgba(255,255,255,0.4)",
+                        "#431068",
+                        "#e23500",
+                        "#5e24fc",
+                        "rgba(255,255,255,0.25)",
+                        "rgba(255,255,255,0)",
+                      ]}
+                      locations={[0, 0.1, 0.34, 0.6, 0.85, 0.94, 1]}
+                      start={{ x: 0.5, y: 0 }}
+                      end={{ x: 0.5, y: 1 }}
+                      style={styles.addBackupGlowSweepGradient}
+                    />
+                  </Animated.View>
+                  <View style={styles.addBackupGlowMaskFill} />
                 </Animated.View>
-                <View style={styles.addBackupGlowMaskFill} />
-              </Animated.View>
+              ) : null}
               <Pressable style={[styles.actionChip, styles.actionChipWarm]} onPress={onOpenAddBackup}>
                 <BellRing size={16} color="#9C2222" />
                 <Text style={styles.actionChipWarmText}>Add Backup</Text>
@@ -715,63 +781,35 @@ async function refreshAssignedOfficers(
 
   setAssignedOfficers(assigned);
 
-  const pendingRequest = rows.find((row, index) => {
-    const dynamic = row as Record<string, unknown>;
-    const hasBackupAmount =
-      dynamic.backup_amount !== null &&
-      dynamic.backup_amount !== undefined &&
-      String(dynamic.backup_amount).trim().length > 0;
-    const requested = Boolean(
-      dynamic.backup_requested ??
-        dynamic.request_backup ??
-        dynamic.backup_request ??
-        dynamic.request_additional_officers ??
-        dynamic.needs_backup
-    ) || hasBackupAmount;
+  const requestedRows = rows
+    .map((row, index) => {
+      if (!hasRequestedBackup(row)) return null;
 
-    if (!requested) return false;
-    const assignmentId =
-      typeof row.assignment_id === "string" ? row.assignment_id : `${row.officer_id ?? "officer"}-${index}`;
-    return !acknowledgedRequestIds.has(assignmentId);
-  });
+      return { row, assignmentId: getAssignmentId(row, String(index)) };
+    })
+    .filter((item): item is { row: AssignmentRow; assignmentId: string } => Boolean(item));
+
+  const pendingRequest = requestedRows.find(({ assignmentId }) => !acknowledgedRequestIds.has(assignmentId));
 
   if (pendingRequest) {
-    const dynamic = pendingRequest as Record<string, unknown>;
-    const assignmentId =
-      typeof pendingRequest.assignment_id === "string"
-        ? pendingRequest.assignment_id
-        : `${pendingRequest.officer_id ?? "officer"}-request`;
-
-    const countRaw =
-      dynamic.backup_amount ??
-      dynamic.backup_requested_count ??
-      dynamic.request_backup_count ??
-      dynamic.requested_officer_count ??
-      dynamic.backup_count ??
-      1;
-    const requestedCount = Math.max(1, Number.parseInt(String(countRaw), 10) || 1);
-
-    const reasonRaw =
-      dynamic.backup_reason ??
-      dynamic.request_backup_reason ??
-      dynamic.backup_request_reason ??
-      "";
-    const reason = String(reasonRaw ?? "").trim();
-
-    const requesterNameRaw =
-      (typeof pendingRequest.officer_name === "string" ? pendingRequest.officer_name : "") || "Assigned Officer";
-
-    setBackupRequestDetails({
-      assignmentId,
-      requesterName: requesterNameRaw,
-      requestedCount,
-      reason,
-    });
+    const { row: pendingRow } = pendingRequest;
+    setBackupRequestDetails(toBackupRequestDetails(pendingRow, "request"));
     setShowBackupRequestModal(true);
+    setBackupAttentionActive(false);
+    return;
+  }
+
+  const acknowledgedRequest = requestedRows.find(({ assignmentId }) => acknowledgedRequestIds.has(assignmentId));
+
+  if (acknowledgedRequest) {
+    const { row: activeRow } = acknowledgedRequest;
+    setBackupRequestDetails(toBackupRequestDetails(activeRow, "acknowledged"));
+    setShowBackupRequestModal(false);
     setBackupAttentionActive(true);
     return;
   }
 
+  setShowBackupRequestModal(false);
   setBackupRequestDetails(null);
   setBackupAttentionActive(false);
 }
@@ -941,9 +979,6 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 0 },
     elevation: 10,
-  },
-  addBackupGlowRingIdle: {
-    opacity: 0.72,
   },
   addBackupGlowSweep: {
     position: "absolute",
