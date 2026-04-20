@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text as RNText,
@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import Text from "../../components/TranslatedText";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import {
   Settings,
@@ -70,20 +70,10 @@ type UpcomingShift = {
 };
 
 type ActiveIncidentRow = {
-  assignment_id: string;
-  incident_id: string | null;
+  incident_id: string;
+  incident_category: string | null;
   active_status: boolean | null;
-  assigned_at: string | null;
-  incidents:
-    | {
-        incident_id?: string | null;
-        incident_name?: string | null;
-      }
-    | {
-        incident_id?: string | null;
-        incident_name?: string | null;
-      }[]
-    | null;
+  created_at: string | null;
 };
 
 type ActiveHomeIncident = {
@@ -92,6 +82,10 @@ type ActiveHomeIncident = {
   incident_name: string | null;
   active_status: boolean | null;
   assigned_at: string | null;
+};
+
+type ReportRow = {
+  incident_id: string | null;
 };
 
 export default function Home() {
@@ -168,11 +162,33 @@ export default function Home() {
     setAvatarLoadFailed(false);
   }, [profile?.avatar_url]);
 
-  useEffect(() => {
-    let alive = true;
+  const loadHomeData = useCallback(async (isAlive: () => boolean) => {
+    setLoading(true);
+    setLoadError(null);
+    setDebugEmptyReason(null);
 
-    const getAvatarUrlFromFolder = async (userId: string) => {
-      const folder = `employees/${userId}`;
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id;
+    if (userId) {
+      setAuthUserId(userId);
+      try {
+        const key = `${NOTIF_DISMISS_PREFIX}:${userId}`;
+        const stored = await AsyncStorage.getItem(key);
+        const parsed = stored ? (JSON.parse(stored) as Record<string, string>) : {};
+        setDismissedMap(parsed);
+      } catch (err) {
+        console.warn("Failed loading dismissed notifications:", err);
+      }
+    }
+
+    if (sessionError || !userId) {
+      if (isAlive()) setLoadError("Unable to load user session.");
+      if (isAlive()) setLoading(false);
+      return;
+    }
+
+    const getAvatarUrlFromFolder = async (folderUserId: string) => {
+      const folder = `employees/${folderUserId}`;
       const { data: files, error: listError } = await supabase.storage
         .from(AVATAR_BUCKET)
         .list(folder, { limit: 10, sortBy: { column: "name", order: "asc" } });
@@ -218,178 +234,173 @@ export default function Home() {
       return data.publicUrl ?? null;
     };
 
-    const load = async () => {
-      setLoading(true);
-      setLoadError(null);
-      setDebugEmptyReason(null);
+    const { data: prof, error: profError } = await supabase
+      .from("employees")
+      .select("id, emp_id, first_name, profile_photo_path")
+      .eq("id", userId)
+      .maybeSingle();
 
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user.id;
-      if (userId) {
-        setAuthUserId(userId);
-        try {
-          const key = `${NOTIF_DISMISS_PREFIX}:${userId}`;
-          const stored = await AsyncStorage.getItem(key);
-          const parsed = stored ? (JSON.parse(stored) as Record<string, string>) : {};
-          setDismissedMap(parsed);
-        } catch (err) {
-          console.warn("Failed loading dismissed notifications:", err);
-        }
-      }
+    let avatarUrl: string | null = null;
+    if (prof?.profile_photo_path) {
+      avatarUrl = await getAvatarUrlFromPath(prof.profile_photo_path);
+    }
+    if (!avatarUrl) {
+      avatarUrl = await getAvatarUrlFromFolder(userId);
+    }
 
-      if (sessionError || !userId) {
-        if (alive) setLoadError("Unable to load user session.");
-        if (alive) setLoading(false);
-        return;
-      }
+    const now = new Date();
+    const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+      now.getDate()
+    ).padStart(2, "0")}`;
 
-      const { data: prof, error: profError } = await supabase
-        .from("employees")
-        .select("id, emp_id, first_name, profile_photo_path")
-        .eq("id", userId)
-        .maybeSingle();
+    const { data: todayShiftsRaw, error: todayShiftError } = await supabase
+      .from("shifts")
+      .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
+      .eq("supervisor_id", userId)
+      .eq("shift_date", todayISO)
+      .order("shift_start", { ascending: true });
 
-      let avatarUrl: string | null = null;
-      if (prof?.profile_photo_path) {
-        avatarUrl = await getAvatarUrlFromPath(prof.profile_photo_path);
-      }
-      if (!avatarUrl) {
-        avatarUrl = await getAvatarUrlFromFolder(userId);
-      }
+    const { data: upcomingShiftsRaw, error: upcomingError } = await supabase
+      .from("shifts")
+      .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
+      .eq("supervisor_id", userId)
+      .gte("shift_date", todayISO)
+      .order("shift_date", { ascending: true })
+      .order("shift_start", { ascending: true })
+      .limit(5);
 
-      const now = new Date();
-      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
-        now.getDate()
-      ).padStart(2, "0")}`;
+    const { data: activeIncidentsRaw, error: activeIncidentError } = await supabase
+      .from("incidents")
+      .select("incident_id, incident_name, active_status, created_at")
+      .eq("supervisor_id", userId)
+      .eq("active_status", true)
+      .order("created_at", { ascending: false })
+      .limit(50);
 
-      const { data: todayShiftsRaw, error: todayShiftError } = await supabase
-        .from("shifts")
-        .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
-        .eq("supervisor_id", userId)
-        .eq("shift_date", todayISO)
-        .order("shift_start", { ascending: true });
+    const incidentIds = ((activeIncidentsRaw as ActiveIncidentRow[] | null) ?? []).map((row) => row.incident_id);
 
-      const { data: upcomingShiftsRaw, error: upcomingError } = await supabase
-        .from("shifts")
-        .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
-        .eq("supervisor_id", userId)
-        .gte("shift_date", todayISO)
-        .order("shift_date", { ascending: true })
-        .order("shift_start", { ascending: true })
-        .limit(5);
+    let reportRows: ReportRow[] = [];
+    if (incidentIds.length > 0) {
+      const { data: reportsRaw, error: reportsError } = await supabase
+        .from("reports")
+        .select("incident_id")
+        .in("incident_id", incidentIds)
+        .order("created_at", { ascending: false })
+        .limit(500);
 
-      const { data: activeIncidentsRaw, error: activeIncidentError } = await supabase
-        .from("incident_assignments")
-        .select("assignment_id, incident_id, active_status, assigned_at, incidents(incident_id, incident_name)")
-        .eq("supervisor_id", userId)
-        .eq("active_status", true)
-        .order("assigned_at", { ascending: false })
-        .limit(50);
-
-      const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? [])
-        .filter((shiftItem: any) => !shiftItem.completion_status)
-        .map((shiftItem: any) => ({
-          id: shiftItem.id,
-          shift_date: shiftItem.shift_date,
-          shift_start: shiftItem.shift_start,
-          shift_end: shiftItem.shift_end,
-          clockin_time: shiftItem.clockin_time ?? null,
-          clockout_time: shiftItem.clockout_time ?? null,
-          completion_status: shiftItem.completion_status ?? null,
-          location: shiftItem.location ?? null,
-          address: shiftItem.address ?? null,
-          supervisor_id: shiftItem.supervisor_id ?? null,
-        }));
-
-      const todayShiftData: Shift[] = (todayShiftsRaw ?? [])
-        .filter((shiftItem: any) => !shiftItem.completion_status)
-        .map((shiftItem: any) => ({
-          id: shiftItem.id,
-          shift_date: shiftItem.shift_date,
-          shift_start: shiftItem.shift_start,
-          shift_end: shiftItem.shift_end,
-          clockin_time: shiftItem.clockin_time ?? null,
-          clockout_time: shiftItem.clockout_time ?? null,
-          completion_status: shiftItem.completion_status ?? null,
-          location: shiftItem.location ?? null,
-          address: shiftItem.address ?? null,
-          supervisor_id: shiftItem.supervisor_id ?? null,
-        }));
-
-      if (todayShiftError || upcomingError || activeIncidentError) {
-        setLoadError("Unable to load shifts right now.");
-      }
-
-      if (!upcomingError && (upcomingShiftsRaw?.length ?? 0) === 0) {
-        const { data: visibleShifts, error: visibleError } = await supabase
-          .from("shifts")
-          .select("shift_id, supervisor_id, shift_date")
-          .gte("shift_date", todayISO)
-          .limit(20);
-
-        if (!visibleError) {
-          const visibleCount = visibleShifts?.length ?? 0;
-          const hasMatchingSupervisor = (visibleShifts ?? []).some((item: any) => item.supervisor_id === userId);
-          const supervisorCount = (visibleShifts ?? []).filter((item: any) => item.supervisor_id === userId).length;
-
-          if (visibleCount === 0) {
-            setDebugEmptyReason(
-              `No shifts are visible for this session. Auth user: ${userId}. This usually means RLS policy is blocking select on shifts.`
-            );
-          } else if (hasMatchingSupervisor) {
-            setDebugEmptyReason(
-              `You supervise ${supervisorCount} upcoming shift${supervisorCount === 1 ? "" : "s"}.`
-            );
-          } else {
-            setDebugEmptyReason(
-              `Shifts are visible, but none match supervisor_id = ${userId}. Check shifts.supervisor_id values for this user.`
-            );
-          }
-        }
-      }
-
-      const activeIncidentMap = new Map<string, ActiveHomeIncident>();
-      for (const row of ((activeIncidentsRaw as ActiveIncidentRow[] | null) ?? [])) {
-        const incident = Array.isArray(row.incidents) ? row.incidents[0] : row.incidents;
-        if (!row.incident_id || activeIncidentMap.has(row.incident_id)) continue;
-
-        activeIncidentMap.set(row.incident_id, {
-          assignment_id: row.assignment_id,
-          incident_id: row.incident_id,
-          incident_name: incident?.incident_name ?? null,
-          active_status: row.active_status,
-          assigned_at: row.assigned_at,
-        });
-      }
-      const activeIncidents = Array.from(activeIncidentMap.values()).sort(
-        (a, b) => toMillis(b.assigned_at) - toMillis(a.assigned_at)
-      );
-
-      if (!alive) return;
-
-      if (!profError && prof) {
-        setProfile({
-          id: prof.id,
-          emp_id: prof.emp_id,
-          first_name: prof.first_name,
-          avatar_url: avatarUrl,
-        });
+      if (reportsError) {
+        console.warn("Reports load error:", reportsError.message);
       } else {
-        setProfile(null);
+        reportRows = (reportsRaw as ReportRow[] | null) ?? [];
       }
+    }
 
-      setTodayShifts(todayShiftData);
-      setUpcoming(upcomingShifts);
-      setActiveIncidents(activeIncidents);
-      setLoading(false);
-    };
+    const upcomingShifts: UpcomingShift[] = (upcomingShiftsRaw ?? [])
+      .filter((shiftItem: any) => !shiftItem.completion_status)
+      .map((shiftItem: any) => ({
+        id: shiftItem.id,
+        shift_date: shiftItem.shift_date,
+        shift_start: shiftItem.shift_start,
+        shift_end: shiftItem.shift_end,
+        clockin_time: shiftItem.clockin_time ?? null,
+        clockout_time: shiftItem.clockout_time ?? null,
+        completion_status: shiftItem.completion_status ?? null,
+        location: shiftItem.location ?? null,
+        address: shiftItem.address ?? null,
+        supervisor_id: shiftItem.supervisor_id ?? null,
+      }));
 
-    void load();
+    const todayShiftData: Shift[] = (todayShiftsRaw ?? [])
+      .filter((shiftItem: any) => !shiftItem.completion_status)
+      .map((shiftItem: any) => ({
+        id: shiftItem.id,
+        shift_date: shiftItem.shift_date,
+        shift_start: shiftItem.shift_start,
+        shift_end: shiftItem.shift_end,
+        clockin_time: shiftItem.clockin_time ?? null,
+        clockout_time: shiftItem.clockout_time ?? null,
+        completion_status: shiftItem.completion_status ?? null,
+        location: shiftItem.location ?? null,
+        address: shiftItem.address ?? null,
+        supervisor_id: shiftItem.supervisor_id ?? null,
+      }));
 
-    return () => {
-      alive = false;
-    };
-  }, []);
+    if (todayShiftError || upcomingError || activeIncidentError) {
+      setLoadError("Unable to load shifts right now.");
+    }
+
+    if (!upcomingError && (upcomingShiftsRaw?.length ?? 0) === 0) {
+      const { data: visibleShifts, error: visibleError } = await supabase
+        .from("shifts")
+        .select("shift_id, supervisor_id, shift_date")
+        .gte("shift_date", todayISO)
+        .limit(20);
+
+      if (!visibleError) {
+        const visibleCount = visibleShifts?.length ?? 0;
+        const hasMatchingSupervisor = (visibleShifts ?? []).some((item: any) => item.supervisor_id === userId);
+        const supervisorCount = (visibleShifts ?? []).filter((item: any) => item.supervisor_id === userId).length;
+
+        if (visibleCount === 0) {
+          setDebugEmptyReason(
+            `No shifts are visible for this session. Auth user: ${userId}. This usually means RLS policy is blocking select on shifts.`
+          );
+        } else if (hasMatchingSupervisor) {
+          setDebugEmptyReason(
+            `You supervise ${supervisorCount} upcoming shift${supervisorCount === 1 ? "" : "s"}.`
+          );
+        } else {
+          setDebugEmptyReason(
+            `Shifts are visible, but none match supervisor_id = ${userId}. Check shifts.supervisor_id values for this user.`
+          );
+        }
+      }
+    }
+
+    const reportedIncidentIds = new Set(
+      reportRows.map((report) => report.incident_id).filter((id): id is string => Boolean(id))
+    );
+    const activeIncidents = ((activeIncidentsRaw as ActiveIncidentRow[] | null) ?? [])
+      .filter((row) => !reportedIncidentIds.has(row.incident_id))
+      .map((row) => ({
+        assignment_id: row.incident_id,
+        incident_id: row.incident_id,
+        incident_name: row.incident_name,
+        active_status: row.active_status,
+        assigned_at: row.created_at,
+      }))
+      .sort((a, b) => toMillis(b.assigned_at) - toMillis(a.assigned_at));
+
+    if (!isAlive()) return;
+
+    if (!profError && prof) {
+      setProfile({
+        id: prof.id,
+        emp_id: prof.emp_id,
+        first_name: prof.first_name,
+        avatar_url: avatarUrl,
+      });
+    } else {
+      setProfile(null);
+    }
+
+    setTodayShifts(todayShiftData);
+    setUpcoming(upcomingShifts);
+    setActiveIncidents(activeIncidents);
+    setLoading(false);
+  }, [NOTIF_DISMISS_PREFIX]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+
+      void loadHomeData(() => alive);
+
+      return () => {
+        alive = false;
+      };
+    }, [loadHomeData])
+  );
 
   const name = profile?.first_name || "Officer";
 
