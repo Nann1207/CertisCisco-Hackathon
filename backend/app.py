@@ -1193,6 +1193,144 @@ Rules:
         return fallback_result
 
 
+def _normalize_report_type(value: str) -> str:
+    normalized = _normalize_text(value)
+    if normalized == "resolved":
+        return "Resolved"
+    return "Handover"
+
+
+def _normalize_checked_actions(raw_items) -> list[str]:
+    if not isinstance(raw_items, list):
+        return []
+
+    actions = []
+    seen = set()
+    for raw in raw_items:
+        text = " ".join(str(raw or "").split()).strip()
+        if not text:
+            continue
+        key = _normalize_text(text)
+        if key in seen:
+            continue
+        seen.add(key)
+        actions.append(text)
+    return actions
+
+
+def _fallback_incident_report_draft(
+    *,
+    incident_payload: dict,
+    report_type: str,
+    checked_actions: list[str],
+) -> dict:
+    category = str(incident_payload.get("incident_category") or "incident").strip()
+    location_name = str(incident_payload.get("location_name") or "").strip()
+    location_unit = str(incident_payload.get("location_unit_no") or "").strip()
+    location_desc = str(incident_payload.get("location_description") or "").strip()
+    location = " ".join(part for part in [location_name, location_unit, location_desc] if part).strip() or "assigned location"
+
+    action_sentence = (
+        "I carried out the following actions: " + "; ".join(checked_actions[:8]) + "."
+        if checked_actions
+        else "I responded according to SOP and completed scene checks based on the available indicators."
+    )
+
+    if report_type == "Resolved":
+        incident_description = (
+            f"I attended a {category} incident at {location}. "
+            f"{action_sentence} "
+            "After assessment and response, the immediate risk indicators were stabilized and the incident was resolved. "
+            "Relevant updates were communicated to control and records were prepared for closure."
+        )
+        handover_instructions = (
+            "Incident resolved. Continue routine monitoring of the area and escalate immediately if related indicators reappear."
+        )
+    else:
+        incident_description = (
+            f"I attended a {category} incident at {location}. "
+            f"{action_sentence} "
+            "The scene was managed to maintain safety and control while preserving key observations for continuity."
+        )
+        handover_instructions = (
+            "Continue monitoring the location, maintain communication updates, and follow pending SOP actions until full stabilization."
+        )
+
+    return {
+        "incident_description": " ".join(incident_description.split()),
+        "handover_instructions": " ".join(handover_instructions.split()),
+    }
+
+
+def generate_incident_report_draft(
+    *,
+    incident_payload: dict,
+    report_type: str,
+    checked_actions: list[str],
+    duty_officer_name: str,
+    supervisor_name: str,
+) -> dict:
+    system_msg = (
+        "You write formal incident reports in first-person perspective for mall security officers. "
+        "Use only provided context. Do not fabricate facts, people, threats, or outcomes. "
+        "Return strict JSON only."
+    )
+    user_msg = f"""
+Report type:
+{report_type}
+
+Duty officer:
+{duty_officer_name or "-"}
+
+Supervisor:
+{supervisor_name or "-"}
+
+Incident context:
+{json.dumps(incident_payload, ensure_ascii=False)}
+
+Checklist actions the officer actually clicked/completed:
+{json.dumps(checked_actions, ensure_ascii=False)}
+
+Output JSON shape:
+{{
+  "incident_description": "...",
+  "handover_instructions": "..."
+}}
+
+Rules:
+- Write in first person ("I").
+- Keep incident_description practical and professional for a security report.
+- Explicitly incorporate relevant checklist actions as completed actions.
+- If checklist actions are empty, state actions in conservative SOP terms without inventing specifics.
+- For report_type "Resolved", describe closure status clearly.
+- For report_type "Handover", provide actionable handover_instructions for the next officer.
+- No markdown, no bullet points, no extra keys.
+""".strip()
+
+    raw = _call_checklist_sealion_chat(
+        [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ],
+        temperature=0.2,
+    )
+    parsed = json.loads(raw)
+
+    incident_description = " ".join(str(parsed.get("incident_description") or "").split()).strip()
+    handover_instructions = " ".join(str(parsed.get("handover_instructions") or "").split()).strip()
+
+    if len(incident_description) < 40:
+        raise RuntimeError("Generated incident_description is too short.")
+    if report_type == "Handover" and len(handover_instructions) < 20:
+        raise RuntimeError("Generated handover_instructions is too short.")
+
+    return {
+        "incident_description": incident_description,
+        "handover_instructions": handover_instructions,
+        "generator": "sealion_report_draft",
+    }
+
+
 @app.post("/incident/checklist/generate")
 def incident_checklist_generate():
     payload = request.get_json(silent=True) or {}
@@ -1208,6 +1346,50 @@ def incident_checklist_generate():
         return jsonify(error=f"Checklist generation failed: {exc}"), 500
 
     _log_pretty_json("[incident/checklist] response", result)
+    return jsonify(result)
+
+
+@app.post("/incident/report/generate")
+def incident_report_generate():
+    payload = request.get_json(silent=True) or {}
+    incident_payload = payload.get("incident")
+    if not isinstance(incident_payload, dict):
+        return jsonify(error="'incident' must be an object."), 400
+
+    report_type = _normalize_report_type(str(payload.get("report_type") or "Handover"))
+    checked_actions = _normalize_checked_actions(payload.get("checked_actions"))
+    duty_officer_name = " ".join(str(payload.get("duty_officer_name") or "").split()).strip()
+    supervisor_name = " ".join(str(payload.get("supervisor_name") or "").split()).strip()
+
+    _log_pretty_json(
+        "[incident/report] request",
+        {
+            "report_type": report_type,
+            "incident": incident_payload,
+            "checked_actions": checked_actions,
+            "duty_officer_name": duty_officer_name,
+            "supervisor_name": supervisor_name,
+        },
+    )
+
+    try:
+        result = generate_incident_report_draft(
+            incident_payload=incident_payload,
+            report_type=report_type,
+            checked_actions=checked_actions,
+            duty_officer_name=duty_officer_name,
+            supervisor_name=supervisor_name,
+        )
+    except Exception as exc:
+        result = _fallback_incident_report_draft(
+            incident_payload=incident_payload,
+            report_type=report_type,
+            checked_actions=checked_actions,
+        )
+        result["generator"] = "deterministic_report_fallback"
+        result["fallback_reason"] = str(exc)
+
+    _log_pretty_json("[incident/report] response", result)
     return jsonify(result)
 
 

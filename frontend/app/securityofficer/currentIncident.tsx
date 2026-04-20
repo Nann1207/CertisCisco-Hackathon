@@ -381,6 +381,23 @@ export default function CurrentIncidentScreen() {
 		});
 	};
 
+	const onOpenIncidentReport = (nextReportType: "Handover" | "Resolved") => {
+		if (!incident?.id) return;
+		const checkedEarlyActions = earlyChecklist.filter((item) => Boolean(earlyChecked[item]));
+		const checkedSopActions = sopChecklist.filter((item) => Boolean(sopChecked[item]));
+
+		setShowReportModeModal(false);
+		router.push({
+			pathname: "/securityofficer/shift-reports",
+			params: {
+				incidentId: incident.id,
+				reportType: nextReportType,
+				checkedEarlyActions: JSON.stringify(checkedEarlyActions),
+				checkedSopActions: JSON.stringify(checkedSopActions),
+			},
+		});
+	};
+
 	const onCallSupervisor = async () => {
 		const tel = `tel:${supervisorPhone}`;
 		const canOpen = await Linking.canOpenURL(tel);
@@ -883,10 +900,7 @@ export default function CurrentIncidentScreen() {
 
 						<Pressable
 							style={[styles.modeBtn, styles.modeBtnHandover]}
-							onPress={() => {
-								setShowReportModeModal(false);
-								router.push(`/securityofficer/shift-reports?incidentId=${incident.id}&reportType=Handover`);
-							}}
+							onPress={() => onOpenIncidentReport("Handover")}
 						>
 							<Text style={[styles.modeBtnText, styles.modeBtnTextHandover]}>Hand Over</Text>
 						</Pressable>
@@ -895,10 +909,7 @@ export default function CurrentIncidentScreen() {
 
 						<Pressable
 							style={[styles.modeBtn, styles.modeBtnResolved]}
-							onPress={() => {
-								setShowReportModeModal(false);
-								router.push(`/securityofficer/shift-reports?incidentId=${incident.id}&reportType=Resolved`);
-							}}
+							onPress={() => onOpenIncidentReport("Resolved")}
 						>
 							<Text style={[styles.modeBtnText, styles.modeBtnTextResolved]}>Resolved</Text>
 						</Pressable>

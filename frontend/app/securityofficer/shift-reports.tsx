@@ -30,10 +30,12 @@ type ReportShift = {
 
 export default function ReportsScreen() {
   const router = useRouter();
-  const { shiftId, incidentId, reportType } = useLocalSearchParams<{
+  const { shiftId, incidentId, reportType, checkedEarlyActions, checkedSopActions } = useLocalSearchParams<{
     shiftId?: string;
     incidentId?: string;
     reportType?: string;
+    checkedEarlyActions?: string;
+    checkedSopActions?: string;
   }>();
 
   const [loading, setLoading] = useState(true);
@@ -47,10 +49,16 @@ export default function ReportsScreen() {
 
   useEffect(() => {
     if (!incidentId || !reportType) return;
-    router.replace(
-      `/securityofficer/createReport?incidentId=${incidentId}&reportType=${reportType}`
-    );
-  }, [incidentId, reportType, router]);
+    router.replace({
+      pathname: "/securityofficer/createReport",
+      params: {
+        incidentId,
+        reportType,
+        checkedEarlyActions,
+        checkedSopActions,
+      },
+    });
+  }, [checkedEarlyActions, checkedSopActions, incidentId, reportType, router]);
 
   useEffect(() => {
     if (incidentId && reportType) {
