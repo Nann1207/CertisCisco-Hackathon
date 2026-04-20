@@ -42,6 +42,10 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
     if (!userId) return null;
     return `${STORAGE_KEY_PREFIX}:${userId}`;
   }, [userId]);
+  const storageDismissKey = useMemo(() => {
+    if (!userId) return null;
+    return `${DISMISS_STORAGE_KEY_PREFIX}:${userId}`;
+  }, [userId]);
 
   const stopVibration = () => {
     Vibration.cancel();
