@@ -247,31 +247,16 @@ export default function SsoCreateReportScreen() {
       return;
     }
 
-    if (reportType === "Resolved") {
-      const [{ error: incidentUpdateError }, { error: assignmentUpdateError }] = await Promise.all([
-        supabase
-          .from("incidents")
-          .update({ active_status: false })
-          .eq("incident_id", selectedIncident.id),
-        supabase
-          .from("incident_assignments")
-          .update({ active_status: false })
-          .eq("incident_id", selectedIncident.id)
-          .eq("officer_id", authUserId)
-          .eq("active_status", true),
-      ]);
+    await supabase
+      .from("incidents")
+      .update({ active_status: false })
+      .eq("incident_id", selectedIncident.id);
 
-      if (incidentUpdateError || assignmentUpdateError) {
-        setSaving(false);
-        Alert.alert(
-          "Submit partially completed",
-          assignmentUpdateError?.message ??
-            incidentUpdateError?.message ??
-            "The report was saved, but incident status could not be fully updated."
-        );
-        return;
-      }
-    }
+    await supabase
+      .from("incident_assignments")
+      .update({ active_status: false })
+      .eq("incident_id", selectedIncident.id)
+      .eq("active_status", true);
 
     setSaving(false);
     setShowSubmitSuccessModal(true);

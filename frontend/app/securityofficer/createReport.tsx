@@ -453,20 +453,25 @@ export default function CreateReportScreen() {
 			return;
 		}
 
-		const { error: closeAssignmentError } = await supabase
-			.from("incident_assignments")
-			.update({ active_status: false })
-			.eq("officer_id", authUserId)
-			.eq("incident_id", selectedIncident.id)
-			.eq("active_status", true);
+		if (reportType === "Resolved") {
+			const { error: closeAssignmentError } = await supabase
+				.from("incident_assignments")
+				.update({ active_status: false })
+				.eq("officer_id", authUserId)
+				.eq("incident_id", selectedIncident.id)
+				.eq("active_status", true);
 
-		setSaving(false);
+			setSaving(false);
 
-		if (closeAssignmentError) {
-			Alert.alert(
-				"Submitted with warning",
-				"Report was submitted, but the assignment could not be closed automatically. Please refresh and try again."
-			);
+			if (closeAssignmentError) {
+				Alert.alert(
+					"Submitted with warning",
+					"Report was submitted, but the assignment could not be closed automatically. Please refresh and try again."
+				);
+				return;
+			}
+		} else {
+			setSaving(false);
 		}
 
 		setSubmittedReportType(reportType);
