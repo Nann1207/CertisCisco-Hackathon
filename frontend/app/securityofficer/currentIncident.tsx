@@ -540,6 +540,7 @@ export default function CurrentIncidentScreen() {
 					contentContainerStyle={[
 						styles.scrollContent,
 						!isArrived ? styles.scrollContentWithFloatingArrivedBtn : null,
+						isArrived ? styles.scrollContentWithFloatingReportBtn : null,
 					]}
 					showsVerticalScrollIndicator={false}
 				>
@@ -713,9 +714,6 @@ export default function CurrentIncidentScreen() {
 									))
 								)}
 
-								<Pressable style={styles.primaryBtn} onPress={() => setShowReportModeModal(true)}>
-									<Text style={styles.primaryBtnText}>Incident Report</Text>
-								</Pressable>
 							</>
 						)}
 					</View>
@@ -738,6 +736,21 @@ export default function CurrentIncidentScreen() {
 								style={styles.markArrivedBtn}
 							>
 								<Text style={styles.primaryBtnText}>Mark as Arrived</Text>
+							</LinearGradient>
+						</Pressable>
+					</View>
+				) : null}
+
+				{isArrived ? (
+					<View style={styles.floatingReportArea} pointerEvents="box-none">
+						<Pressable style={styles.markArrivedBtnWrap} onPress={() => setShowReportModeModal(true)}>
+							<LinearGradient
+								colors={["#1A4A7D", "#0B2D57"]}
+								start={{ x: 0, y: 0 }}
+								end={{ x: 1, y: 1 }}
+								style={styles.markArrivedBtn}
+							>
+								<Text style={styles.primaryBtnText}>Incident Report</Text>
 							</LinearGradient>
 						</Pressable>
 					</View>
@@ -862,6 +875,9 @@ export default function CurrentIncidentScreen() {
 			>
 				<View style={styles.modalBackdrop}>
 					<View style={styles.modeCard}>
+						<Pressable style={styles.modalCloseIconBtn} onPress={() => setShowReportModeModal(false)}>
+							<Text style={styles.modalCloseIconText}>×</Text>
+						</Pressable>
 						<Text style={styles.modeTitle}>HANDOVER / RESOLVED</Text>
 						<Text style={styles.modeSubtitle}>Pick the status of the incident report</Text>
 
@@ -980,6 +996,9 @@ const styles = StyleSheet.create({
 		paddingBottom: 36,
 	},
 	scrollContentWithFloatingArrivedBtn: {
+		paddingBottom: 126,
+	},
+	scrollContentWithFloatingReportBtn: {
 		paddingBottom: 126,
 	},
 	card: {
@@ -1199,6 +1218,13 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 	},
 	floatingArrivedArea: {
+		position: "absolute",
+		left: 0,
+		right: 0,
+		bottom: 22,
+		alignItems: "center",
+	},
+	floatingReportArea: {
 		position: "absolute",
 		left: 0,
 		right: 0,
