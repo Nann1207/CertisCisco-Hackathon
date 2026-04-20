@@ -256,6 +256,8 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 18,
     fontWeight: "800",
+    textAlign: "center",        // centers horizontally inside the Text
+    textAlignVertical: "center"
   },
   incidentSummarySubtitle: {
     marginTop: 4,

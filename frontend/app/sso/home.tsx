@@ -721,14 +721,14 @@ export default function Home() {
         </View>
       )}
 
-      {activeIncidents.length > 0 ? (
-        <>
-          <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}>
-            <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
-          </View>
+      <>
+        <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}>
+          <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
+        </View>
 
-          <View style={[styles.incidentSummaryCard, { marginHorizontal: horizontalPadding }]}>
-            {activeIncidents.map((incident, index) => (
+        <View style={[styles.incidentSummaryCard, { marginHorizontal: horizontalPadding }]}>
+          {activeIncidents.length > 0 ? (
+            activeIncidents.map((incident, index) => (
               <View key={incident.assignment_id || `${incident.incident_id}-${index}`}>
                 {index > 0 ? (
                   <View style={{ height: 1, backgroundColor: "rgba(186, 79, 79, 0.35)", marginVertical: 10 }} />
@@ -739,18 +739,42 @@ export default function Home() {
                     void openActiveIncident(incident.incident_id);
                   }}
                 >
-                  <Text style={styles.incidentSummaryTitle} numberOfLines={2}>
+                  <Text
+                    style={[styles.incidentSummaryTitle, { fontSize: 16, lineHeight: 22, textAlign: "left" }]}
+                    numberOfLines={2}
+                    disableDynamicFontSize
+                    adjustsFontSizeToFit={false}
+                    minimumFontScale={1}
+                  >
                     {incident.incident_name?.trim() || "Active Incident"}
                   </Text>
                   <View style={styles.incidentStatusBadge}>
-                    <Text style={styles.incidentStatusText}>ACTIVE</Text>
+                    <Text
+                      style={[styles.incidentStatusText, { fontSize: 13 }]}
+                      disableDynamicFontSize
+                      adjustsFontSizeToFit={false}
+                      minimumFontScale={1}
+                    >
+                      ACTIVE
+                    </Text>
                   </View>
                 </Pressable>
               </View>
-            ))}
-          </View>
-        </>
-      ) : null}
+            ))
+          ) : (
+            <View style={styles.incidentSummaryRow}>
+              <Text
+                style={[styles.incidentSummaryTitle, { fontSize: 16, lineHeight: 22 }]}
+                disableDynamicFontSize
+                adjustsFontSizeToFit={false}
+                minimumFontScale={1}
+              >
+                No incidents for today
+              </Text>
+            </View>
+          )}
+        </View>
+      </>
 
       <View style={[styles.scheduleHeader, { marginHorizontal: horizontalPadding }]}>
         <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Upcoming Schedule</Text>

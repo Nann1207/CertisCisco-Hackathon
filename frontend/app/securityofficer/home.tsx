@@ -727,12 +727,12 @@ export default function Home() {
         </View>
       )}
 
-      {activeIncident ? (
-        <>
-          <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}> 
-            <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
-          </View>
+      <>
+        <View style={[styles.incidentsHeader, { marginHorizontal: horizontalPadding }]}> 
+          <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
+        </View>
 
+        {activeIncident ? (
           <Pressable
             style={[styles.incidentSummaryCard, { marginHorizontal: horizontalPadding }]}
             onPress={() => router.push("/securityofficer/incidents")}
@@ -746,8 +746,14 @@ export default function Home() {
               </View>
             </View>
           </Pressable>
-        </>
-      ) : null}
+        ) : (
+          <View style={[styles.incidentSummaryCard, { marginHorizontal: horizontalPadding }]}>
+            <View style={styles.incidentSummaryRow}>
+              <Text style={styles.incidentSummaryTitle}>No incidents for today</Text>
+            </View>
+          </View>
+        )}
+      </>
 
       <View style={[styles.scheduleHeader, { marginHorizontal: horizontalPadding }]}> 
         <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Upcoming Schedule</Text>
