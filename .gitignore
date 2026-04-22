@@ -102,12 +102,12 @@ expo-env.d.ts
 backend/.env
 frontend/.env
 
-# New website project
+#  website 
 
 certiscommandcontrol/backend/.env
 certiscommandcontrol/backend/.venv/
 certiscommandcontrol/frontend/.env
 
-# Optional: ignore local test/demo apps
+
 
 app-example
