@@ -20,8 +20,10 @@ function readSignedUrl(data: SignedUrlData) {
   return data?.signedUrl ?? data?.signedURL ?? null;
 }
 
-export async function resolveIncidentFrameUrls(rawPaths: Array<string | null | undefined>) {
-  const urls = await Promise.all(
+export async function resolveIncidentFrameUrls(
+  rawPaths: Array<string | null | undefined>
+): Promise<Array<string | null>> {
+  return Promise.all(
     rawPaths.map(async (rawPath) => {
       const trimmed = rawPath?.trim();
       if (!trimmed) return null;
@@ -40,6 +42,4 @@ export async function resolveIncidentFrameUrls(rawPaths: Array<string | null | u
       return publicData.publicUrl ?? null;
     })
   );
-
-  return urls.filter((item): item is string => Boolean(item));
 }

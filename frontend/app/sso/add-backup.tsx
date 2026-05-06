@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -11,7 +12,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { CheckCircle2, ChevronLeft, CircleX, Clock3 } from "lucide-react-native";
+import { CheckCircle2, ChevronLeft, CircleX, Clock3, PhoneCall, TriangleAlert } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
 import { supabase } from "../../lib/supabase";
@@ -34,6 +35,7 @@ type ShiftOfficerRow = {
         last_name: string | null;
         role: string | null;
         profile_photo_path: string | null;
+        phone: string | null;
       }
     | {
         id: string;
@@ -41,6 +43,7 @@ type ShiftOfficerRow = {
         last_name: string | null;
         role: string | null;
         profile_photo_path: string | null;
+        phone: string | null;
       }[]
     | null;
 };
@@ -58,8 +61,10 @@ type CandidateOfficer = {
   lastName: string | null;
   role: string | null;
   profilePhotoUrl: string | null;
+  phone: string | null;
   hasActiveAssignment: boolean;
   alreadyAssignedToIncident: boolean;
+  hasRejectedAssignment: boolean;
 };
 
 type ActiveAssignmentRow = {
@@ -183,7 +188,7 @@ export default function SsoAddBackupPage() {
       const { data: rows, error: rowsError } = await supabase
         .from("shifts")
         .select(
-          "shift_id, officer_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, employees!shifts_officer_id_fkey(id, first_name, last_name, role, profile_photo_path)"
+          "shift_id, officer_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, employees!shifts_officer_id_fkey(id, first_name, last_name, role, profile_photo_path, phone)"
         )
         .eq("supervisor_id", userId)
         .eq("shift_date", todayISO)
@@ -227,8 +232,10 @@ export default function SsoAddBackupPage() {
             lastName: employee.last_name,
             role: employee.role,
             profilePhotoUrl: await getProfilePhotoUrlFromPath(employee.profile_photo_path),
+            phone: employee.phone ?? null,
             hasActiveAssignment: false,
             alreadyAssignedToIncident: false,
+            hasRejectedAssignment: false,
           } satisfies CandidateOfficer;
         }))
       )
@@ -259,10 +266,26 @@ export default function SsoAddBackupPage() {
         );
       }
 
+      let rejectedOfficerIds = new Set<string>();
+      if (officerIds.length > 0) {
+        const { data: rejectedRows } = await supabase
+          .from("reject_assignment")
+          .select("officer_id")
+          .eq("incident_id", incidentId)
+          .in("officer_id", officerIds);
+
+        rejectedOfficerIds = new Set(
+          ((rejectedRows as { officer_id: string | null }[] | null) ?? [])
+            .map((item) => item.officer_id)
+            .filter((item): item is string => Boolean(item))
+        );
+      }
+
       const merged = uniqueCandidates.map((item) => ({
         ...item,
         hasActiveAssignment: busyOfficerIds.has(item.officerId),
         alreadyAssignedToIncident: existingIds.has(item.officerId),
+        hasRejectedAssignment: rejectedOfficerIds.has(item.officerId),
       }));
 
       if (!alive) return;
@@ -286,7 +309,7 @@ export default function SsoAddBackupPage() {
 
         const greenCount = tones.filter((tone) => tone === "green").length;
         const grayCount = tones.filter((tone) => tone === "gray").length;
-        const redCount = tones.filter((tone) => tone === "red").length;
+        const redCount = tones.filter((tone) => tone === "red" || tone === "amber").length;
 
         return {
           officer,
@@ -307,6 +330,25 @@ export default function SsoAddBackupPage() {
   }, [candidates]);
 
   const selectedCount = selectedOfficerIds.size;
+
+  const onCallOfficer = async (officerId: string, phone: string | null) => {
+    if (!phone?.trim()) {
+      router.push({ pathname: "/sso/phonecalls", params: { officerId } });
+      return;
+    }
+
+    const tel = `tel:${phone.trim()}`;
+    try {
+      const canOpen = await Linking.canOpenURL(tel);
+      if (!canOpen) {
+        router.push({ pathname: "/sso/phonecalls", params: { officerId } });
+        return;
+      }
+      await Linking.openURL(tel);
+    } catch {
+      router.push({ pathname: "/sso/phonecalls", params: { officerId } });
+    }
+  };
 
   const onToggleAssign = (officer: CandidateOfficer, canAssign: boolean) => {
     if (!canAssign) return;
@@ -410,7 +452,8 @@ export default function SsoAddBackupPage() {
                 const isSelected = selectedOfficerIds.has(officer.officerId);
                 const canAssign =
                   availabilityStatus.tone === "green" &&
-                  !officer.alreadyAssignedToIncident;
+                  !officer.alreadyAssignedToIncident &&
+                  !officer.hasRejectedAssignment;
 
                 return (
                   <View key={officer.officerId} style={styles.card}>
@@ -426,6 +469,9 @@ export default function SsoAddBackupPage() {
                       <View style={styles.badgesCol}>
                         <StatusBadge label={clockStatus.label} tone={clockStatus.tone} />
                         <StatusBadge label={availabilityStatus.label} tone={availabilityStatus.tone} />
+                        <Pressable style={styles.callBtn} onPress={() => { void onCallOfficer(officer.officerId, officer.phone); }}>
+                          <PhoneCall size={14} color="#FFFFFF" />
+                        </Pressable>
                       </View>
                     </View>
 
@@ -515,10 +561,18 @@ function ProfileAvatar({ profilePhotoUrl, fullName }: { profilePhotoUrl: string 
   );
 }
 
-function StatusBadge({ label, tone }: { label: string; tone: "green" | "red" | "gray" }) {
+function StatusBadge({ label, tone }: { label: string; tone: "green" | "red" | "gray" | "amber" }) {
   return (
-    <View style={[styles.statusBadge, tone === "green" ? styles.badgeGreen : tone === "red" ? styles.badgeRed : styles.badgeGray]}>
-      {tone === "green" ? <CheckCircle2 size={11} color="#FFFFFF" /> : tone === "red" ? <CircleX size={11} color="#FFFFFF" /> : <Clock3 size={11} color="#FFFFFF" />}
+    <View style={[styles.statusBadge, tone === "green" ? styles.badgeGreen : tone === "red" ? styles.badgeRed : tone === "amber" ? styles.badgeAmber : styles.badgeGray]}>
+      {tone === "green" ? (
+        <CheckCircle2 size={11} color="#FFFFFF" />
+      ) : tone === "red" ? (
+        <CircleX size={11} color="#FFFFFF" />
+      ) : tone === "amber" ? (
+        <TriangleAlert size={11} color="#FFFFFF" />
+      ) : (
+        <Clock3 size={11} color="#FFFFFF" />
+      )}
       <Text style={styles.statusBadgeText}>{label}</Text>
     </View>
   );
@@ -539,6 +593,10 @@ function getClockStatus(officer: CandidateOfficer) {
 function getAvailabilityStatus(officer: CandidateOfficer, isClockedIn: boolean) {
   if (!isClockedIn) {
     return { label: "Not Available", tone: "gray" as const };
+  }
+
+  if (officer.hasRejectedAssignment) {
+    return { label: "Rejected", tone: "amber" as const };
   }
 
   if (officer.hasActiveAssignment) {
@@ -792,10 +850,23 @@ const styles = StyleSheet.create({
   badgeGray: {
     backgroundColor: "#6B7280",
   },
+  badgeAmber: {
+    backgroundColor: "#D97706",
+  },
   statusBadgeText: {
     color: "#FFFFFF",
     fontSize: 10,
     fontWeight: "700",
+  },
+  callBtn: {
+    width: 32,
+    height: 28,
+    borderRadius: 10,
+    backgroundColor: "#0E2D52",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.2)",
   },
   shiftRow: {
     marginTop: 14,

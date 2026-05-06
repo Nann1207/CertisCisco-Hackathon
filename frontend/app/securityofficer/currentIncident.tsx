@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
 	ActivityIndicator,
 	Alert,
+	Dimensions,
 	Image,
 	Linking,
 	Modal,
@@ -18,10 +19,13 @@ import * as Location from "expo-location";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { BellRing, ChevronLeft, ClipboardPen, PhoneCall } from "lucide-react-native";
+import { BellRing, ChevronLeft, ClipboardPen, PhoneCall, Settings2 } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
+import { getProfilePhotoUrlFromFolder, getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
 import { supabase } from "../../lib/supabase";
+import AiSummaryModal from "./components/AiSummaryModal";
+import CctvCarouselModal from "./components/CctvCarouselModal";
 
 type IncidentRow = {
 	id: string;
@@ -31,7 +35,6 @@ type IncidentRow = {
 	location_description?: string | null;
 	latitude?: number | null;
 	longitude?: number | null;
-	prediction_correct?: boolean | null;
 	cctv_image_1_path?: string | null;
 	cctv_image_2_path?: string | null;
 	cctv_image_3_path?: string | null;
@@ -58,13 +61,13 @@ type SupervisorContactRow = {
 
 type IncidentProgressState = {
 	isArrived: boolean;
-	predictionAnswer: "TRUE" | "FALSE" | null;
 	earlyChecked: Record<string, true>;
 	sopChecked: Record<string, true>;
 };
 
 const NEARBY_DISTANCE_METERS = 120;
 const INCIDENT_PROGRESS_STORAGE_PREFIX = "current_incident_progress";
+const AI_SUMMARY_FONT_SIZE_PREFIX = "ai_summary_font_size";
 const DEFAULT_EARLY_CHECKLIST = [
 	"Acknowledge - Confirm via radio you are responding",
 	"Visual Scan - Watch for suspects blending into the crowd",
@@ -119,7 +122,6 @@ export default function CurrentIncidentScreen() {
 	const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number } | null>(null);
 	const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
 	const [isArrived, setIsArrived] = useState(false);
-	const [predictionAnswer, setPredictionAnswer] = useState<"TRUE" | "FALSE" | null>(null);
 	const [earlyChecked, setEarlyChecked] = useState<Record<string, true>>({});
 	const [sopChecked, setSopChecked] = useState<Record<string, true>>({});
 	const [testingMode, setTestingMode] = useState(__DEV__);
@@ -134,15 +136,51 @@ export default function CurrentIncidentScreen() {
 	const [backupReason, setBackupReason] = useState("");
 	const [showReportModeModal, setShowReportModeModal] = useState(false);
 	const [showMapModal, setShowMapModal] = useState(false);
-	const [modalMapRegion, setModalMapRegion] = useState<Region | null>(null);
+	const [mapRegion, setMapRegion] = useState<Region | null>(null);
 	const modalMapRef = useRef<MapView | null>(null);
-	const [cctvUris, setCctvUris] = useState<string[]>([]);
+	const [cctvUris, setCctvUris] = useState<Array<string | null>>([]);
+	const [showCctvModal, setShowCctvModal] = useState(false);
+	const [activeCctvIndex, setActiveCctvIndex] = useState(0);
+	const [showAiSummaryModal, setShowAiSummaryModal] = useState(false);
+	const [aiSummaryFontSize, setAiSummaryFontSize] = useState(16);
+	const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
+	const [currentUserAvatarUrl, setCurrentUserAvatarUrl] = useState<string | null>(null);
 	const hasHydratedProgressRef = useRef(false);
+	const mapRegionAdjustingRef = useRef(false);
 
 	const progressStorageKey = useMemo(() => {
 		if (!currentUserId || !incidentId) return null;
 		return `${INCIDENT_PROGRESS_STORAGE_PREFIX}:${currentUserId}:${incidentId}`;
 	}, [currentUserId, incidentId]);
+
+	const aiSummaryStorageKey = useMemo(() => {
+		if (!currentUserId) return null;
+		return `${AI_SUMMARY_FONT_SIZE_PREFIX}:${currentUserId}`;
+	}, [currentUserId]);
+
+	useEffect(() => {
+		let alive = true;
+
+		const loadFontSize = async () => {
+			if (!aiSummaryStorageKey) return;
+			const stored = await AsyncStorage.getItem(aiSummaryStorageKey);
+			if (!alive || !stored) return;
+			const parsed = Number.parseFloat(stored);
+			if (Number.isFinite(parsed)) {
+				setAiSummaryFontSize(Math.min(20, Math.max(13, parsed)));
+			}
+		};
+
+		void loadFontSize();
+		return () => {
+			alive = false;
+		};
+	}, [aiSummaryStorageKey]);
+
+	useEffect(() => {
+		if (!aiSummaryStorageKey) return;
+		void AsyncStorage.setItem(aiSummaryStorageKey, String(aiSummaryFontSize));
+	}, [aiSummaryFontSize, aiSummaryStorageKey]);
 
 	useEffect(() => {
 		let alive = true;
@@ -191,7 +229,7 @@ export default function CurrentIncidentScreen() {
 			const { data: incidentData, error: incidentError } = await supabase
 				.from("incidents")
 				.select(
-					"id:incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, prediction_correct, cctv_image_1_path, cctv_image_2_path, cctv_image_3_path, cctv_image_4, ai_assessment"
+					"id:incident_id, incident_category, location_name, location_unit_no, location_description, latitude, longitude, cctv_image_1_path, cctv_image_2_path, cctv_image_3_path, cctv_image_4, ai_assessment"
 				)
 				.eq("incident_id", incidentId)
 				.maybeSingle();
@@ -254,6 +292,35 @@ export default function CurrentIncidentScreen() {
 	}, [incidentId, router]);
 
 	useEffect(() => {
+		let alive = true;
+
+		const loadAvatar = async () => {
+			if (!currentUserId) {
+				if (alive) setCurrentUserAvatarUrl(null);
+				return;
+			}
+
+			const { data } = await supabase
+				.from("employees")
+				.select("profile_photo_path, emp_id")
+				.eq("id", currentUserId)
+				.maybeSingle<{ profile_photo_path?: string | null; emp_id?: string | null }>();
+
+			const resolvedUrl =
+				(await getProfilePhotoUrlFromPath(data?.profile_photo_path ?? null)) ??
+				(data?.emp_id ? await getProfilePhotoUrlFromFolder(data.emp_id) : null) ??
+				(await getProfilePhotoUrlFromFolder(currentUserId));
+
+			if (alive) setCurrentUserAvatarUrl(resolvedUrl);
+		};
+
+		void loadAvatar();
+		return () => {
+			alive = false;
+		};
+	}, [currentUserId]);
+
+	useEffect(() => {
 		let watcher: Location.LocationSubscription | null = null;
 		let active = true;
 
@@ -293,6 +360,51 @@ export default function CurrentIncidentScreen() {
 				incident.longitude
 			)
 		);
+	}, [currentCoords, incident?.latitude, incident?.longitude]);
+
+	useEffect(() => {
+		let alive = true;
+
+		const loadRoute = async () => {
+			if (!currentCoords || !incident?.latitude || !incident?.longitude) {
+				if (alive) setRouteCoords([]);
+				return;
+			}
+
+			const start = `${currentCoords.longitude},${currentCoords.latitude}`;
+			const end = `${incident.longitude},${incident.latitude}`;
+			const url = `https://router.project-osrm.org/route/v1/foot/${start};${end}?overview=full&geometries=geojson`;
+
+			try {
+				const response = await fetch(url);
+				const body = (await response.json().catch(() => null)) as {
+					routes?: Array<{ geometry?: { coordinates?: number[][] } }>;
+				} | null;
+
+				const coords = body?.routes?.[0]?.geometry?.coordinates ?? null;
+				if (!alive) return;
+				if (Array.isArray(coords) && coords.length >= 2) {
+					setRouteCoords(
+						coords.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))
+					);
+					return;
+				}
+			} catch (error) {
+				console.warn("[currentIncident] walking route failed:", error);
+			}
+
+			if (alive) {
+				setRouteCoords([
+					currentCoords,
+					{ latitude: incident.latitude, longitude: incident.longitude },
+				]);
+			}
+		};
+
+		void loadRoute();
+		return () => {
+			alive = false;
+		};
 	}, [currentCoords, incident?.latitude, incident?.longitude]);
 
 	useEffect(() => {
@@ -401,7 +513,6 @@ export default function CurrentIncidentScreen() {
 
 		if (!progressStorageKey) {
 			setIsArrived(false);
-			setPredictionAnswer(null);
 			setEarlyChecked({});
 			setSopChecked({});
 			return;
@@ -417,16 +528,10 @@ export default function CurrentIncidentScreen() {
 				if (stored) {
 					const parsed = JSON.parse(stored) as Partial<IncidentProgressState>;
 					setIsArrived(Boolean(parsed.isArrived));
-					setPredictionAnswer(
-						parsed.predictionAnswer === "TRUE" || parsed.predictionAnswer === "FALSE"
-							? parsed.predictionAnswer
-							: null
-					);
 					setEarlyChecked((parsed.earlyChecked ?? {}) as Record<string, true>);
 					setSopChecked((parsed.sopChecked ?? {}) as Record<string, true>);
 				} else {
 					setIsArrived(false);
-					setPredictionAnswer(null);
 					setEarlyChecked({});
 					setSopChecked({});
 				}
@@ -453,7 +558,6 @@ export default function CurrentIncidentScreen() {
 			try {
 				const payload: IncidentProgressState = {
 					isArrived,
-					predictionAnswer,
 					earlyChecked,
 					sopChecked,
 				};
@@ -464,7 +568,7 @@ export default function CurrentIncidentScreen() {
 		};
 
 		void saveProgress();
-	}, [earlyChecked, isArrived, predictionAnswer, progressStorageKey, sopChecked]);
+	}, [earlyChecked, isArrived, progressStorageKey, sopChecked]);
 
 	const incidentTitle = useMemo(() => {
 		const category = (incident?.incident_category ?? "Incident").toString();
@@ -481,6 +585,21 @@ export default function CurrentIncidentScreen() {
 		}),
 		[incident?.latitude, incident?.longitude]
 	);
+
+	useEffect(() => {
+		if (!mapRegion) {
+			setMapRegion(incidentRegion);
+		}
+	}, [incidentRegion, mapRegion]);
+
+	const cctvItems = useMemo(
+		() => (cctvUris.length ? cctvUris : [null, null, null, null]),
+		[cctvUris]
+	);
+
+	const mapDistanceLabel = formatDistanceText(distanceMeters);
+	const hasRoute = routeCoords.length >= 2;
+	const carouselWidth = Math.min(Dimensions.get("window").width - 44, 420);
 
 	const canMarkArrived =
 		testingMode || (distanceMeters !== null && distanceMeters <= NEARBY_DISTANCE_METERS);
@@ -610,12 +729,12 @@ export default function CurrentIncidentScreen() {
 	};
 
 	const onOpenMapModal = () => {
-		setModalMapRegion(incidentRegion);
+		if (!mapRegion) setMapRegion(incidentRegion);
 		setShowMapModal(true);
 	};
 
 	const onZoomModalMap = (direction: "in" | "out") => {
-		setModalMapRegion((prev) => {
+		setMapRegion((prev) => {
 			const base = prev ?? incidentRegion;
 			const factor = direction === "in" ? 0.55 : 1.8;
 			const next: Region = {
@@ -623,6 +742,7 @@ export default function CurrentIncidentScreen() {
 				latitudeDelta: clamp(base.latitudeDelta * factor, 0.0008, 0.2),
 				longitudeDelta: clamp(base.longitudeDelta * factor, 0.0008, 0.2),
 			};
+			mapRegionAdjustingRef.current = true;
 			modalMapRef.current?.animateToRegion(next, 180);
 			return next;
 		});
@@ -630,8 +750,14 @@ export default function CurrentIncidentScreen() {
 
 	const onRecenterModalMap = () => {
 		const next = incidentRegion;
-		setModalMapRegion(next);
+		mapRegionAdjustingRef.current = true;
+		setMapRegion(next);
 		modalMapRef.current?.animateToRegion(next, 180);
+	};
+
+	const onOpenCctvModal = (index: number) => {
+		setActiveCctvIndex(index);
+		setShowCctvModal(true);
 	};
 
 	if (loading) {
@@ -670,6 +796,9 @@ export default function CurrentIncidentScreen() {
 						<ChevronLeft size={24} color="#FFFFFF" />
 					</Pressable>
 					<Text style={styles.headerTitle}>Incident Information</Text>
+					<Pressable style={styles.iconBtn} onPress={() => setShowAiSummaryModal(true)}>
+						<Settings2 size={20} color="#FFFFFF" />
+					</Pressable>
 				</View>
 			</View>
 
@@ -689,8 +818,17 @@ export default function CurrentIncidentScreen() {
 							{incident.location_unit_no?.trim() ? `#${incident.location_unit_no?.trim()}` : "Unit Pending"}
 						</Text>
 
+						<View style={styles.mapInfoRow}>
+							<Text style={styles.mapHintText}>Tap map to open navigation view</Text>
+							<Text style={styles.mapDistanceText}>{mapDistanceLabel}</Text>
+						</View>
 						<Pressable style={styles.mapCard} onPress={onOpenMapModal}>
-							<MapView style={styles.map} initialRegion={incidentRegion} onPress={onOpenMapModal}>
+							<MapView
+								style={styles.map}
+								region={mapRegion ?? incidentRegion}
+								onPress={onOpenMapModal}
+								onRegionChangeComplete={setMapRegion}
+							>
 								{incident.latitude && incident.longitude ? (
 									<Marker
 										coordinate={{ latitude: incident.latitude, longitude: incident.longitude }}
@@ -698,77 +836,61 @@ export default function CurrentIncidentScreen() {
 									/>
 								) : null}
 								{currentCoords ? (
-									<Marker coordinate={currentCoords} title="You" pinColor="#2563EB" />
+									<Marker coordinate={currentCoords} title="You" anchor={{ x: 0.5, y: 0.5 }}>
+										<View style={styles.userMarker}>
+											{currentUserAvatarUrl ? (
+												<Image source={{ uri: currentUserAvatarUrl }} style={styles.userMarkerImage} />
+											) : (
+												<View style={styles.userMarkerFallback}>
+													<Text style={styles.userMarkerText}>YOU</Text>
+												</View>
+											)}
+										</View>
+									</Marker>
 								) : null}
-								{currentCoords && incident.latitude && incident.longitude ? (
-									<Polyline
-										coordinates={[
-											currentCoords,
-											{ latitude: incident.latitude, longitude: incident.longitude },
-										]}
-										strokeColor="#D7263D"
-										strokeWidth={3}
-									/>
+								{hasRoute ? (
+									<Polyline coordinates={routeCoords} strokeColor="#D7263D" strokeWidth={3} />
 								) : null}
 							</MapView>
 						</Pressable>
-						<Pressable style={styles.mapHint} onPress={onOpenMapModal}>
-							<Text style={styles.mapHintText}>Tap map to open navigation view</Text>
-						</Pressable>
 
-						<View style={styles.cctvRow}>
-							{cctvUris.length > 0 ? (
-								cctvUris.slice(0, 3).map((uri, idx) => (
-									<Image key={`${uri}-${idx}`} source={{ uri }} style={styles.cctvImage} />
-								))
-							) : (
-								<>
-									<View style={styles.cctvPlaceholder}>
-										<Text style={styles.cctvPlaceholderText}>CCTV 1</Text>
-									</View>
-									<View style={styles.cctvPlaceholder}>
-										<Text style={styles.cctvPlaceholderText}>CCTV 2</Text>
-									</View>
-									<View style={styles.cctvPlaceholder}>
-										<Text style={styles.cctvPlaceholderText}>CCTV 3</Text>
-									</View>
-								</>
-							)}
+						<View style={styles.cctvCarousel}>
+							<ScrollView
+								horizontal
+								pagingEnabled
+								showsHorizontalScrollIndicator={false}
+								snapToInterval={carouselWidth}
+								decelerationRate="fast"
+								contentContainerStyle={styles.cctvCarouselContent}
+							>
+								{cctvItems.map((uri, idx) => (
+									<Pressable
+										key={`cctv-${idx}`}
+										style={[styles.cctvSlide, { width: carouselWidth }]}
+										onPress={() => onOpenCctvModal(idx)}
+									>
+										{uri ? (
+											<Image source={{ uri }} style={styles.cctvSlideImage} />
+										) : (
+											<View style={styles.cctvPlaceholder}>
+												<Text style={styles.cctvPlaceholderText}>{`CCTV ${idx + 1}`}</Text>
+											</View>
+										)}
+									</Pressable>
+								))}
+							</ScrollView>
+							<Text style={styles.cctvHintText}>Swipe for more CCTV images</Text>
+						</View>
+
+						<Text style={styles.sectionHeader}>AI Assessment Report</Text>
+						<View style={styles.assessmentBox}>
+							<Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize }]}>
+								{incident.ai_assessment?.trim() || "No AI assessment available."}
+							</Text>
 						</View>
 
 						{!isArrived ? (
 							<>
-								<LinearGradient
-									colors={["#ECECF0", "#C8D8E9"]}
-									start={{ x: 0, y: 0 }}
-									end={{ x: 1, y: 1 }}
-									style={styles.predictionBox}
-								>
-									<Text style={styles.predictionTitle}>
-										Is it {incident.incident_category ?? "this incident"}?
-									</Text>
-									<View style={styles.predictionRow}>
-										<Pressable
-											style={[
-												styles.answerBtnTrue,
-												predictionAnswer === "TRUE" ? styles.answerBtnActive : null,
-											]}
-											onPress={() => setPredictionAnswer("TRUE")}
-										>
-											<Text style={styles.answerBtnText}>TRUE</Text>
-										</Pressable>
-										<Pressable
-											style={[
-												styles.answerBtnFalse,
-												predictionAnswer === "FALSE" ? styles.answerBtnActive : null,
-											]}
-											onPress={() => setPredictionAnswer("FALSE")}
-										>
-											<Text style={styles.answerBtnText}>FALSE</Text>
-										</Pressable>
-									</View>
-								</LinearGradient>
-
 									<Text style={styles.sectionHeader}>Investigation Guidelines</Text>
 								{checklistLoading ? (
 									<Pressable style={[styles.primaryBtn, styles.checklistLoadingBtn]} disabled>
@@ -920,8 +1042,14 @@ export default function CurrentIncidentScreen() {
 							<MapView
 								ref={modalMapRef}
 								style={styles.mapModalMap}
-								region={modalMapRegion ?? incidentRegion}
-								onRegionChangeComplete={(region) => setModalMapRegion(region)}
+								region={mapRegion ?? incidentRegion}
+												onRegionChangeComplete={(region) => {
+													if (mapRegionAdjustingRef.current) {
+														mapRegionAdjustingRef.current = false;
+														return;
+													}
+									setMapRegion(region);
+												}}
 							>
 								{incident.latitude && incident.longitude ? (
 									<Marker
@@ -930,17 +1058,20 @@ export default function CurrentIncidentScreen() {
 									/>
 								) : null}
 								{currentCoords ? (
-									<Marker coordinate={currentCoords} title="You" pinColor="#2563EB" />
+									<Marker coordinate={currentCoords} title="You" anchor={{ x: 0.5, y: 0.5 }}>
+										<View style={styles.userMarker}>
+											{currentUserAvatarUrl ? (
+												<Image source={{ uri: currentUserAvatarUrl }} style={styles.userMarkerImage} />
+											) : (
+												<View style={styles.userMarkerFallback}>
+													<Text style={styles.userMarkerText}>YOU</Text>
+												</View>
+											)}
+										</View>
+									</Marker>
 								) : null}
-								{currentCoords && incident.latitude && incident.longitude ? (
-									<Polyline
-										coordinates={[
-											currentCoords,
-											{ latitude: incident.latitude, longitude: incident.longitude },
-										]}
-										strokeColor="#D7263D"
-										strokeWidth={3}
-									/>
+								{hasRoute ? (
+									<Polyline coordinates={routeCoords} strokeColor="#D7263D" strokeWidth={3} />
 								) : null}
 							</MapView>
 
@@ -968,6 +1099,20 @@ export default function CurrentIncidentScreen() {
 					</View>
 				</View>
 			</Modal>
+
+							<CctvCarouselModal
+								visible={showCctvModal}
+								images={cctvItems}
+								initialIndex={activeCctvIndex}
+								onClose={() => setShowCctvModal(false)}
+							/>
+
+							<AiSummaryModal
+								visible={showAiSummaryModal}
+								fontSize={aiSummaryFontSize}
+								onChangeFontSize={setAiSummaryFontSize}
+								onClose={() => setShowAiSummaryModal(false)}
+							/>
 
 			<Modal
 				visible={showBackupModal}
@@ -1133,6 +1278,19 @@ function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: numbe
 	return R * c;
 }
 
+function formatDistanceText(distanceMeters: number | null) {
+	if (distanceMeters === null) return "Location distance unavailable";
+	if (distanceMeters > 1000) {
+		return `Location ${formatKm(distanceMeters)}km away`;
+	}
+	return `Location ${Math.round(distanceMeters)}m away`;
+}
+
+function formatKm(distanceMeters: number) {
+	const km = distanceMeters / 1000;
+	return km.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
 function toRad(value: number) {
 	return (value * Math.PI) / 180;
 }
@@ -1241,31 +1399,70 @@ const styles = StyleSheet.create({
 	map: {
 		height: 150,
 	},
-	mapHint: {
+	mapInfoRow: {
 		marginTop: 8,
-		alignSelf: "flex-start",
-		paddingHorizontal: 10,
-		paddingVertical: 5,
-		borderRadius: 999,
-		backgroundColor: "#E7EDF6",
+		marginBottom: 8,
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		gap: 8,
 	},
 	mapHintText: {
 		fontSize: 12,
 		fontWeight: "700",
 		color: "#274C77",
 	},
-	cctvRow: {
-		marginTop: 0,
-		flexDirection: "row",
+	mapDistanceText: {
+		fontSize: 12,
+		fontWeight: "700",
+		color: "#0F172A",
+	},
+	userMarker: {
+		width: 36,
+		height: 36,
+		borderRadius: 18,
+		borderWidth: 2,
+		borderColor: "#FFFFFF",
+		backgroundColor: "#2563EB",
+		alignItems: "center",
+		justifyContent: "center",
+		overflow: "hidden",
+	},
+	userMarkerImage: {
+		width: "100%",
+		height: "100%",
+	},
+	userMarkerFallback: {
+		width: "100%",
+		height: "100%",
+		alignItems: "center",
+		justifyContent: "center",
+		backgroundColor: "#2563EB",
+	},
+	userMarkerText: {
+		color: "#FFFFFF",
+		fontSize: 10,
+		fontWeight: "800",
+	},
+	cctvCarousel: {
+		marginTop: 4,
+	},
+	cctvCarouselContent: {
 		gap: 0,
 	},
-	cctvImage: {
-		flex: 1,
-		height: 103,
+	cctvSlide: {
+		height: 150,
+		borderRadius: 12,
+		overflow: "hidden",
+		backgroundColor: "#D7DEE8",
+	},
+	cctvSlideImage: {
+		width: "100%",
+		height: "100%",
 	},
 	cctvPlaceholder: {
-		flex: 1,
-		height: 103,
+		width: "100%",
+		height: "100%",
 		backgroundColor: "#D7DEE8",
 		alignItems: "center",
 		justifyContent: "center",
@@ -1274,6 +1471,29 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 		color: "#5B6472",
 		fontWeight: "700",
+	},
+	cctvHintText: {
+		marginTop: 6,
+		fontSize: 12,
+		fontWeight: "600",
+		color: "#64748B",
+		textAlign: "center",
+	},
+	assessmentBox: {
+		marginTop: 4,
+		borderRadius: 8,
+		borderWidth: 2,
+		borderColor: "#5B9AC2",
+		backgroundColor: "#E9F2F5",
+		paddingHorizontal: 14,
+		paddingVertical: 12,
+		minHeight: 78,
+	},
+	assessmentText: {
+		color: "#000000",
+		fontSize: 14,
+		lineHeight: 18,
+		fontWeight: "600",
 	},
 	predictionBox: {
 		marginTop: 12,
@@ -1633,6 +1853,35 @@ const styles = StyleSheet.create({
 		fontSize: 14,
 		fontWeight: "800",
 		color: "#334155",
+	},
+	cctvModalBackdrop: {
+		flex: 1,
+		backgroundColor: "rgba(5, 16, 30, 0.85)",
+		alignItems: "center",
+		justifyContent: "center",
+		paddingHorizontal: 16,
+	},
+	cctvModalImage: {
+		width: "100%",
+		height: "75%",
+		borderRadius: 12,
+		backgroundColor: "#0B1F3A",
+	},
+	cctvModalClose: {
+		position: "absolute",
+		top: 40,
+		right: 18,
+		paddingHorizontal: 12,
+		paddingVertical: 6,
+		borderRadius: 999,
+		backgroundColor: "rgba(255,255,255,0.18)",
+		borderWidth: 1,
+		borderColor: "rgba(255,255,255,0.28)",
+	},
+	cctvModalCloseText: {
+		color: "#FFFFFF",
+		fontSize: 12,
+		fontWeight: "700",
 	},
 	modalTitle: {
 		marginTop: 12,

@@ -266,6 +266,14 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   const onAcknowledge = async () => {
     if (!activeIncident) return;
 
+    if (userId) {
+      await supabase
+        .from("incidents")
+        .update({ active_status: false })
+        .eq("incident_id", activeIncident.incidentId)
+        .eq("supervisor_id", userId);
+    }
+
     const next = new Set(acknowledgedIds);
     next.add(activeIncident.incidentId);
     acknowledgedIdsRef.current = next;

@@ -1,4 +1,5 @@
 import { Stack, router } from "expo-router";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { supabase } from "../lib/supabase";
 import { Asset } from "expo-asset";
 import * as SplashScreen from "expo-splash-screen";
@@ -152,7 +153,7 @@ export default function RootLayout() {
 
   // default stack (before routing happens)
   return (
-    <>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <ChatNotificationListener />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
@@ -166,6 +167,6 @@ export default function RootLayout() {
           }}
         />
       </Stack>
-    </>
+    </GestureHandlerRootView>
   );
 }

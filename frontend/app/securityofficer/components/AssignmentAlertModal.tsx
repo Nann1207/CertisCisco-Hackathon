@@ -1,15 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
+import { Alert, Animated, Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import Text from "../../../components/TranslatedText";
 import { supabase } from "../../../lib/supabase";
+import RejectAssignmentModal from "./RejectAssignmentModal";
 
 type AssignmentRow = {
   assignment_id: string;
   incident_id: string | null;
   shift_id: string | null;
+  officer_id: string | null;
+  officer_name: string | null;
+  supervisor_id: string | null;
   assigned_at: string | null;
   active_status: boolean | null;
   incidents:
@@ -35,6 +39,10 @@ type AlertAssignment = {
   incidentId: string;
   incidentName: string;
   locationUnitNo: string;
+  shiftId: string | null;
+  officerId: string;
+  officerName: string;
+  supervisorId: string | null;
 };
 
 const STORAGE_KEY_PREFIX = "assignment_acknowledged_ids";
@@ -58,6 +66,9 @@ export default function AssignmentAlertModal({
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
   const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
   const [activeAssignment, setActiveAssignment] = useState<AlertAssignment | null>(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [isSubmittingReject, setIsSubmittingReject] = useState(false);
   const acknowledgedIdsRef = useRef<Set<string>>(new Set());
   const dismissedMapRef = useRef<Record<string, string>>({});
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -109,7 +120,7 @@ export default function AssignmentAlertModal({
       const { data, error } = await supabase
         .from("incident_assignments")
         .select(
-          "assignment_id, incident_id, shift_id, assigned_at, active_status, incidents(incident_name, incident_category, location_name, location_description, location_unit_no)"
+          "assignment_id, incident_id, shift_id, officer_id, officer_name, supervisor_id, assigned_at, active_status, incidents(incident_name, incident_category, location_name, location_description, location_unit_no)"
         )
         .eq("officer_id", activeUserId)
         .eq("shift_id", shiftId)
@@ -154,6 +165,13 @@ export default function AssignmentAlertModal({
         return;
       }
 
+      if (!next.officer_id) {
+        setActiveAssignment(null);
+        setVisible(false);
+        stopVibration();
+        return;
+      }
+
       const incident = parseIncident(next);
       const incidentName = (
         incident?.incident_name ??
@@ -169,6 +187,10 @@ export default function AssignmentAlertModal({
         incidentId: next.incident_id,
         incidentName,
         locationUnitNo,
+        shiftId: next.shift_id ?? null,
+        officerId: next.officer_id,
+        officerName: next.officer_name?.trim() || "Security Officer",
+        supervisorId: next.supervisor_id ?? null,
       });
       setVisible(true);
     },
@@ -362,6 +384,69 @@ export default function AssignmentAlertModal({
     router.push(`/securityofficer/currentIncident?incidentId=${activeAssignment.incidentId}`);
   };
 
+  const resetRejectState = () => {
+    setRejectReason("");
+    setShowRejectModal(false);
+    setIsSubmittingReject(false);
+  };
+
+  const onSubmitReject = async () => {
+    if (!activeAssignment || isSubmittingReject) return;
+
+    setIsSubmittingReject(true);
+
+    const rejectionPayload = {
+      assignment_id: activeAssignment.assignmentId,
+      shift_id: activeAssignment.shiftId,
+      incident_id: activeAssignment.incidentId,
+      officer_id: activeAssignment.officerId,
+      supervisor_id: activeAssignment.supervisorId,
+      rejection_reason: rejectReason.trim() || null,
+      rejection_status: "submitted",
+    };
+
+    const { error: rejectError } = await supabase
+      .from("reject_assignment")
+      .insert(rejectionPayload);
+
+    if (rejectError) {
+      setIsSubmittingReject(false);
+      Alert.alert("Decline failed", rejectError.message || "Unable to save rejection.");
+      return;
+    }
+
+    const { error: assignmentError } = await supabase
+      .from("incident_assignments")
+      .update({
+        shift_id: null,
+        officer_id: null,
+        officer_name: null,
+        active_status: false,
+      })
+      .eq("assignment_id", activeAssignment.assignmentId);
+
+    setIsSubmittingReject(false);
+
+    if (assignmentError) {
+      Alert.alert("Decline failed", assignmentError.message || "Unable to update assignment.");
+      return;
+    }
+
+    const nextAck = new Set(acknowledgedIdsRef.current);
+    nextAck.add(activeAssignment.assignmentId);
+    acknowledgedIdsRef.current = nextAck;
+    setAcknowledgedIds(nextAck);
+
+    if (storageKey) {
+      await AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(nextAck)));
+    }
+
+    setVisible(false);
+    stopVibration();
+    resetRejectState();
+    Alert.alert("Assignment declined", "Your supervisor has been notified.");
+  };
+
   const onDismiss = async () => {
     if (!activeAssignment) {
       setVisible(false);
@@ -381,60 +466,83 @@ export default function AssignmentAlertModal({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      presentationStyle="overFullScreen"
-      statusBarTranslucent
-      navigationBarTranslucent
-      onRequestClose={() => {
-        void onDismiss();
-      }}
-    >
-      <View style={styles.backdrop}>
-        <LinearGradient
-          colors={["#FDEFE4", "#FFEAD7", "#FFA07D"]}
-          start={{ x: 0.1, y: 0 }}
-          end={{ x: 0.9, y: 1 }}
-          style={styles.card}
-        >
-          <View style={styles.cardContent}>
-            <Text style={styles.incidentTitle}>{activeAssignment?.incidentName ?? "NEW INCIDENT"}</Text>
-            <Text style={styles.unitText}>{activeAssignment?.locationUnitNo ?? "Location Unit Pending"}</Text>
+    <>
+      <Modal
+        visible={visible}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => {
+          void onDismiss();
+        }}
+      >
+        <View style={styles.backdrop}>
+          <LinearGradient
+            colors={["#FDEFE4", "#FFEAD7", "#FFA07D"]}
+            start={{ x: 0.1, y: 0 }}
+            end={{ x: 0.9, y: 1 }}
+            style={styles.card}
+          >
+            <View style={styles.cardContent}>
+              <Text style={styles.incidentTitle}>{activeAssignment?.incidentName ?? "NEW INCIDENT"}</Text>
+              <Text style={styles.unitText}>{activeAssignment?.locationUnitNo ?? "Location Unit Pending"}</Text>
 
-            <Text style={styles.message}>You have been assigned a new incident</Text>
-            <Text style={styles.subMessage}>Please head to the location and investigate the issue</Text>
+              <Text style={styles.message}>You have been assigned a new incident</Text>
+              <Text style={styles.subMessage}>Please head to the location and investigate the issue</Text>
 
-            <View style={styles.ackButtonShell}>
-              <View style={styles.ackButtonMask}>
-                <Animated.View
-                  pointerEvents="none"
-                  style={[styles.ackButtonBorderSpinner, { transform: [{ rotate: buttonBorderRotate }] }]}
-                >
-                  <LinearGradient
-                    colors={["rgba(255,255,255,0)", "#71D2FF", "#F4FAFF", "#71D2FF", "rgba(255,255,255,0)"]}
-                    locations={[0, 0.22, 0.5, 0.78, 1]}
-                    start={{ x: 0, y: 0.5 }}
-                    end={{ x: 1, y: 0.5 }}
-                    style={styles.ackButtonBorderGlow}
-                  />
-                </Animated.View>
-                <View pointerEvents="none" style={styles.ackButtonMaskFill} />
-                <Pressable
-                  style={styles.ackButton}
-                  onPress={() => {
-                    void onAcknowledge();
-                  }}
-                >
-                  <Text style={styles.ackButtonText}>{"I ACKNOWLEDGE\nTHIS ASSIGNMENT"}</Text>
-                </Pressable>
+              <View style={styles.ackButtonShell}>
+                <View style={styles.ackButtonMask}>
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[styles.ackButtonBorderSpinner, { transform: [{ rotate: buttonBorderRotate }] }]}
+                  >
+                    <LinearGradient
+                      colors={["rgba(255,255,255,0)", "#71D2FF", "#F4FAFF", "#71D2FF", "rgba(255,255,255,0)"]}
+                      locations={[0, 0.22, 0.5, 0.78, 1]}
+                      start={{ x: 0, y: 0.5 }}
+                      end={{ x: 1, y: 0.5 }}
+                      style={styles.ackButtonBorderGlow}
+                    />
+                  </Animated.View>
+                  <View pointerEvents="none" style={styles.ackButtonMaskFill} />
+                  <Pressable
+                    style={styles.ackButton}
+                    onPress={() => {
+                      void onAcknowledge();
+                    }}
+                  >
+                    <Text style={styles.ackButtonText}>{"I ACKNOWLEDGE\nTHIS ASSIGNMENT"}</Text>
+                  </Pressable>
+                </View>
               </View>
+
+              <Pressable
+                style={styles.declineBtn}
+                onPress={() => {
+                  setShowRejectModal(true);
+                }}
+              >
+                <Text style={styles.declineText}>Decline Assignment</Text>
+              </Pressable>
             </View>
-          </View>
-        </LinearGradient>
-      </View>
-    </Modal>
+          </LinearGradient>
+        </View>
+      </Modal>
+
+      <RejectAssignmentModal
+        visible={showRejectModal}
+        officerName={activeAssignment?.officerName}
+        reason={rejectReason}
+        submitting={isSubmittingReject}
+        onChangeReason={setRejectReason}
+        onSubmit={() => {
+          void onSubmitReject();
+        }}
+        onClose={resetRejectState}
+      />
+    </>
   );
 }
 
@@ -535,5 +643,15 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#FFFFFF",
     textAlign: "center",
+  },
+  declineBtn: {
+    marginTop: 12,
+    alignSelf: "center",
+  },
+  declineText: {
+    color: "#7C2D12",
+    fontSize: 13,
+    fontWeight: "800",
+    textDecorationLine: "underline",
   },
 });

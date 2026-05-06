@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
   Image,
   Modal,
   Pressable,
@@ -18,8 +19,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { BellRing, ChevronLeft, ClipboardPen, PhoneCall } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
-import { getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
+import { getProfilePhotoUrlFromFolder, getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
 import { supabase } from "../../lib/supabase";
+import CctvCarouselModal from "./components/CctvCarouselModal";
 
 type IncidentRow = {
   incident_id: string;
@@ -129,22 +131,29 @@ export default function SsoIncidentAfterAssignPage() {
   const [loading, setLoading] = useState(true);
   const [incident, setIncident] = useState<IncidentRow | null>(null);
   const [assignedOfficers, setAssignedOfficers] = useState<AssignedOfficer[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentCoords, setCurrentCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [distanceMeters, setDistanceMeters] = useState<number | null>(null);
 
   const [showMapModal, setShowMapModal] = useState(false);
-  const [modalMapRegion, setModalMapRegion] = useState<Region | null>(null);
+  const [mapRegion, setMapRegion] = useState<Region | null>(null);
   const modalMapRef = useRef<MapView | null>(null);
 
   const [showBackupRequestModal, setShowBackupRequestModal] = useState(false);
   const [backupAttentionActive, setBackupAttentionActive] = useState(false);
   const [acknowledgedBackupRequestIds, setAcknowledgedBackupRequestIds] = useState<Set<string>>(new Set());
   const [backupRequestDetails, setBackupRequestDetails] = useState<BackupRequestDetails | null>(null);
-  const [cctvUris, setCctvUris] = useState<string[]>([]);
+  const [cctvUris, setCctvUris] = useState<Array<string | null>>([]);
+  const [showCctvModal, setShowCctvModal] = useState(false);
+  const [activeCctvIndex, setActiveCctvIndex] = useState(0);
+  const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
+  const [currentUserAvatarUrl, setCurrentUserAvatarUrl] = useState<string | null>(null);
 
   const addBackupPulse = useRef(new Animated.Value(0)).current;
   const addBackupRotate = useRef(new Animated.Value(0)).current;
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const acknowledgedBackupRequestIdsRef = useRef<Set<string>>(new Set());
+  const mapRegionAdjustingRef = useRef(false);
 
   useEffect(() => {
     acknowledgedBackupRequestIdsRef.current = acknowledgedBackupRequestIds;
@@ -226,6 +235,8 @@ export default function SsoIncidentAfterAssignPage() {
         return;
       }
 
+      setCurrentUserId(userId);
+
       const { data: incidentData, error: incidentError } = await supabase
         .from("incidents")
         .select(
@@ -261,6 +272,35 @@ export default function SsoIncidentAfterAssignPage() {
       alive = false;
     };
   }, [incidentId]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadAvatar = async () => {
+      if (!currentUserId) {
+        if (alive) setCurrentUserAvatarUrl(null);
+        return;
+      }
+
+      const { data } = await supabase
+        .from("employees")
+        .select("profile_photo_path, emp_id")
+        .eq("id", currentUserId)
+        .maybeSingle<{ profile_photo_path?: string | null; emp_id?: string | null }>();
+
+      const resolvedUrl =
+        (await getProfilePhotoUrlFromPath(data?.profile_photo_path ?? null)) ??
+        (data?.emp_id ? await getProfilePhotoUrlFromFolder(data.emp_id) : null) ??
+        (await getProfilePhotoUrlFromFolder(currentUserId));
+
+      if (alive) setCurrentUserAvatarUrl(resolvedUrl);
+    };
+
+    void loadAvatar();
+    return () => {
+      alive = false;
+    };
+  }, [currentUserId]);
 
   useEffect(() => {
     if (!incidentId) return;
@@ -357,6 +397,64 @@ export default function SsoIncidentAfterAssignPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!incident?.latitude || !incident?.longitude || !currentCoords) {
+      setDistanceMeters(null);
+      return;
+    }
+    setDistanceMeters(
+      getDistanceMeters(
+        currentCoords.latitude,
+        currentCoords.longitude,
+        incident.latitude,
+        incident.longitude
+      )
+    );
+  }, [currentCoords, incident?.latitude, incident?.longitude]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadRoute = async () => {
+      if (!currentCoords || !incident?.latitude || !incident?.longitude) {
+        if (alive) setRouteCoords([]);
+        return;
+      }
+
+      const start = `${currentCoords.longitude},${currentCoords.latitude}`;
+      const end = `${incident.longitude},${incident.latitude}`;
+      const url = `https://router.project-osrm.org/route/v1/foot/${start};${end}?overview=full&geometries=geojson`;
+
+      try {
+        const response = await fetch(url);
+        const body = (await response.json().catch(() => null)) as {
+          routes?: Array<{ geometry?: { coordinates?: number[][] } }>;
+        } | null;
+
+        const coords = body?.routes?.[0]?.geometry?.coordinates ?? null;
+        if (!alive) return;
+        if (Array.isArray(coords) && coords.length >= 2) {
+          setRouteCoords(coords.map(([lng, lat]) => ({ latitude: lat, longitude: lng })));
+          return;
+        }
+      } catch (error) {
+        console.warn("[sso-incident-after] walking route failed:", error);
+      }
+
+      if (alive) {
+        setRouteCoords([
+          currentCoords,
+          { latitude: incident.latitude, longitude: incident.longitude },
+        ]);
+      }
+    };
+
+    void loadRoute();
+    return () => {
+      alive = false;
+    };
+  }, [currentCoords, incident?.latitude, incident?.longitude]);
+
   const incidentRegion = useMemo<Region>(
     () => ({
       latitude: incident?.latitude ?? 1.3006,
@@ -366,6 +464,21 @@ export default function SsoIncidentAfterAssignPage() {
     }),
     [incident?.latitude, incident?.longitude]
   );
+
+  useEffect(() => {
+    if (!mapRegion) {
+      setMapRegion(incidentRegion);
+    }
+  }, [incidentRegion, mapRegion]);
+
+  const cctvItems = useMemo(
+    () => (cctvUris.length ? cctvUris : [null, null, null, null]),
+    [cctvUris]
+  );
+
+  const mapDistanceLabel = formatDistanceText(distanceMeters);
+  const hasRoute = routeCoords.length >= 2;
+  const carouselWidth = Math.min(Dimensions.get("window").width - 36, 420);
 
   const incidentTitle = useMemo(() => {
     const category = (incident?.incident_category ?? "Incident").toString().trim();
@@ -397,12 +510,12 @@ export default function SsoIncidentAfterAssignPage() {
   const isTwoOfficerLayout = assignedOfficers.length === 2;
 
   const onOpenMapModal = () => {
-    setModalMapRegion(incidentRegion);
+    if (!mapRegion) setMapRegion(incidentRegion);
     setShowMapModal(true);
   };
 
   const onZoomModalMap = (direction: "in" | "out") => {
-    setModalMapRegion((prev) => {
+    setMapRegion((prev) => {
       const base = prev ?? incidentRegion;
       const factor = direction === "in" ? 0.55 : 1.8;
       const next: Region = {
@@ -410,14 +523,21 @@ export default function SsoIncidentAfterAssignPage() {
         latitudeDelta: clamp(base.latitudeDelta * factor, 0.0008, 0.2),
         longitudeDelta: clamp(base.longitudeDelta * factor, 0.0008, 0.2),
       };
+      mapRegionAdjustingRef.current = true;
       modalMapRef.current?.animateToRegion(next, 180);
       return next;
     });
   };
 
   const onRecenterModalMap = () => {
-    setModalMapRegion(incidentRegion);
+    setMapRegion(incidentRegion);
+    mapRegionAdjustingRef.current = true;
     modalMapRef.current?.animateToRegion(incidentRegion, 180);
+  };
+
+  const onOpenCctvModal = (index: number) => {
+    setActiveCctvIndex(index);
+    setShowCctvModal(true);
   };
 
   const onOpenAddBackup = () => {
@@ -490,41 +610,64 @@ export default function SsoIncidentAfterAssignPage() {
           <Text style={styles.incidentTitle}>{incidentTitle}</Text>
           <Text style={styles.unitText}>{locationLabel}</Text>
 
+          <View style={styles.mapInfoRow}>
+            <Text style={styles.mapHintText}>Tap map to open navigation view</Text>
+            <Text style={styles.mapDistanceText}>{mapDistanceLabel}</Text>
+          </View>
           <Pressable style={styles.mapCard} onPress={onOpenMapModal}>
-            <MapView style={styles.map} initialRegion={incidentRegion}>
+            <MapView
+              style={styles.map}
+              region={mapRegion ?? incidentRegion}
+              onRegionChangeComplete={setMapRegion}
+            >
               {incident.latitude && incident.longitude ? (
                 <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
               ) : null}
-              {currentCoords ? <Marker coordinate={currentCoords} title="You" pinColor="#2563EB" /> : null}
-              {currentCoords && incident.latitude && incident.longitude ? (
-                <Polyline
-                  coordinates={[currentCoords, { latitude: incident.latitude, longitude: incident.longitude }]}
-                  strokeColor="#D7263D"
-                  strokeWidth={3}
-                  lineDashPattern={[8, 6]}
-                />
+              {currentCoords ? (
+                <Marker coordinate={currentCoords} title="You" anchor={{ x: 0.5, y: 0.5 }}>
+                  <View style={styles.userMarker}>
+                    {currentUserAvatarUrl ? (
+                      <Image source={{ uri: currentUserAvatarUrl }} style={styles.userMarkerImage} />
+                    ) : (
+                      <View style={styles.userMarkerFallback}>
+                        <Text style={styles.userMarkerText}>YOU</Text>
+                      </View>
+                    )}
+                  </View>
+                </Marker>
+              ) : null}
+              {hasRoute ? (
+                <Polyline coordinates={routeCoords} strokeColor="#D7263D" strokeWidth={3} />
               ) : null}
             </MapView>
           </Pressable>
 
-          <View style={styles.cctvRow}>
-            {cctvUris.length > 0 ? (
-              cctvUris.slice(0, 3).map((uri, idx) => (
-                <Image key={`${uri}-${idx}`} source={{ uri }} style={styles.cctvImage} />
-              ))
-            ) : (
-              <>
-                <View style={styles.cctvPlaceholder}>
-                  <Text style={styles.cctvPlaceholderText}>CCTV 1</Text>
-                </View>
-                <View style={styles.cctvPlaceholder}>
-                  <Text style={styles.cctvPlaceholderText}>CCTV 2</Text>
-                </View>
-                <View style={styles.cctvPlaceholder}>
-                  <Text style={styles.cctvPlaceholderText}>CCTV 3</Text>
-                </View>
-              </>
-            )}
+          <View style={styles.cctvCarousel}>
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={carouselWidth}
+              decelerationRate="fast"
+              contentContainerStyle={styles.cctvCarouselContent}
+            >
+              {cctvItems.map((uri, idx) => (
+                <Pressable
+                  key={`cctv-${idx}`}
+                  style={[styles.cctvSlide, { width: carouselWidth }]}
+                  onPress={() => onOpenCctvModal(idx)}
+                >
+                  {uri ? (
+                    <Image source={{ uri }} style={styles.cctvSlideImage} />
+                  ) : (
+                    <View style={styles.cctvPlaceholder}>
+                      <Text style={styles.cctvPlaceholderText}>{`CCTV ${idx + 1}`}</Text>
+                    </View>
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Text style={styles.cctvHintText}>Swipe for more CCTV images</Text>
           </View>
 
           <View style={styles.actionRowTop}>
@@ -615,10 +758,17 @@ export default function SsoIncidentAfterAssignPage() {
               style={styles.footerGlow}
             />
 
-            <Pressable style={styles.reportBtn} onPress={() => { void onSubmitIncidentReport(); }}>
-              <ClipboardPen size={19} color="#FFFFFF" />
-              <Text style={styles.reportBtnText}>Incident Report</Text>
-            </Pressable>
+            {assignedOfficers.length === 0 ? (
+              <Pressable style={styles.reportBtn} onPress={() => router.push(`/sso/assign-officer?incidentId=${incidentId}`)}>
+                <BellRing size={19} color="#FFFFFF" />
+                <Text style={styles.reportBtnText}>Dispatch Officers</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.reportBtn} onPress={() => { void onSubmitIncidentReport(); }}>
+                <ClipboardPen size={19} color="#FFFFFF" />
+                <Text style={styles.reportBtnText}>Incident Report</Text>
+              </Pressable>
+            )}
           </View>
         </ScrollView>
       </View>
@@ -692,19 +842,33 @@ export default function SsoIncidentAfterAssignPage() {
               modalMapRef.current = ref;
             }}
             style={styles.modalMap}
-            region={modalMapRegion ?? incidentRegion}
-            onRegionChangeComplete={(region) => setModalMapRegion(region)}
+            region={mapRegion ?? incidentRegion}
+            onRegionChangeComplete={(region) => {
+              if (mapRegionAdjustingRef.current) {
+                mapRegionAdjustingRef.current = false;
+                return;
+              }
+              setMapRegion(region);
+            }}
           >
             {incident.latitude && incident.longitude ? (
               <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
             ) : null}
-            {currentCoords ? <Marker coordinate={currentCoords} title="You" pinColor="#2563EB" /> : null}
-            {currentCoords && incident.latitude && incident.longitude ? (
-              <Polyline
-                coordinates={[currentCoords, { latitude: incident.latitude, longitude: incident.longitude }]}
-                strokeColor="#D7263D"
-                strokeWidth={3}
-              />
+            {currentCoords ? (
+              <Marker coordinate={currentCoords} title="You" anchor={{ x: 0.5, y: 0.5 }}>
+                <View style={styles.userMarker}>
+                  {currentUserAvatarUrl ? (
+                    <Image source={{ uri: currentUserAvatarUrl }} style={styles.userMarkerImage} />
+                  ) : (
+                    <View style={styles.userMarkerFallback}>
+                      <Text style={styles.userMarkerText}>YOU</Text>
+                    </View>
+                  )}
+                </View>
+              </Marker>
+            ) : null}
+            {hasRoute ? (
+              <Polyline coordinates={routeCoords} strokeColor="#D7263D" strokeWidth={3} />
             ) : null}
           </MapView>
 
@@ -721,6 +885,13 @@ export default function SsoIncidentAfterAssignPage() {
           </View>
         </View>
       </Modal>
+
+      <CctvCarouselModal
+        visible={showCctvModal}
+        images={cctvItems}
+        initialIndex={activeCctvIndex}
+        onClose={() => setShowCctvModal(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -837,6 +1008,34 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function formatDistanceText(distanceMeters: number | null) {
+  if (distanceMeters === null) return "Location distance unavailable";
+  if (distanceMeters > 1000) {
+    return `Location ${formatKm(distanceMeters)}km away`;
+  }
+  return `Location ${Math.round(distanceMeters)}m away`;
+}
+
+function formatKm(distanceMeters: number) {
+  const km = distanceMeters / 1000;
+  return km.toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+function toRad(value: number) {
+  return (value * Math.PI) / 180;
+}
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -933,20 +1132,69 @@ const styles = StyleSheet.create({
     height: 214,
     width: "100%",
   },
-  cctvRow: {
-    marginTop: 8,
+  mapInfoRow: {
+    marginTop: 10,
     flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: 8,
   },
-  cctvImage: {
-    flex: 1,
-    height: 103,
-    borderRadius: 10,
+  mapHintText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#274C77",
+  },
+  mapDistanceText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  userMarker: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  userMarkerImage: {
+    width: "100%",
+    height: "100%",
+  },
+  userMarkerFallback: {
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#2563EB",
+  },
+  userMarkerText: {
+    color: "#FFFFFF",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  cctvCarousel: {
+    marginTop: 8,
+  },
+  cctvCarouselContent: {
+    gap: 0,
+  },
+  cctvSlide: {
+    height: 150,
+    borderRadius: 12,
+    overflow: "hidden",
     backgroundColor: "#D7DEE8",
   },
+  cctvSlideImage: {
+    width: "100%",
+    height: "100%",
+  },
   cctvPlaceholder: {
-    flex: 1,
-    height: 103,
+    width: "100%",
+    height: "100%",
     borderRadius: 10,
     backgroundColor: "#D7DEE8",
     alignItems: "center",
@@ -956,6 +1204,13 @@ const styles = StyleSheet.create({
     color: "#5B6472",
     fontWeight: "700",
     fontSize: 12,
+  },
+  cctvHintText: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748B",
+    textAlign: "center",
   },
   actionRowTop: {
     marginTop: 10,

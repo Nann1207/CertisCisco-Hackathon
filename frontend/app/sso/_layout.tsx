@@ -3,6 +3,7 @@ import { View, StyleSheet } from "react-native";
 import { Stack } from "expo-router";
 import BottomBar from "./components/BottomBar";
 import FloatingChatButton from "../securityofficer/components/FloatingChatButton";
+import AssignmentRejectionAlertModal from "./components/AssignmentRejectionAlertModal";
 
 export default function Layout() {
   return (
@@ -43,6 +44,7 @@ export default function Layout() {
 
       <FloatingChatButton bottomOffset={98} rightOffset={20} targetHref="/sso/chatbot" />
       <BottomBar />
+      <AssignmentRejectionAlertModal />
     </View>
   );
 }
