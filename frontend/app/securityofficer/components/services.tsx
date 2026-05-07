@@ -10,17 +10,11 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import {
-  Bell,
-  Bot,
   CalendarDays,
   CreditCard,
   FileText,
-  Languages,
-  ListChecks,
-  MessageCircleMore,
   PhoneCall,
   ScrollText,
-  Settings,
   ShieldAlert,
   UserCircle2,
 } from "lucide-react-native";
@@ -96,6 +90,14 @@ export default function ServicesModal({ visible, onClose }: ServicesModalProps) 
     { id: "reports", label: "Incident Reports", Icon: FileText, href: "/securityofficer/reports" },
     { id: "shift-reports", label: "Shift Reports", Icon: ScrollText, href: "/securityofficer/all-shift-reports" },
     { id: "schedule", label: "Upcoming Schedule", Icon: CalendarDays, href: "/securityofficer/schedule" },
+    { id: "payslip", label: "Payslip", Icon: FileText, href: "/securityofficer/payslip" },
+    {
+      id: "harassment-whistleblowing",
+      label: "Harassment &\nWhistleblowing Forms",
+      Icon: FileText,
+      href: "/securityofficer/harassment-whistleblowing",
+    },
+    { id: "company-events", label: "Company Events", Icon: CalendarDays, href: "/securityofficer/company-events" },
     {
       id: "phone-calls",
       label: "Phone Calls",
@@ -104,13 +106,7 @@ export default function ServicesModal({ visible, onClose }: ServicesModalProps) 
         Alert.alert("Coming soon", "Phone calls page is not available yet.");
       },
     },
-    { id: "messages", label: "Messages", Icon: MessageCircleMore, href: "/securityofficer/messagingChannel" },
-    { id: "notifications", label: "Notifications", Icon: Bell, href: "/securityofficer/notifications" },
-    { id: "sops", label: "SOPs", Icon: ListChecks, href: "/securityofficer/sop" },
-    { id: "settings", label: "Settings", Icon: Settings, href: "/securityofficer/settings" },
-    { id: "languages", label: "Languages", Icon: Languages, href: "/securityofficer/languages" },
     { id: "profile", label: "Profile", Icon: UserCircle2, href: "/securityofficer/profile" },
-    { id: "chatbot", label: "AI Chatbot", Icon: Bot, href: "/(officer)/chatbot" },
   ];
 
   return (
