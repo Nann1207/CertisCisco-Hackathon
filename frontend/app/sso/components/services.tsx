@@ -10,17 +10,11 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import {
-  Bell,
-  Bot,
   CalendarDays,
   CreditCard,
   FileText,
-  Languages,
-  ListChecks,
   LogOut,
-  MessageCircleMore,
   PhoneCall,
-  Settings,
   ShieldAlert,
   UserCircle2,
 } from "lucide-react-native";
@@ -95,13 +89,15 @@ export default function ServicesModal({ visible, onClose }: ServicesModalProps) 
     { id: "incidents", label: "Incidents", Icon: ShieldAlert, href: "/sso/incidents" },
     { id: "reports", label: "Reports", Icon: FileText, href: "/sso/reports" },
     { id: "schedule", label: "Upcoming Schedule", Icon: CalendarDays, href: "/sso/upcoming-shift-details" },
+    { id: "payslip", label: "Payslip", Icon: FileText, href: "/sso/payslip" },
+    {
+      id: "harassment-whistleblowing",
+      label: "Harassment &\nWhistleblowing Forms",
+      Icon: FileText,
+      href: "/sso/harassment-whistleblowing",
+    },
+    { id: "company-events", label: "Company Events", Icon: CalendarDays, href: "/sso/company-events" },
     { id: "phone-calls", label: "Phone Calls", Icon: PhoneCall, href: "/sso/phonecalls" },
-    { id: "messages", label: "Messages", Icon: MessageCircleMore, href: "/sso/messagingChannel" },
-    { id: "notifications", label: "Notifications", Icon: Bell, href: "/sso/notifications" },
-    { id: "sops", label: "SOPs", Icon: ListChecks, href: "/sso/sop" },
-    { id: "settings", label: "Settings", Icon: Settings, href: "/sso/settings" },
-    { id: "languages", label: "Languages", Icon: Languages, href: "/sso/languages" },
-    { id: "translate", label: "Translate", Icon: Bot, href: "/sso/chatbot" },
     { id: "profile", label: "Profile", Icon: UserCircle2, href: "/sso/profile" },
     {
       id: "logout",
