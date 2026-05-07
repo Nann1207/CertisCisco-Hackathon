@@ -75,7 +75,7 @@ export default function SsoShiftDetailsScreen() {
         const { data: shiftRow, error: shiftError } = await supabase
           .from("shifts")
           .select("id:shift_id, shift_date, shift_start, shift_end, location, address, supervisor_id")
-          .eq("supervisor_id", userId)
+          .eq("officer_id", userId)
           .gte("shift_date", todayISO)
           .order("shift_date", { ascending: true })
           .order("shift_start", { ascending: true })

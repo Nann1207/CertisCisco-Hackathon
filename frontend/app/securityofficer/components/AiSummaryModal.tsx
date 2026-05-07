@@ -47,7 +47,7 @@ export default function AiSummaryModal({
             <X size={18} color="#1E1B4B" />
           </Pressable>
 
-          <Text style={styles.title}>AI Assessment Summary</Text>
+          <Text style={styles.title}>AI Report Text Size</Text>
           <Text style={styles.subtitle}>Adjust the font size for easier reading.</Text>
 
           <View style={styles.controlsRow}>

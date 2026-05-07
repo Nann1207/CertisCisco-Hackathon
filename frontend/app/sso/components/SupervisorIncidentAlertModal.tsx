@@ -3,6 +3,7 @@ import { Animated, Modal, Pressable, StyleSheet, Vibration, View } from "react-n
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
+import { SquareCheckBig } from "lucide-react-native";
 import Text from "../../../components/TranslatedText";
 import { supabase } from "../../../lib/supabase";
 
@@ -266,14 +267,6 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
   const onAcknowledge = async () => {
     if (!activeIncident) return;
 
-    if (userId) {
-      await supabase
-        .from("incidents")
-        .update({ active_status: false })
-        .eq("incident_id", activeIncident.incidentId)
-        .eq("supervisor_id", userId);
-    }
-
     const next = new Set(acknowledgedIds);
     next.add(activeIncident.incidentId);
     acknowledgedIdsRef.current = next;
@@ -360,6 +353,7 @@ export default function SupervisorIncidentAlertModal({ supervisorId = null }: Su
               </Animated.View>
               <View pointerEvents="none" style={styles.ackButtonMaskFill} />
               <Pressable style={styles.ackButton} onPress={() => { void onAcknowledge(); }}>
+                <SquareCheckBig size={20} color="#FFFFFF" />
                 <Text style={styles.ackButtonText}>{"I ACKNOWLEDGE\nTHIS ASSIGNMENT"}</Text>
               </Pressable>
             </View>
@@ -457,6 +451,9 @@ const styles = StyleSheet.create({
   ackButton: {
     height: 52,
     borderRadius: 14,
+    marginLeft: 14,
+    marginRight: 22,
+    flexDirection: "row",
     backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",

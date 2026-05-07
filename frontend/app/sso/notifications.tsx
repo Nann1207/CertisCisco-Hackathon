@@ -73,11 +73,11 @@ export default function NotificationsPage() {
         return;
       }
 
-      // Fetch supervised shifts, incidents and any reports for those incidents
+      // Fetch the user's own shifts, plus incidents and reports tied to those shift IDs.
       const { data: shiftsRaw, error: shiftsError } = await supabase
         .from("shifts")
         .select("shift_id, shift_date, shift_start, shift_end, completion_status, location, clockin_time, clockout_time")
-        .eq("supervisor_id", userId)
+        .eq("officer_id", userId)
         .order("shift_date", { ascending: false })
         .order("shift_start", { ascending: false })
         .limit(120);
@@ -102,18 +102,25 @@ export default function NotificationsPage() {
       }));
 
       // incidents + reports
-      const { data: incidentsRaw, error: incidentsError } = await supabase
-        .from("incidents")
-        .select("incident_id, incident_category, location_name, location_unit_no, location_description, created_at, active_status")
-        .eq("supervisor_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(200);
+      const shiftIdsForIncidents = Array.from(
+        new Set(((shiftsRaw ?? []) as ShiftRow[]).map((shift) => shift.shift_id))
+      ).filter(Boolean);
 
-      if (incidentsError) {
-        console.warn("Incidents load error:", incidentsError.message);
+      let nextIncidents: NotificationIncident[] = [];
+      if (shiftIdsForIncidents.length > 0) {
+        const { data: incidentsRaw, error: incidentsError } = await supabase
+          .from("incidents")
+          .select("incident_id, incident_category, location_name, location_unit_no, location_description, created_at, active_status")
+          .in("shift_id", shiftIdsForIncidents)
+          .order("created_at", { ascending: false })
+          .limit(200);
+
+        if (incidentsError) {
+          console.warn("Incidents load error:", incidentsError.message);
+        }
+
+        nextIncidents = (incidentsRaw as NotificationIncident[] | null) ?? [];
       }
-
-      const nextIncidents = (incidentsRaw as NotificationIncident[] | null) ?? [];
       let nextReports: NotificationReport[] = [];
       const incidentIds = nextIncidents.map((i) => i.incident_id).filter(Boolean);
       if (incidentIds.length > 0) {

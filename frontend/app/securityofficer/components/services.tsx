@@ -93,8 +93,8 @@ export default function ServicesModal({ visible, onClose }: ServicesModalProps) 
   const services: ServiceItem[] = [
     { id: "id-card", label: "ID Card", Icon: CreditCard, href: "/securityofficer/id-card" },
     { id: "incidents", label: "Incidents", Icon: ShieldAlert, href: "/securityofficer/incidents" },
-    { id: "reports", label: "Reports", Icon: FileText, href: "/securityofficer/reports" },
-    { id: "shift-reports", label: "Shift Reports", Icon: ScrollText, href: "/securityofficer/shift-reports" },
+    { id: "reports", label: "Incident Reports", Icon: FileText, href: "/securityofficer/reports" },
+    { id: "shift-reports", label: "Shift Reports", Icon: ScrollText, href: "/securityofficer/all-shift-reports" },
     { id: "schedule", label: "Upcoming Schedule", Icon: CalendarDays, href: "/securityofficer/schedule" },
     {
       id: "phone-calls",

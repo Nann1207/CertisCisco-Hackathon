@@ -40,7 +40,7 @@ export default function ClockInScreen() {
   const router = useRouter();
   const segments = useSegments();
   const isSsoRoute = segments.includes("sso");
-  const shiftOwnerColumn = isSsoRoute ? "supervisor_id" : "officer_id";
+  const shiftOwnerColumn = "officer_id";
   const homePath = isSsoRoute ? "/sso/home" : "/securityofficer/home";
   const { shiftData } = useLocalSearchParams();
   const { width, height } = useWindowDimensions();

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Alert, Animated, Modal, Pressable, StyleSheet, Vibration, View } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
+import { CheckCircle2, SquareCheckBig, UserX } from "lucide-react-native";
 import { useRouter } from "expo-router";
 import Text from "../../../components/TranslatedText";
 import { supabase } from "../../../lib/supabase";
@@ -67,6 +68,7 @@ export default function AssignmentAlertModal({
   const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
   const [activeAssignment, setActiveAssignment] = useState<AlertAssignment | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showRejectSuccessModal, setShowRejectSuccessModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [isSubmittingReject, setIsSubmittingReject] = useState(false);
   const acknowledgedIdsRef = useRef<Set<string>>(new Set());
@@ -393,21 +395,23 @@ export default function AssignmentAlertModal({
   const onSubmitReject = async () => {
     if (!activeAssignment || isSubmittingReject) return;
 
+    const trimmedReason = rejectReason.trim();
+    if (!trimmedReason) {
+      Alert.alert("Reason required", "Please enter a reason before declining the assignment.");
+      return;
+    }
+
     setIsSubmittingReject(true);
 
     const rejectionPayload = {
       assignment_id: activeAssignment.assignmentId,
-      shift_id: activeAssignment.shiftId,
-      incident_id: activeAssignment.incidentId,
-      officer_id: activeAssignment.officerId,
-      supervisor_id: activeAssignment.supervisorId,
-      rejection_reason: rejectReason.trim() || null,
-      rejection_status: "submitted",
+      rejection_reason: trimmedReason,
+      rejection_status: "Unseen",
     };
 
     const { error: rejectError } = await supabase
       .from("reject_assignment")
-      .insert(rejectionPayload);
+      .upsert(rejectionPayload, { onConflict: "assignment_id" });
 
     if (rejectError) {
       setIsSubmittingReject(false);
@@ -418,12 +422,10 @@ export default function AssignmentAlertModal({
     const { error: assignmentError } = await supabase
       .from("incident_assignments")
       .update({
-        shift_id: null,
-        officer_id: null,
-        officer_name: null,
         active_status: false,
       })
-      .eq("assignment_id", activeAssignment.assignmentId);
+      .eq("assignment_id", activeAssignment.assignmentId)
+      .eq("officer_id", activeAssignment.officerId);
 
     setIsSubmittingReject(false);
 
@@ -444,7 +446,7 @@ export default function AssignmentAlertModal({
     setVisible(false);
     stopVibration();
     resetRejectState();
-    Alert.alert("Assignment declined", "Your supervisor has been notified.");
+    setShowRejectSuccessModal(true);
   };
 
   const onDismiss = async () => {
@@ -513,18 +515,19 @@ export default function AssignmentAlertModal({
                       void onAcknowledge();
                     }}
                   >
+                    <SquareCheckBig size={20} color="#FFFFFF" />
                     <Text style={styles.ackButtonText}>{"I ACKNOWLEDGE\nTHIS ASSIGNMENT"}</Text>
                   </Pressable>
                 </View>
               </View>
-
               <Pressable
                 style={styles.declineBtn}
                 onPress={() => {
                   setShowRejectModal(true);
                 }}
               >
-                <Text style={styles.declineText}>Decline Assignment</Text>
+                <UserX size={22} color="#FFFFFF" />
+                <Text style={styles.declineText}>DECLINE ASSIGNMENT</Text>
               </Pressable>
             </View>
           </LinearGradient>
@@ -542,6 +545,35 @@ export default function AssignmentAlertModal({
         }}
         onClose={resetRejectState}
       />
+
+      <Modal
+        visible={showRejectSuccessModal}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => setShowRejectSuccessModal(false)}
+      >
+        <View style={styles.successBackdrop}>
+          <LinearGradient
+            colors={["#FFF7ED", "#FFE4CC", "#F6C7D8"]}
+            start={{ x: 0.1, y: 0 }}
+            end={{ x: 0.95, y: 1 }}
+            style={styles.successCard}
+          >
+            <View style={styles.successIconWrap}>
+              <CheckCircle2 size={38} color="#FFFFFF" strokeWidth={2.6} />
+            </View>
+            <Text style={styles.successTitle}>Success: Assignment Declined</Text>
+            <Text style={styles.successMessage}>Your supervisor has been notified and can reassign the incident.</Text>
+
+            <Pressable style={styles.successButton} onPress={() => setShowRejectSuccessModal(false)}>
+              <Text style={styles.successButtonText}>Done</Text>
+            </Pressable>
+          </LinearGradient>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -632,6 +664,7 @@ const styles = StyleSheet.create({
   ackButton: {
     height: 48,
     borderRadius: 12,
+    flexDirection: "row",
     backgroundColor: "transparent",
     alignItems: "center",
     justifyContent: "center",
@@ -640,18 +673,95 @@ const styles = StyleSheet.create({
   },
   ackButtonText: {
     fontSize: 15,
+    marginLeft: 14,
+    marginRight: 22,
     fontWeight: "900",
     color: "#FFFFFF",
     textAlign: "center",
   },
   declineBtn: {
-    marginTop: 12,
-    alignSelf: "center",
+    marginTop: 6,
+    minHeight: 40,
+    borderRadius: 12,
+    flexDirection: "row",
+    backgroundColor: "#681a00",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    zIndex: 1,
   },
   declineText: {
-    color: "#7C2D12",
+    color: "#FFFFFF",
     fontSize: 13,
-    fontWeight: "800",
-    textDecorationLine: "underline",
+    fontWeight: "900",
+    marginLeft: 10,
+    marginRight: 18,
+  },
+  successBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(10, 22, 38, 0.58)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
+  successCard: {
+    width: "100%",
+    maxWidth: 356,
+    borderRadius: 26,
+    borderWidth: 2,
+    borderColor: "#B45309",
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 18,
+    alignItems: "center",
+    shadowColor: "#7C2D12",
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+  successIconWrap: {
+    width: 66,
+    height: 66,
+    borderRadius: 33,
+    backgroundColor: "#0E2D52",
+    borderWidth: 3,
+    borderColor: "rgba(255,255,255,0.9)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  successTitle: {
+    marginTop: 14,
+    color: "#7C2D12",
+    fontSize: 23,
+    lineHeight: 28,
+    fontWeight: "900",
+    textAlign: "center",
+    textTransform: "uppercase",
+  },
+  successMessage: {
+    marginTop: 8,
+    color: "#1F2937",
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  successButton: {
+    marginTop: 20,
+    width: "100%",
+    height: 46,
+    borderRadius: 12,
+    backgroundColor: "#0E2D52",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  successButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "900",
   },
 });

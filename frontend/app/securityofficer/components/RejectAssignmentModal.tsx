@@ -25,10 +25,13 @@ export default function RejectAssignmentModal({
   onSubmit,
   onClose,
 }: RejectAssignmentModalProps) {
+  const trimmedReason = reason.trim();
+  const canSubmit = trimmedReason.length > 0 && !submitting;
+
   const headerText = useMemo(() => {
     const name = officerName?.trim();
     if (!name) return "Decline Assignment";
-    return `Decline Assignment for ${name}`;
+    return `Decline Assignment`;
   }, [officerName]);
 
   return (
@@ -54,15 +57,17 @@ export default function RejectAssignmentModal({
           </Pressable>
 
           <Text style={styles.title}>{headerText}</Text>
-          <Text style={styles.subtitle}>
-            Provide a short reason so the supervisor can reassign quickly.
-          </Text>
+          <View style={styles.subtitle}>
+            <Text style={styles.subtitleText}>
+              {`Provide short reason so supervisor can \nreassign quickly.`}
+            </Text>
+          </View>
 
-          <Text style={styles.inputLabel}>Reason (max {MAX_REASON_LENGTH} characters)</Text>
+          <Text style={styles.inputLabel}>Reason required (max {MAX_REASON_LENGTH} characters)</Text>
           <View style={styles.inputShell}>
             <TextInput
               style={styles.input}
-              placeholder="Share the reason for declining..."
+              placeholder="Enter reason before submitting..."
               placeholderTextColor="rgba(30, 41, 59, 0.55)"
               value={reason}
               onChangeText={(value) => onChangeReason(value.slice(0, MAX_REASON_LENGTH))}
@@ -72,6 +77,9 @@ export default function RejectAssignmentModal({
             />
             <Text style={styles.charCount}>({reason.length}/{MAX_REASON_LENGTH})</Text>
           </View>
+          {!trimmedReason ? (
+            <Text style={styles.requiredText}>A reason is required to decline this assignment.</Text>
+          ) : null}
 
           <View style={styles.actionsRow}>
             <Pressable style={[styles.actionBtn, styles.cancelBtn]} onPress={onClose} disabled={submitting}>
@@ -79,12 +87,12 @@ export default function RejectAssignmentModal({
             </Pressable>
 
             <Pressable
-              style={[styles.actionBtn, styles.submitBtn, submitting ? styles.submitBtnDisabled : null]}
+              style={[styles.actionBtn, styles.submitBtn, !canSubmit ? styles.submitBtnDisabled : null]}
               onPress={onSubmit}
-              disabled={submitting}
+              disabled={!canSubmit}
             >
               <LinearGradient
-                colors={["#0E2D52", "#0B1F3A"]}
+                colors={canSubmit ? ["#0E2D52", "#0B1F3A"] : ["#94A3B8", "#64748B"]}
                 start={{ x: 0.5, y: 0 }}
                 end={{ x: 0.5, y: 1 }}
                 style={styles.submitGradient}
@@ -128,20 +136,26 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   title: {
-    fontSize: 20,
+    marginTop: 8,
+    fontSize: 25,
     fontWeight: "900",
     color: "#1E1B4B",
     textAlign: "center",
   },
   subtitle: {
     marginTop: 6,
-    fontSize: 13,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  subtitleText: {
+    fontSize: 15,
     fontWeight: "700",
     color: "#5B4E77",
     textAlign: "center",
   },
   inputLabel: {
-    marginTop: 16,
+    marginTop: 26,
     fontSize: 13,
     fontWeight: "700",
     color: "#0F172A",
@@ -155,7 +169,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 10,
     paddingBottom: 8,
-    minHeight: 92,
+    minHeight: 108,
   },
   input: {
     flex: 1,
@@ -170,6 +184,12 @@ const styles = StyleSheet.create({
     textAlign: "right",
     color: "#1F2937",
     fontWeight: "700",
+  },
+  requiredText: {
+    marginTop: 7,
+    color: "#991B1B",
+    fontSize: 12,
+    fontWeight: "800",
   },
   actionsRow: {
     marginTop: 18,

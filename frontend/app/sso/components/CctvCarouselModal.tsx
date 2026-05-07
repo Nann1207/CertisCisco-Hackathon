@@ -42,8 +42,8 @@ export default function CctvCarouselModal({
     useNativeDriver: true,
   });
 
-  const onPinchStateChange = (event: { nativeEvent: { oldState: number; scale: number } }) => {
-    if (event.nativeEvent.oldState !== State.ACTIVE) return;
+  const onPinchStateChange = (event: { nativeEvent: { state: number; scale: number } }) => {
+    if (event.nativeEvent.state !== State.END && event.nativeEvent.state !== State.CANCELLED) return;
     let nextScale = lastScale.current * event.nativeEvent.scale;
     nextScale = clamp(nextScale, 1, MAX_SCALE);
     lastScale.current = nextScale;

@@ -9,6 +9,7 @@ import {
   setLanguagePreference,
 } from "../lib/language-preferences";
 import ChatNotificationListener from "../components/ChatNotificationListener";
+import AssignmentRejectionAlertModal from "./sso/components/AssignmentRejectionAlertModal";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -167,6 +168,7 @@ export default function RootLayout() {
           }}
         />
       </Stack>
+      <AssignmentRejectionAlertModal />
     </GestureHandlerRootView>
   );
 }

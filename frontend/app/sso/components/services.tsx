@@ -20,6 +20,7 @@ import {
   LogOut,
   MessageCircleMore,
   PhoneCall,
+  ScrollText,
   Settings,
   ShieldAlert,
   UserCircle2,
@@ -93,7 +94,8 @@ export default function ServicesModal({ visible, onClose }: ServicesModalProps) 
   const services: ServiceItem[] = [
     { id: "id-card", label: "ID Card", Icon: CreditCard, href: "/sso/id-card" },
     { id: "incidents", label: "Incidents", Icon: ShieldAlert, href: "/sso/incidents" },
-    { id: "reports", label: "Reports", Icon: FileText, href: "/sso/reports" },
+    { id: "reports", label: "Incident Reports", Icon: FileText, href: "/sso/reports" },
+    { id: "shift-reports", label: "Shift Reports", Icon: ScrollText, href: "/sso/all-shift-reports" },
     { id: "schedule", label: "Upcoming Schedule", Icon: CalendarDays, href: "/sso/upcoming-shift-details" },
     { id: "phone-calls", label: "Phone Calls", Icon: PhoneCall, href: "/sso/phonecalls" },
     { id: "messages", label: "Messages", Icon: MessageCircleMore, href: "/sso/messagingChannel" },

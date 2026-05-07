@@ -17,12 +17,13 @@ type IncidentItem = {
   assignment_id: string;
   id: string;
   incident_category: string | null;
-  location_name?: string | null;
+  location_name: string | null;
   location_unit_no: string | null;
   location_description: string | null;
   created_at: string | null;
   assigned_at: string | null;
   assignment_active_status: boolean;
+  assignment_declined: boolean;
 };
 
 type IncidentAssignmentRow = {
@@ -54,6 +55,10 @@ type ReportRow = {
   incident_id: string | null;
   report_type: string | null;
   created_at: string | null;
+};
+
+type RejectedAssignmentRow = {
+  assignment_id: string | null;
 };
 
 export default function IncidentsScreen() {
@@ -102,6 +107,25 @@ export default function IncidentsScreen() {
         } else {
           const assignments = (assignmentData as IncidentAssignmentRow[] | null) ?? [];
           const reportRows = (reportData as ReportRow[] | null) ?? [];
+          const assignmentIds = assignments.map((row) => row.assignment_id).filter(Boolean);
+          let rejectedAssignmentIds = new Set<string>();
+
+          if (assignmentIds.length > 0) {
+            const { data: rejectedRows, error: rejectedError } = await supabase
+              .from("reject_assignment")
+              .select("assignment_id")
+              .in("assignment_id", assignmentIds);
+
+            if (rejectedError) {
+              console.warn("[securityofficer/incidents] rejected assignments query failed", rejectedError.message);
+            } else {
+              rejectedAssignmentIds = new Set(
+                ((rejectedRows as RejectedAssignmentRow[] | null) ?? [])
+                  .map((row) => row.assignment_id)
+                  .filter((id): id is string => Boolean(id))
+              );
+            }
+          }
 
           const assignedIncidents: IncidentItem[] = assignments
             .map((row) => {
@@ -118,6 +142,7 @@ export default function IncidentsScreen() {
                 created_at: incident.created_at,
                 assigned_at: row.assigned_at,
                 assignment_active_status: Boolean(row.active_status),
+                assignment_declined: rejectedAssignmentIds.has(row.assignment_id),
               } satisfies IncidentItem;
             })
             .filter((item): item is IncidentItem => Boolean(item));
@@ -211,8 +236,8 @@ export default function IncidentsScreen() {
               <View key={incident.id} style={styles.card}>
                 <Text style={styles.cardCategory}>{buildIncidentTitle(incident)}</Text>
                 <Text style={styles.cardMeta}>{buildLocation(incident)}</Text>
-                <Text style={styles.statusPill}>
-                  {(latestReportByIncident.get(incident.id)?.report_type ?? "Completed").toUpperCase()}
+                <Text style={[styles.statusPill, incident.assignment_declined ? styles.statusPillDeclined : null]}>
+                  {getPastIncidentStatus(incident, latestReportByIncident).toUpperCase()}
                 </Text>
               </View>
             ))
@@ -237,6 +262,11 @@ function buildLocation(incident: IncidentItem) {
     ? createdAt.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
     : "Unknown time";
   return [unit, desc, timestamp].filter(Boolean).join(" • ");
+}
+
+function getPastIncidentStatus(incident: IncidentItem, latestReportByIncident: Map<string, ReportRow>) {
+  if (incident.assignment_declined) return "Declined";
+  return latestReportByIncident.get(incident.id)?.report_type ?? "Completed";
 }
 
 function toMillis(iso: string | null | undefined) {
@@ -337,5 +367,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: "#334155",
+  },
+  statusPillDeclined: {
+    backgroundColor: "#FEF3C7",
+    color: "#92400E",
   },
 });

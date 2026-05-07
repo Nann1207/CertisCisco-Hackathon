@@ -72,6 +72,8 @@ type UpcomingShift = {
 type ActiveIncidentRow = {
   incident_id: string;
   incident_name: string | null;
+  incident_category?: string | null;
+  location_name?: string | null;
   active_status: boolean | null;
   created_at: string | null;
 };
@@ -256,26 +258,32 @@ export default function Home() {
     const { data: todayShiftsRaw, error: todayShiftError } = await supabase
       .from("shifts")
       .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
-      .eq("supervisor_id", userId)
+      .eq("officer_id", userId)
       .eq("shift_date", todayISO)
       .order("shift_start", { ascending: true });
 
     const { data: upcomingShiftsRaw, error: upcomingError } = await supabase
       .from("shifts")
       .select("id:shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, completion_status, location, address, supervisor_id")
-      .eq("supervisor_id", userId)
+      .eq("officer_id", userId)
       .gte("shift_date", todayISO)
       .order("shift_date", { ascending: true })
       .order("shift_start", { ascending: true })
       .limit(5);
 
-    const { data: activeIncidentsRaw, error: activeIncidentError } = await supabase
+    let activeIncidentsRaw: ActiveIncidentRow[] | null = [];
+    let activeIncidentError: { message: string } | null = null;
+
+    const { data: incidentsRaw, error: incidentsError } = await supabase
       .from("incidents")
-      .select("incident_id, incident_name, active_status, created_at")
+      .select("incident_id, incident_name, incident_category, location_name, active_status, created_at")
       .eq("supervisor_id", userId)
       .eq("active_status", true)
       .order("created_at", { ascending: false })
       .limit(50);
+
+    activeIncidentsRaw = (incidentsRaw as ActiveIncidentRow[] | null) ?? [];
+    activeIncidentError = incidentsError ? { message: incidentsError.message } : null;
 
     const incidentIds = ((activeIncidentsRaw as ActiveIncidentRow[] | null) ?? []).map((row) => row.incident_id);
 
@@ -332,26 +340,26 @@ export default function Home() {
     if (!upcomingError && (upcomingShiftsRaw?.length ?? 0) === 0) {
       const { data: visibleShifts, error: visibleError } = await supabase
         .from("shifts")
-        .select("shift_id, supervisor_id, shift_date")
+        .select("shift_id, officer_id, shift_date")
         .gte("shift_date", todayISO)
         .limit(20);
 
       if (!visibleError) {
         const visibleCount = visibleShifts?.length ?? 0;
-        const hasMatchingSupervisor = (visibleShifts ?? []).some((item: any) => item.supervisor_id === userId);
-        const supervisorCount = (visibleShifts ?? []).filter((item: any) => item.supervisor_id === userId).length;
+          const hasMatchingOfficer = (visibleShifts ?? []).some((item: any) => item.officer_id === userId);
+          const officerCount = (visibleShifts ?? []).filter((item: any) => item.officer_id === userId).length;
 
         if (visibleCount === 0) {
           setDebugEmptyReason(
             `No shifts are visible for this session. Auth user: ${userId}. This usually means RLS policy is blocking select on shifts.`
           );
-        } else if (hasMatchingSupervisor) {
+          } else if (hasMatchingOfficer) {
           setDebugEmptyReason(
-            `You supervise ${supervisorCount} upcoming shift${supervisorCount === 1 ? "" : "s"}.`
+              `You have ${officerCount} upcoming shift${officerCount === 1 ? "" : "s"}.`
           );
         } else {
           setDebugEmptyReason(
-            `Shifts are visible, but none match supervisor_id = ${userId}. Check shifts.supervisor_id values for this user.`
+              `Shifts are visible, but none match officer_id = ${userId}. Check shifts.officer_id values for this user.`
           );
         }
       }
@@ -365,7 +373,7 @@ export default function Home() {
       .map((row) => ({
         assignment_id: row.incident_id,
         incident_id: row.incident_id,
-        incident_name: row.incident_name,
+        incident_name: row.incident_name ?? formatIncidentTitle(row),
         active_status: row.active_status,
         assigned_at: row.created_at,
       }))
@@ -449,7 +457,7 @@ export default function Home() {
       .from("shifts")
       .update({ clockout_time: clockedOutAt, completion_status: true })
       .eq("shift_id", shiftToClockOut.id)
-      .eq("supervisor_id", userId);
+      .eq("officer_id", userId);
 
     if (firstTry.error) {
       setIsSavingShiftAction(false);
@@ -462,7 +470,7 @@ export default function Home() {
       .from("shifts")
       .select("clockout_time")
       .eq("shift_id", shiftToClockOut.id)
-      .eq("supervisor_id", userId)
+      .eq("officer_id", userId)
       .maybeSingle();
 
     if (verifyError || !verifyRow?.clockout_time) {
@@ -484,7 +492,7 @@ export default function Home() {
     setActiveClockedInShiftId(null);
     setIsSavingShiftAction(false);
     router.push({
-      pathname: "/sso/reports",
+      pathname: "/sso/shift-report",
       params: {
         shiftId: shiftToClockOut.id,
       },
@@ -631,7 +639,7 @@ export default function Home() {
         <View style={styles.quickRow}>
           <QuickAction label="ID Card" Icon={CreditCard} onPress={() => router.push("/sso/id-card")} />
           <QuickAction label="Incidents" Icon={ShieldAlert} onPress={() => router.push("/sso/incidents")} />
-          <QuickAction label="Reports" Icon={FileText} onPress={() => router.push("/sso/reports")} />
+          <QuickAction label="Incident Reports" Icon={FileText} onPress={() => router.push("/sso/reports")} />
           <QuickAction label="All Services" Icon={Grid3X3} onPress={() => setShowServices(true)} />
         </View>
       </ImageBackground>
@@ -880,6 +888,13 @@ function QuickAction({ label, Icon, onPress }: any) {
       <Text style={styles.quickLabel}>{label}</Text>
     </Pressable>
   );
+}
+
+function formatIncidentTitle(row: ActiveIncidentRow) {
+  const category = row.incident_category?.trim();
+  const location = row.location_name?.trim();
+  if (category && location) return `${category} at ${location}`;
+  return category || location || "Active Incident";
 }
 
 function formatTimeRange(startISO: string, endISO: string) {

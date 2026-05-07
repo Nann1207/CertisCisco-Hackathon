@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -13,9 +12,11 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CheckCircle2, ChevronLeft, CircleX, Clock3, PhoneCall, TriangleAlert } from "lucide-react-native";
+import Svg, { Path } from "react-native-svg";
 import Text from "../../components/TranslatedText";
 import { getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
 import { supabase } from "../../lib/supabase";
+import OfficerCallModal from "./components/OfficerCallModal";
 
 const DISPLAY_TIME_ZONE = "Asia/Singapore";
 
@@ -100,6 +101,7 @@ export default function SsoAddBackupPage() {
   const [candidates, setCandidates] = useState<CandidateOfficer[]>([]);
   const [existingAssigned, setExistingAssigned] = useState<ExistingAssignedOfficer[]>([]);
   const [selectedOfficerIds, setSelectedOfficerIds] = useState<Set<string>>(new Set());
+  const [callTarget, setCallTarget] = useState<{ name: string; phone: string | null } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -331,25 +333,6 @@ export default function SsoAddBackupPage() {
 
   const selectedCount = selectedOfficerIds.size;
 
-  const onCallOfficer = async (officerId: string, phone: string | null) => {
-    if (!phone?.trim()) {
-      router.push({ pathname: "/sso/phonecalls", params: { officerId } });
-      return;
-    }
-
-    const tel = `tel:${phone.trim()}`;
-    try {
-      const canOpen = await Linking.canOpenURL(tel);
-      if (!canOpen) {
-        router.push({ pathname: "/sso/phonecalls", params: { officerId } });
-        return;
-      }
-      await Linking.openURL(tel);
-    } catch {
-      router.push({ pathname: "/sso/phonecalls", params: { officerId } });
-    }
-  };
-
   const onToggleAssign = (officer: CandidateOfficer, canAssign: boolean) => {
     if (!canAssign) return;
 
@@ -458,31 +441,45 @@ export default function SsoAddBackupPage() {
                 return (
                   <View key={officer.officerId} style={styles.card}>
                     <View style={styles.topRow}>
-                      <View style={styles.profileRow}>
-                        <ProfileAvatar profilePhotoUrl={officer.profilePhotoUrl} fullName={fullName} />
-                        <View style={styles.profileTextCol}>
-                          <Text style={styles.profileName}>{fullName}</Text>
-                          <Text style={styles.profileRole}>{officer.role ?? "Security Officer"}</Text>
+                      <View style={styles.cardInfoCol}>
+                        <View style={styles.profileRow}>
+                          <ProfileAvatar profilePhotoUrl={officer.profilePhotoUrl} fullName={fullName} />
+                          <View style={styles.profileTextCol}>
+                            <Text style={styles.profileName}>{fullName}</Text>
+                            <Text style={styles.profileRole}>{officer.role ?? "Security Officer"}</Text>
+                          </View>
                         </View>
+                        <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
                       </View>
 
                       <View style={styles.badgesCol}>
                         <StatusBadge label={clockStatus.label} tone={clockStatus.tone} />
                         <StatusBadge label={availabilityStatus.label} tone={availabilityStatus.tone} />
-                        <Pressable style={styles.callBtn} onPress={() => { void onCallOfficer(officer.officerId, officer.phone); }}>
+                        <Pressable style={styles.callBtn} onPress={() => setCallTarget({ name: fullName, phone: officer.phone })}>
                           <PhoneCall size={14} color="#FFFFFF" />
                         </Pressable>
                       </View>
                     </View>
 
-                    <View style={styles.shiftRow}>
-                      <View style={styles.shiftMeta}>
-                        <Text style={styles.shiftMetaLabel}>Shift Date</Text>
-                        <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
-                      </View>
-                      <View style={styles.shiftMeta}>
-                        <Text style={styles.shiftMetaLabel}>Shift Time</Text>
-                        <Text style={styles.shiftTime}>{formatTimeRange(officer.shiftDate, officer.shiftStart, officer.shiftEnd)}</Text>
+                    <View style={styles.shiftSchedule}>
+                      <View style={styles.timeRow}>
+                        <View style={styles.timeColumn}>
+                          <View style={styles.timePill}>
+                            <Text style={styles.shiftLabel}>Start Time</Text>
+                            <Text style={styles.shiftTime}>{formatShiftTime(officer.shiftDate, officer.shiftStart)}</Text>
+                          </View>
+                        </View>
+
+                        <View style={styles.timeConnector}>
+                          <TimeConnector />
+                        </View>
+
+                        <View style={[styles.timeColumn, styles.timeColumnRight]}>
+                          <View style={[styles.timePill, styles.timePillEnd]}>
+                            <Text style={[styles.shiftLabel, styles.shiftLabelRight]}>End Time</Text>
+                            <Text style={styles.shiftTime}>{formatShiftTime(officer.shiftDate, officer.shiftEnd)}</Text>
+                          </View>
+                        </View>
                       </View>
                     </View>
 
@@ -538,7 +535,28 @@ export default function SsoAddBackupPage() {
           </ScrollView>
         </View>
       )}
+      <OfficerCallModal
+        visible={Boolean(callTarget)}
+        officerName={callTarget?.name ?? "Security Officer"}
+        phone={callTarget?.phone ?? null}
+        onClose={() => setCallTarget(null)}
+      />
     </SafeAreaView>
+  );
+}
+
+function TimeConnector() {
+  return (
+    <Svg width={64} height={24} viewBox="0 0 64 24">
+      <Path
+        d="M18 6L10 12L18 18M10 12H54M46 6L54 12L46 18"
+        fill="none"
+        stroke="#64748B"
+        strokeWidth={2.6}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
   );
 }
 
@@ -617,12 +635,6 @@ function formatDate(isoDate: string) {
     year: "numeric",
     timeZone: DISPLAY_TIME_ZONE,
   });
-}
-
-function formatTimeRange(shiftDate: string, startISO: string, endISO: string) {
-  const start = formatShiftTime(shiftDate, startISO);
-  const end = formatShiftTime(shiftDate, endISO);
-  return `${start} - ${end}`;
 }
 
 function formatShiftTime(shiftDate: string, shiftValue: string) {
@@ -789,11 +801,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "flex-start",
   },
+  cardInfoCol: {
+    flex: 1,
+    marginRight: 10,
+  },
   profileRow: {
     flexDirection: "row",
     alignItems: "center",
-    flex: 1,
-    marginRight: 10,
   },
   avatar: {
     width: 50,
@@ -829,16 +843,18 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   badgesCol: {
-    gap: 6,
+    gap: 5,
     alignItems: "flex-end",
     maxWidth: 154,
   },
   statusBadge: {
     minHeight: 21,
     borderRadius: 11,
-    paddingHorizontal: 8,
+    minWidth: 78,
+    paddingHorizontal: 9,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 4,
   },
   badgeGreen: {
@@ -862,42 +878,77 @@ const styles = StyleSheet.create({
     width: 32,
     height: 28,
     borderRadius: 10,
+    marginTop: 2,
     backgroundColor: "#0E2D52",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.2)",
   },
-  shiftRow: {
-    marginTop: 14,
+  shiftSchedule: {
+    marginTop: 12,
+  },
+  timeRow: {
+    marginTop: 8,
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    gap: 12,
+    gap: 14,
   },
-  shiftMeta: {
-    flex: 1,
-    borderRadius: 14,
-    backgroundColor: "#FAFAFA",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+  timeColumn: {
+    flex: 0,
+    width: 112,
+    alignItems: "flex-start",
   },
-  shiftMetaLabel: {
-    color: "#9CA3AF",
-    fontSize: 10,
-    fontWeight: "700",
-    textTransform: "uppercase",
+  timeColumnRight: {
+    alignItems: "flex-end",
+  },
+  shiftLabel: {
+    color: "#64748B",
+    fontSize: 11,
+    lineHeight: 13,
+    fontWeight: "800",
+  },
+  shiftLabelRight: {
+    textAlign: "center",
   },
   shiftDate: {
-    color: "#374151",
-    fontSize: 12,
-    fontWeight: "700",
-    marginTop: 3,
+    marginTop: 13,
+    color: "#263344",
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "900",
+  },
+  timePill: {
+    width: 106,
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: "#EEF6FF",
+    borderWidth: 1,
+    borderColor: "#BFD7F3",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timePillEnd: {
+    backgroundColor: "#FFF4E8",
+    borderColor: "#F3C99E",
   },
   shiftTime: {
-    color: "#4B5563",
-    fontSize: 12,
-    fontWeight: "600",
-    marginTop: 2,
+    color: "#1F2937",
+    fontSize: 16,
+    lineHeight: 19,
+    fontWeight: "900",
+    marginTop: 3,
+  },
+  timeConnector: {
+    flex: 1,
+    minWidth: 64,
+    maxWidth: 64,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
   },
   assignBtn: {
     alignSelf: "center",

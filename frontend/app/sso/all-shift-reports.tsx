@@ -9,56 +9,42 @@ import {
   StyleSheet,
   View,
 } from "react-native";
-import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
+import { useRouter } from "expo-router";
 import { ChevronLeft, FileText, MapPin, NotebookPen, ShieldCheck } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
 
-type AssignedIncident = {
+const DISPLAY_TIME_ZONE = "Asia/Singapore";
+
+type ShiftRow = {
+  shift_id: string;
+  shift_date: string;
+  shift_start: string | null;
+  shift_end: string | null;
+  clockin_time: string | null;
+  clockout_time: string | null;
+  shift_description: string | null;
+  location: string | null;
+  address: string | null;
+};
+
+type ShiftReportCard = {
   id: string;
-  incident_category: string | null;
-  location_unit_no: string | null;
-  location_description: string | null;
-  created_at: string | null;
+  shift_date: string;
+  shift_start: string | null;
+  shift_end: string | null;
+  clockout_time: string | null;
+  shift_description: string | null;
+  location: string | null;
+  address: string | null;
 };
 
-type AssignedIncidentRow = {
-  incident_id: string | null;
-  active_status: boolean | null;
-  assigned_at: string | null;
-  incidents:
-    | {
-        incident_id: string;
-        incident_category: string | null;
-        location_unit_no: string | null;
-        location_description: string | null;
-        created_at: string | null;
-      }
-    | {
-        incident_id: string;
-        incident_category: string | null;
-        location_unit_no: string | null;
-        location_description: string | null;
-        created_at: string | null;
-      }[]
-    | null;
-};
-
-type PastReport = {
-  reportId: string;
-  reportType: string;
-  incidentCategory: string;
-  incidentLocation: string;
-  createdAt: string | null;
-};
-
-export default function ReportsScreen() {
+export default function AllShiftReportsScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [assignedIncidents, setAssignedIncidents] = useState<AssignedIncident[]>([]);
-  const [pastReports, setPastReports] = useState<PastReport[]>([]);
+  const [shiftRows, setShiftRows] = useState<ShiftReportCard[]>([]);
 
   const load = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
@@ -74,74 +60,34 @@ export default function ReportsScreen() {
       return;
     }
 
-    const { data: activeData, error: activeError } = await supabase
-      .from("incident_assignments")
-      .select(
-        "incident_id, active_status, assigned_at, incidents(incident_id, incident_category, location_unit_no, location_description, created_at)"
-      )
+    const { data: rows, error } = await supabase
+      .from("shifts")
+      .select("shift_id, shift_date, shift_start, shift_end, clockin_time, clockout_time, shift_description, location, address")
       .eq("officer_id", userId)
-      .eq("active_status", true)
-      .order("assigned_at", { ascending: false })
-      .limit(120);
+      .order("shift_date", { ascending: false })
+      .order("shift_start", { ascending: false })
+      .limit(300);
 
-    const { data: reportsData, error: reportsError } = await supabase
-      .from("reports")
-      .select("*")
-      .eq("officer_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(120);
-
-    if (activeError || reportsError) {
-      Alert.alert("Load failed", activeError?.message ?? reportsError?.message ?? "Unknown error");
-      setAssignedIncidents([]);
-      setPastReports([]);
+    if (error) {
+      Alert.alert("Load failed", error.message);
+      setShiftRows([]);
       if (!isRefresh) setLoading(false);
       if (isRefresh) setRefreshing(false);
       return;
     }
 
-    const mappedIncidents = ((activeData as AssignedIncidentRow[] | null) ?? [])
-      .map((row) => {
-        const incident = Array.isArray(row.incidents) ? row.incidents[0] : row.incidents;
-        if (!incident?.incident_id) return null;
-        return {
-          id: incident.incident_id,
-          incident_category: incident.incident_category,
-          location_unit_no: incident.location_unit_no,
-          location_description: incident.location_description,
-          created_at: incident.created_at,
-        } satisfies AssignedIncident;
-      })
-      .filter((item): item is AssignedIncident => Boolean(item));
+    const mapped = ((rows as ShiftRow[] | null) ?? []).map((row) => ({
+      id: row.shift_id,
+      shift_date: row.shift_date,
+      shift_start: row.shift_start,
+      shift_end: row.shift_end,
+      clockout_time: row.clockout_time,
+      shift_description: row.shift_description,
+      location: row.location,
+      address: row.address,
+    }));
 
-    const mappedPastReports = ((reportsData as Record<string, unknown>[] | null) ?? [])
-      .map((row) => {
-        const parsedReportId = toReportId(row.report_id ?? row.id);
-        if (!parsedReportId) return null;
-
-        const reportType = typeof row.report_type === "string" ? row.report_type : "Report";
-        const incidentCategory =
-          typeof row.incident_category === "string" && row.incident_category.trim()
-            ? row.incident_category
-            : "Incident";
-        const incidentLocation =
-          typeof row.incident_location === "string" && row.incident_location.trim()
-            ? row.incident_location
-            : "Location unavailable";
-        const createdAt = typeof row.created_at === "string" ? row.created_at : null;
-
-        return {
-          reportId: parsedReportId,
-          reportType,
-          incidentCategory,
-          incidentLocation,
-          createdAt,
-        } satisfies PastReport;
-      })
-      .filter((item): item is PastReport => Boolean(item));
-
-    setAssignedIncidents(mappedIncidents);
-    setPastReports(mappedPastReports);
+    setShiftRows(mapped);
     if (!isRefresh) setLoading(false);
     if (isRefresh) setRefreshing(false);
   }, []);
@@ -151,26 +97,36 @@ export default function ReportsScreen() {
   }, [load]);
 
   useFocusEffect(
-    React.useCallback(() => {
+    useCallback(() => {
       void load(true);
     }, [load])
   );
 
-  const totalResolved = useMemo(
-    () => pastReports.filter((item) => item.reportType.toLowerCase() === "resolved").length,
-    [pastReports]
+  const pendingReports = useMemo(
+    () =>
+      shiftRows.filter(
+        (row) => row.clockout_time && !(row.shift_description ?? "").trim()
+      ),
+    [shiftRows]
   );
+
+  const pastReports = useMemo(
+    () => shiftRows.filter((row) => (row.shift_description ?? "").trim()),
+    [shiftRows]
+  );
+
+  const totalSubmitted = pastReports.length;
 
   return (
     <SafeAreaView style={styles.root}>
       <View style={styles.header}>
         <Pressable
           style={styles.backButton}
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/securityofficer/home"))}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/sso/reports"))}
         >
           <ChevronLeft size={24} color="#FFFFFF" strokeWidth={2.6} />
         </Pressable>
-        <Text style={styles.headerTitle}>Incident Reports</Text>
+        <Text style={styles.headerTitle}>Shift Reports</Text>
       </View>
 
       {loading ? (
@@ -185,7 +141,7 @@ export default function ReportsScreen() {
           <View style={styles.summaryCard}>
             <View style={styles.summaryItem}>
               <NotebookPen size={18} color="#B45309" />
-              <Text style={[styles.summaryValue, { color: "#B45309" }]}>{assignedIncidents.length}</Text>
+              <Text style={[styles.summaryValue, { color: "#B45309" }]}>{pendingReports.length}</Text>
               <Text style={styles.summaryLabel}>To Be Made</Text>
             </View>
             <View style={styles.summaryDivider} />
@@ -197,41 +153,41 @@ export default function ReportsScreen() {
             <View style={styles.summaryDivider} />
             <View style={styles.summaryItem}>
               <ShieldCheck size={18} color="#1D7A3E" />
-              <Text style={[styles.summaryValue, { color: "#1D7A3E" }]}>{totalResolved}</Text>
-              <Text style={styles.summaryLabel}>Resolved</Text>
+              <Text style={[styles.summaryValue, { color: "#1D7A3E" }]}>{totalSubmitted}</Text>
+              <Text style={styles.summaryLabel}>Submitted</Text>
             </View>
           </View>
 
           <Text style={styles.sectionTitle}>Reports To Be Made</Text>
-          {assignedIncidents.length === 0 ? (
-            <Text style={styles.emptyText}>No active incidents assigned to you.</Text>
+          {pendingReports.length === 0 ? (
+            <Text style={styles.emptyText}>No pending shift reports.</Text>
           ) : (
-            assignedIncidents.map((incident) => (
-              <View key={incident.id} style={styles.card}>
+            pendingReports.map((shift) => (
+              <View key={`pending-${shift.id}`} style={styles.card}>
                 <View style={styles.cardTopRow}>
                   <View style={[styles.typeBadge, styles.pendingBadge]}>
                     <Text style={styles.typeBadgeText}>REPORT</Text>
                   </View>
-                  <Text style={styles.dateText}>{formatDateTime(incident.created_at)}</Text>
+                  <Text style={styles.dateText}>{formatDate(shift.shift_date)}</Text>
                 </View>
 
-                <Text style={styles.titleText}>{incident.incident_category?.trim() || "Incident"}</Text>
+                <Text style={styles.titleText}>Shift Report</Text>
 
                 <View style={styles.locationRow}>
                   <MapPin size={14} color="#6B7280" />
                   <Text style={styles.locationText} numberOfLines={2}>
-                    {formatIncidentLocation(incident)}
+                    {formatLocation(shift)}
                   </Text>
                 </View>
 
                 <View style={styles.metaRow}>
-                  <Text style={styles.metaLabel}>Documentation:</Text>
-                  <Text style={styles.metaValue}>Active incident needs a report from you.</Text>
+                  <Text style={styles.metaLabel}>Shift Time:</Text>
+                  <Text style={styles.metaValue}>{formatShiftTime(shift)}</Text>
                 </View>
 
                 <Pressable
                   style={styles.primaryBtn}
-                  onPress={() => router.push(`/securityofficer/createReport?incidentId=${incident.id}`)}
+                  onPress={() => router.push(`/sso/shift-report?shiftId=${shift.id}`)}
                 >
                   <Text style={styles.primaryBtnText}>Write Report</Text>
                 </Pressable>
@@ -241,30 +197,31 @@ export default function ReportsScreen() {
 
           <Text style={styles.sectionTitle}>Past Reports</Text>
           {pastReports.length === 0 ? (
-            <Text style={styles.emptyText}>No submitted reports yet.</Text>
+            <Text style={styles.emptyText}>No submitted shift reports yet.</Text>
           ) : (
-            pastReports.map((report) => (
-              <Pressable
-                key={report.reportId}
-                style={styles.card}
-                onPress={() => router.push(`/securityofficer/report-summary?reportId=${report.reportId}`)}
-              >
+            pastReports.map((shift) => (
+              <View key={`past-${shift.id}`} style={styles.card}>
                 <View style={styles.cardTopRow}>
-                  <View style={[styles.typeBadge, getTypeBadgeStyle(report.reportType)]}>
-                    <Text style={styles.typeBadgeText}>{report.reportType.toUpperCase()}</Text>
+                  <View style={[styles.typeBadge, styles.doneBadge]}>
+                    <Text style={styles.typeBadgeText}>SUBMITTED</Text>
                   </View>
-                  <Text style={styles.dateText}>{formatDateTime(report.createdAt)}</Text>
+                  <Text style={styles.dateText}>{formatDate(shift.shift_date)}</Text>
                 </View>
 
-                <Text style={styles.titleText}>{report.incidentCategory || "Incident"}</Text>
+                <Text style={styles.titleText}>Shift Report</Text>
 
                 <View style={styles.locationRow}>
                   <MapPin size={14} color="#6B7280" />
                   <Text style={styles.locationText} numberOfLines={2}>
-                    {report.incidentLocation || "Location unavailable"}
+                    {formatLocation(shift)}
                   </Text>
                 </View>
-              </Pressable>
+
+                <View style={styles.metaRow}>
+                  <Text style={styles.metaLabel}>Shift Time:</Text>
+                  <Text style={styles.metaValue}>{formatShiftTime(shift)}</Text>
+                </View>
+              </View>
             ))
           )}
         </ScrollView>
@@ -273,41 +230,38 @@ export default function ReportsScreen() {
   );
 }
 
-function formatIncidentLocation(incident: AssignedIncident) {
-  const unit = incident.location_unit_no?.trim() ?? "";
-  const desc = incident.location_description?.trim() ?? "";
-  return [unit ? `#${unit}` : "", desc].filter(Boolean).join(" ") || "Location unavailable";
-}
-
-function getTypeBadgeStyle(reportType: string | null | undefined) {
-  const type = (reportType ?? "").toLowerCase();
-  if (type === "resolved") return { backgroundColor: "#1D7A3E" };
-  if (type === "handover") return { backgroundColor: "#A65B00" };
-  return { backgroundColor: "#334155" };
-}
-
-function formatDateTime(value: string | null | undefined) {
+function formatDate(value: string | null | undefined) {
   if (!value) return "-";
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return "-";
-  return date.toLocaleString("en-GB", {
+  return date.toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+    timeZone: DISPLAY_TIME_ZONE,
   });
 }
 
-function toReportId(value: unknown) {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  return null;
+function formatShiftTime(shift: ShiftReportCard) {
+  const start = shift.shift_start ? formatClockTime(shift.shift_start) : "--:--";
+  const end = shift.shift_end ? formatClockTime(shift.shift_end) : "--:--";
+  return `${start} - ${end}`;
+}
+
+function formatClockTime(iso: string | null | undefined) {
+  if (!iso) return "--:--";
+  return new Date(iso).toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: DISPLAY_TIME_ZONE,
+  });
+}
+
+function formatLocation(shift: ShiftReportCard) {
+  return [shift.location?.trim() ?? "", shift.address?.trim() ?? ""]
+    .filter(Boolean)
+    .join(" ") || "Location unavailable";
 }
 
 const styles = StyleSheet.create({
@@ -419,6 +373,9 @@ const styles = StyleSheet.create({
   },
   pendingBadge: {
     backgroundColor: "#B45309",
+  },
+  doneBadge: {
+    backgroundColor: "#1D7A3E",
   },
   dateText: {
     color: "#6B7280",

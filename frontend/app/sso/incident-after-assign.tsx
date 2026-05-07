@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   ActivityIndicator,
   Alert,
@@ -16,11 +17,12 @@ import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import * as Location from "expo-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { BellRing, ChevronLeft, ClipboardPen, PhoneCall } from "lucide-react-native";
+import { BellRing, ChevronLeft, ClipboardPen, PhoneCall, Settings2, MapPinned } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { getProfilePhotoUrlFromFolder, getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
 import { supabase } from "../../lib/supabase";
+import AiSummaryModal from "../securityofficer/components/AiSummaryModal";
 import CctvCarouselModal from "./components/CctvCarouselModal";
 
 type IncidentRow = {
@@ -70,6 +72,8 @@ type BackupRequestDetails = {
   requestedCount: number;
   reason: string;
 };
+
+const AI_SUMMARY_FONT_SIZE_PREFIX = "ai_summary_font_size";
 
 function getAssignmentId(row: AssignmentRow, fallbackSuffix: string) {
   return typeof row.assignment_id === "string" ? row.assignment_id : `${row.officer_id ?? "officer"}-${fallbackSuffix}`;
@@ -137,6 +141,8 @@ export default function SsoIncidentAfterAssignPage() {
 
   const [showMapModal, setShowMapModal] = useState(false);
   const [mapRegion, setMapRegion] = useState<Region | null>(null);
+  const [modalMapKey, setModalMapKey] = useState(0);
+  const previewMapRef = useRef<MapView | null>(null);
   const modalMapRef = useRef<MapView | null>(null);
 
   const [showBackupRequestModal, setShowBackupRequestModal] = useState(false);
@@ -146,6 +152,8 @@ export default function SsoIncidentAfterAssignPage() {
   const [cctvUris, setCctvUris] = useState<Array<string | null>>([]);
   const [showCctvModal, setShowCctvModal] = useState(false);
   const [activeCctvIndex, setActiveCctvIndex] = useState(0);
+  const [showAiSummaryModal, setShowAiSummaryModal] = useState(false);
+  const [aiSummaryFontSize, setAiSummaryFontSize] = useState(16);
   const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [currentUserAvatarUrl, setCurrentUserAvatarUrl] = useState<string | null>(null);
 
@@ -153,11 +161,43 @@ export default function SsoIncidentAfterAssignPage() {
   const addBackupRotate = useRef(new Animated.Value(0)).current;
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const acknowledgedBackupRequestIdsRef = useRef<Set<string>>(new Set());
+  const previewMapRegionRef = useRef<Region | null>(null);
+  const modalMapRegionRef = useRef<Region | null>(null);
   const mapRegionAdjustingRef = useRef(false);
+  const hasFitInitialPreviewMapRef = useRef(false);
 
   useEffect(() => {
     acknowledgedBackupRequestIdsRef.current = acknowledgedBackupRequestIds;
   }, [acknowledgedBackupRequestIds]);
+
+  const aiSummaryStorageKey = useMemo(() => {
+    if (!currentUserId) return null;
+    return `${AI_SUMMARY_FONT_SIZE_PREFIX}:${currentUserId}`;
+  }, [currentUserId]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const loadFontSize = async () => {
+      if (!aiSummaryStorageKey) return;
+      const stored = await AsyncStorage.getItem(aiSummaryStorageKey);
+      if (!alive || !stored) return;
+      const parsed = Number.parseFloat(stored);
+      if (Number.isFinite(parsed)) {
+        setAiSummaryFontSize(Math.min(20, Math.max(13, parsed)));
+      }
+    };
+
+    void loadFontSize();
+    return () => {
+      alive = false;
+    };
+  }, [aiSummaryStorageKey]);
+
+  useEffect(() => {
+    if (!aiSummaryStorageKey) return;
+    void AsyncStorage.setItem(aiSummaryStorageKey, String(aiSummaryFontSize));
+  }, [aiSummaryFontSize, aiSummaryStorageKey]);
 
   useEffect(() => {
     if (!backupAttentionActive) {
@@ -465,11 +505,41 @@ export default function SsoIncidentAfterAssignPage() {
     [incident?.latitude, incident?.longitude]
   );
 
+  const defaultMapRegion = useMemo(
+    () =>
+      getRegionForPoints(
+        currentCoords,
+        incident?.latitude && incident?.longitude
+          ? { latitude: incident.latitude, longitude: incident.longitude }
+          : null,
+        incidentRegion
+      ),
+    [currentCoords, incident?.latitude, incident?.longitude, incidentRegion]
+  );
+
   useEffect(() => {
     if (!mapRegion) {
-      setMapRegion(incidentRegion);
+      setMapRegion(defaultMapRegion);
     }
-  }, [incidentRegion, mapRegion]);
+  }, [defaultMapRegion, mapRegion]);
+
+  const fitInitialPreviewMap = useCallback(() => {
+    if (hasFitInitialPreviewMapRef.current || !currentCoords || !incident?.latitude || !incident?.longitude) return;
+    if (!previewMapRef.current) return;
+
+    hasFitInitialPreviewMapRef.current = true;
+    previewMapRef.current?.fitToCoordinates(
+      [currentCoords, { latitude: incident.latitude, longitude: incident.longitude }],
+      {
+        edgePadding: { top: 44, right: 44, bottom: 44, left: 44 },
+        animated: false,
+      }
+    );
+  }, [currentCoords, incident?.latitude, incident?.longitude]);
+
+  useEffect(() => {
+    fitInitialPreviewMap();
+  }, [fitInitialPreviewMap]);
 
   const cctvItems = useMemo(
     () => (cctvUris.length ? cctvUris : [null, null, null, null]),
@@ -510,8 +580,19 @@ export default function SsoIncidentAfterAssignPage() {
   const isTwoOfficerLayout = assignedOfficers.length === 2;
 
   const onOpenMapModal = () => {
-    if (!mapRegion) setMapRegion(incidentRegion);
+    const nextRegion = previewMapRegionRef.current ?? mapRegion ?? defaultMapRegion;
+    modalMapRegionRef.current = nextRegion;
+    setMapRegion(nextRegion);
+    setModalMapKey((prev) => prev + 1);
     setShowMapModal(true);
+  };
+
+  const onCloseMapModal = () => {
+    const nextRegion = modalMapRegionRef.current ?? mapRegion ?? defaultMapRegion;
+    previewMapRegionRef.current = nextRegion;
+    previewMapRef.current?.animateToRegion(nextRegion, 120);
+    setMapRegion(nextRegion);
+    setShowMapModal(false);
   };
 
   const onZoomModalMap = (direction: "in" | "out") => {
@@ -524,6 +605,7 @@ export default function SsoIncidentAfterAssignPage() {
         longitudeDelta: clamp(base.longitudeDelta * factor, 0.0008, 0.2),
       };
       mapRegionAdjustingRef.current = true;
+      modalMapRegionRef.current = next;
       modalMapRef.current?.animateToRegion(next, 180);
       return next;
     });
@@ -531,6 +613,7 @@ export default function SsoIncidentAfterAssignPage() {
 
   const onRecenterModalMap = () => {
     setMapRegion(incidentRegion);
+    modalMapRegionRef.current = incidentRegion;
     mapRegionAdjustingRef.current = true;
     modalMapRef.current?.animateToRegion(incidentRegion, 180);
   };
@@ -602,6 +685,9 @@ export default function SsoIncidentAfterAssignPage() {
             <ChevronLeft size={24} color="#FFFFFF" />
           </Pressable>
           <Text style={styles.headerTitle}>Incident Information</Text>
+          <Pressable style={styles.iconBtn} onPress={() => setShowAiSummaryModal(true)}>
+            <Settings2 size={20} color="#FFFFFF" />
+          </Pressable>
         </View>
       </View>
 
@@ -612,13 +698,17 @@ export default function SsoIncidentAfterAssignPage() {
 
           <View style={styles.mapInfoRow}>
             <Text style={styles.mapHintText}>Tap map to open navigation view</Text>
-            <Text style={styles.mapDistanceText}>{mapDistanceLabel}</Text>
+            <View style={styles.mapDistanceWrap}>{mapDistanceLabel}</View>
           </View>
           <Pressable style={styles.mapCard} onPress={onOpenMapModal}>
             <MapView
+              ref={previewMapRef}
               style={styles.map}
-              region={mapRegion ?? incidentRegion}
-              onRegionChangeComplete={setMapRegion}
+              initialRegion={defaultMapRegion}
+              onMapReady={fitInitialPreviewMap}
+              onRegionChangeComplete={(region) => {
+                previewMapRegionRef.current = region;
+              }}
             >
               {incident.latitude && incident.longitude ? (
                 <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
@@ -667,7 +757,7 @@ export default function SsoIncidentAfterAssignPage() {
                 </Pressable>
               ))}
             </ScrollView>
-            <Text style={styles.cctvHintText}>Swipe for more CCTV images</Text>
+            <Text style={styles.cctvHintText} pointerEvents="none">Tap to zoom / Swipe for more CCTV images</Text>
           </View>
 
           <View style={styles.actionRowTop}>
@@ -726,7 +816,9 @@ export default function SsoIncidentAfterAssignPage() {
 
           <Text style={styles.sectionLabel}>AI Assessment Report</Text>
           <View style={styles.assessmentBox}>
-            <Text style={styles.assessmentText}>{incident.ai_assessment?.trim() || "No AI assessment available."}</Text>
+            <Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize }]}>
+              {incident.ai_assessment?.trim() || "No AI assessment available."}
+            </Text>
           </View>
 
           <Text style={styles.sectionLabel}>Assigned Officers</Text>
@@ -828,60 +920,74 @@ export default function SsoIncidentAfterAssignPage() {
         </View>
       </Modal>
 
-      <Modal visible={showMapModal} animationType="slide" onRequestClose={() => setShowMapModal(false)}>
-        <View style={styles.modalWrap}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalHeaderTitle}>Map Navigation</Text>
-            <Pressable style={styles.modalCloseBtn} onPress={() => setShowMapModal(false)}>
-              <Text style={styles.modalCloseText}>Close</Text>
-            </Pressable>
-          </View>
+      <Modal
+        visible={showMapModal}
+        transparent
+        animationType="fade"
+        onRequestClose={onCloseMapModal}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.mapModalCard}>
+            <Text style={styles.mapModalTitle}>Navigate to Incident</Text>
+            <Text style={styles.mapModalSubtitle}>Use +/- to zoom and orient before moving.</Text>
 
-          <MapView
-            ref={(ref) => {
-              modalMapRef.current = ref;
-            }}
-            style={styles.modalMap}
-            region={mapRegion ?? incidentRegion}
-            onRegionChangeComplete={(region) => {
-              if (mapRegionAdjustingRef.current) {
-                mapRegionAdjustingRef.current = false;
-                return;
-              }
-              setMapRegion(region);
-            }}
-          >
-            {incident.latitude && incident.longitude ? (
-              <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
-            ) : null}
-            {currentCoords ? (
-              <Marker coordinate={currentCoords} title="You" anchor={{ x: 0.5, y: 0.5 }}>
-                <View style={styles.userMarker}>
-                  {currentUserAvatarUrl ? (
-                    <Image source={{ uri: currentUserAvatarUrl }} style={styles.userMarkerImage} />
-                  ) : (
-                    <View style={styles.userMarkerFallback}>
-                      <Text style={styles.userMarkerText}>YOU</Text>
+            <View style={styles.mapModalFrame}>
+              <MapView
+                key={`incident-after-modal-map-${modalMapKey}`}
+                ref={modalMapRef}
+                style={styles.mapModalMap}
+                initialRegion={mapRegion ?? defaultMapRegion}
+                onRegionChangeComplete={(region) => {
+                  if (mapRegionAdjustingRef.current) {
+                    mapRegionAdjustingRef.current = false;
+                    return;
+                  }
+                  modalMapRegionRef.current = region;
+                  setMapRegion(region);
+                }}
+              >
+                {incident.latitude && incident.longitude ? (
+                  <Marker coordinate={{ latitude: incident.latitude, longitude: incident.longitude }} title="Incident" />
+                ) : null}
+                {currentCoords ? (
+                  <Marker coordinate={currentCoords} title="You" anchor={{ x: 0.5, y: 0.5 }}>
+                    <View style={styles.userMarker}>
+                      {currentUserAvatarUrl ? (
+                        <Image source={{ uri: currentUserAvatarUrl }} style={styles.userMarkerImage} />
+                      ) : (
+                        <View style={styles.userMarkerFallback}>
+                          <Text style={styles.userMarkerText}>YOU</Text>
+                        </View>
+                      )}
                     </View>
-                  )}
-                </View>
-              </Marker>
-            ) : null}
-            {hasRoute ? (
-              <Polyline coordinates={routeCoords} strokeColor="#D7263D" strokeWidth={3} />
-            ) : null}
-          </MapView>
+                  </Marker>
+                ) : null}
+                {hasRoute ? (
+                  <Polyline coordinates={routeCoords} strokeColor="#D7263D" strokeWidth={3} />
+                ) : null}
+              </MapView>
 
-          <View style={styles.modalControlsRow}>
-            <Pressable style={styles.modalControlBtn} onPress={() => onZoomModalMap("out")}>
-              <Text style={styles.modalControlText}>-</Text>
-            </Pressable>
-            <Pressable style={styles.modalControlBtn} onPress={onRecenterModalMap}>
-              <Text style={styles.modalControlText}>Recenter</Text>
-            </Pressable>
-            <Pressable style={styles.modalControlBtn} onPress={() => onZoomModalMap("in")}>
-              <Text style={styles.modalControlText}>+</Text>
-            </Pressable>
+              <View style={styles.zoomControls}>
+                <Pressable style={styles.zoomBtn} onPress={() => onZoomModalMap("in")}>
+                  <Text style={styles.zoomBtnText}>+</Text>
+                </Pressable>
+                <Pressable style={styles.zoomBtn} onPress={() => onZoomModalMap("out")}>
+                  <Text style={styles.zoomBtnText}>-</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.mapModalActions}>
+              <Pressable style={[styles.mapModalBtn, styles.mapModalBtnPrimary]} onPress={onRecenterModalMap}>
+                <Text style={styles.mapModalBtnPrimaryText}>Recenter Map</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.mapModalBtn, styles.mapModalBtnSecondary]}
+                onPress={onCloseMapModal}
+              >
+                <Text style={styles.mapModalBtnSecondaryText}>Close</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -891,6 +997,12 @@ export default function SsoIncidentAfterAssignPage() {
         images={cctvItems}
         initialIndex={activeCctvIndex}
         onClose={() => setShowCctvModal(false)}
+      />
+      <AiSummaryModal
+        visible={showAiSummaryModal}
+        fontSize={aiSummaryFontSize}
+        onChangeFontSize={setAiSummaryFontSize}
+        onClose={() => setShowAiSummaryModal(false)}
       />
     </SafeAreaView>
   );
@@ -1008,6 +1120,26 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+function getRegionForPoints(
+  first: { latitude: number; longitude: number } | null,
+  second: { latitude: number; longitude: number } | null,
+  fallback: Region
+): Region {
+  if (!first || !second) return fallback;
+
+  const minLat = Math.min(first.latitude, second.latitude);
+  const maxLat = Math.max(first.latitude, second.latitude);
+  const minLng = Math.min(first.longitude, second.longitude);
+  const maxLng = Math.max(first.longitude, second.longitude);
+
+  return {
+    latitude: (minLat + maxLat) / 2,
+    longitude: (minLng + maxLng) / 2,
+    latitudeDelta: Math.max((maxLat - minLat) * 1.6, 0.005),
+    longitudeDelta: Math.max((maxLng - minLng) * 1.6, 0.005),
+  };
+}
+
 function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371000;
   const dLat = toRad(lat2 - lat1);
@@ -1020,11 +1152,28 @@ function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: numbe
 }
 
 function formatDistanceText(distanceMeters: number | null) {
-  if (distanceMeters === null) return "Location distance unavailable";
-  if (distanceMeters > 1000) {
-    return `Location ${formatKm(distanceMeters)}km away`;
+  if (distanceMeters === null) {
+      return (
+    <View style={styles.mapDistanceInner}>
+      <MapPinned size={16} color="#b90a0a"/>
+      <Text style={styles.mapDistanceText}>Location distance unavailable</Text>
+    </View>
+    );
   }
-  return `Location ${Math.round(distanceMeters)}m away`;
+
+  const distanceValue = distanceMeters > 1000 
+    ? `${formatKm(distanceMeters)}km` 
+    : `${Math.round(distanceMeters)}m`;
+  const distanceValueStyle = distanceMeters < 100 ? styles.mapDistanceValueNear : styles.mapDistanceValueFar;
+
+  return (
+    <View style={styles.mapDistanceInner}>
+      <MapPinned size={16} color="#b90a0a"/>
+      <Text style={styles.mapDistanceText}>Location</Text>
+      <Text style={[styles.mapDistanceText, distanceValueStyle]}>{distanceValue}</Text>
+      <Text style={styles.mapDistanceText}>away</Text>
+    </View>
+  );
 }
 
 function formatKm(distanceMeters: number) {
@@ -1149,6 +1298,22 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0F172A",
   },
+  mapDistanceValueFar: {
+    color: "#c51010",
+    fontWeight: "900",
+  },
+  mapDistanceValueNear: {
+    color: "#046427",
+    fontWeight: "900",
+  },
+  mapDistanceWrap: {
+    flexShrink: 0,
+  },
+  mapDistanceInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   userMarker: {
     width: 36,
     height: 36,
@@ -1178,6 +1343,7 @@ const styles = StyleSheet.create({
   },
   cctvCarousel: {
     marginTop: 8,
+    position: "relative",
   },
   cctvCarouselContent: {
     gap: 0,
@@ -1206,11 +1372,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   cctvHintText: {
-    marginTop: 6,
+    position: "absolute",
+    bottom: 8,
+    alignSelf: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(15, 23, 42, 0.62)",
     fontSize: 12,
-    fontWeight: "600",
-    color: "#64748B",
+    fontWeight: "800",
+    color: "#FFFFFF",
     textAlign: "center",
+    zIndex: 2,
   },
   actionRowTop: {
     marginTop: 10,
@@ -1499,64 +1672,97 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: "700",
   },
-  modalWrap: {
+  modalBackdrop: {
     flex: 1,
-    backgroundColor: "#0F172A",
-  },
-  modalHeader: {
-    paddingHorizontal: 14,
-    paddingTop: 40,
-    paddingBottom: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#123A67",
-  },
-  modalHeaderTitle: {
-    color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  modalCloseBtn: {
-    minWidth: 72,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "rgba(5,16,30,0.6)",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: 18,
   },
-  modalCloseText: {
-    color: "#FFFFFF",
+  mapModalCard: {
+    width: "100%",
+    maxWidth: 420,
+    borderRadius: 24,
+    backgroundColor: "#F8FAFD",
+    borderWidth: 2,
+    borderColor: "#CBD9EA",
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 12,
+  },
+  mapModalTitle: {
+    marginTop: 40,
+    fontSize: 24,
+    fontWeight: "900",
+    color: "#163A67",
+    textAlign: "center",
+  },
+  mapModalSubtitle: {
+    marginTop: 4,
     fontSize: 13,
     fontWeight: "700",
+    color: "#47678A",
+    textAlign: "center",
   },
-  modalMap: {
+  mapModalFrame: {
+    marginTop: 10,
+    height: 400,
+    borderRadius: 16,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#C7D2E0",
+  },
+  mapModalMap: {
     flex: 1,
   },
-  modalControlsRow: {
-    flexDirection: "row",
-    justifyContent: "space-evenly",
-    alignItems: "center",
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    paddingBottom: 20,
-    backgroundColor: "#123A67",
+  zoomControls: {
+    position: "absolute",
+    right: 10,
+    top: 10,
+    gap: 8,
   },
-  modalControlBtn: {
-    minWidth: 92,
-    height: 42,
+  zoomBtn: {
+    width: 40,
+    height: 40,
     borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.22)",
-    backgroundColor: "rgba(255,255,255,0.15)",
+    backgroundColor: "rgba(255,255,255,0.92)",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "#B7C7DB",
   },
-  modalControlText: {
+  zoomBtnText: {
+    fontSize: 24,
+    lineHeight: 26,
+    fontWeight: "900",
+    color: "#173E6B",
+  },
+  mapModalActions: {
+    marginTop: 12,
+    flexDirection: "row",
+    gap: 10,
+  },
+  mapModalBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  mapModalBtnPrimary: {
+    backgroundColor: "#0E2D52",
+  },
+  mapModalBtnSecondary: {
+    backgroundColor: "#E2E8F0",
+  },
+  mapModalBtnPrimaryText: {
+    fontSize: 14,
+    fontWeight: "900",
     color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "700",
+  },
+  mapModalBtnSecondaryText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#334155",
   },
 });

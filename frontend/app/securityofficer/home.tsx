@@ -532,7 +532,7 @@ export default function Home() {
     setActiveClockedInShiftId(null);
     setIsSavingShiftAction(false);
     router.push({
-      pathname: "/securityofficer/shift-reports",
+      pathname: "/securityofficer/shift-report",
       params: {
         shiftId: shiftToClockOut.id,
       },
@@ -674,7 +674,7 @@ export default function Home() {
         <View style={styles.quickRow}>
           <QuickAction label="ID Card" Icon={CreditCard} onPress={() => router.push("/securityofficer/id-card")} />
           <QuickAction label="Incidents" Icon={ShieldAlert} onPress={() => router.push("/securityofficer/incidents")} />
-          <QuickAction label="Reports" Icon={FileText} onPress={() => router.push("/securityofficer/reports")} />
+          <QuickAction label="Incident Reports" Icon={FileText} onPress={() => router.push("/securityofficer/reports")} />
           <QuickAction label="All Services" Icon={Grid3X3} onPress={() => setShowServices(true)} />
         </View>
       </ImageBackground>

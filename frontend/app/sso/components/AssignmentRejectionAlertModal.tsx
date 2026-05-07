@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Linking, Modal, Pressable, StyleSheet, View } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Modal, Pressable, StyleSheet, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import { PhoneCall } from "lucide-react-native";
+import { PhoneCall, SquareCheckBig, BellRing } from "lucide-react-native";
 import Text from "../../../components/TranslatedText";
 import { supabase } from "../../../lib/supabase";
+import OfficerCallModal from "./OfficerCallModal";
 
 type RejectAssignmentRow = {
   assignment_id: string;
@@ -14,7 +14,8 @@ type RejectAssignmentRow = {
   officer_id: string | null;
   supervisor_id: string | null;
   rejection_reason: string | null;
-  rejection_status: string | null;
+  rejection_status: "Unseen" | "Acknowledged" | string | null;
+  created_at?: string | null;
 };
 
 type OfficerProfile = {
@@ -37,8 +38,6 @@ type AssignmentRejectionAlertModalProps = {
   supervisorId?: string | null;
 };
 
-const STORAGE_KEY_PREFIX = "reject_assignment_acknowledged_ids";
-
 function formatName(firstName: string | null, lastName: string | null) {
   return `${firstName?.trim() ?? ""} ${lastName?.trim() ?? ""}`.trim() || "Security Officer";
 }
@@ -47,38 +46,15 @@ export default function AssignmentRejectionAlertModal({ supervisorId = null }: A
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
+  const [showCallModal, setShowCallModal] = useState(false);
   const [alert, setAlert] = useState<RejectionAlert | null>(null);
-  const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
   const [acknowledged, setAcknowledged] = useState(false);
-  const acknowledgedIdsRef = useRef<Set<string>>(new Set());
+  const acknowledgedRef = useRef(false);
   const channelNonceRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-  const storageKey = useMemo(() => {
-    if (!userId) return null;
-    return `${STORAGE_KEY_PREFIX}:${userId}`;
-  }, [userId]);
-
   useEffect(() => {
-    acknowledgedIdsRef.current = acknowledgedIds;
-  }, [acknowledgedIds]);
-
-  const loadAcknowledged = useCallback(async (activeUserId: string) => {
-    const key = `${STORAGE_KEY_PREFIX}:${activeUserId}`;
-    const stored = await AsyncStorage.getItem(key);
-    const ids = new Set<string>(stored ? (JSON.parse(stored) as string[]) : []);
-    acknowledgedIdsRef.current = ids;
-    setAcknowledgedIds(ids);
-  }, []);
-
-  const markAcknowledged = useCallback(async (assignmentId: string) => {
-    const next = new Set(acknowledgedIdsRef.current);
-    next.add(assignmentId);
-    acknowledgedIdsRef.current = next;
-    setAcknowledgedIds(next);
-    if (storageKey) {
-      await AsyncStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
-    }
-  }, [storageKey]);
+    acknowledgedRef.current = acknowledged;
+  }, [acknowledged]);
 
   const buildAlert = useCallback(async (row: RejectAssignmentRow) => {
     if (!row.assignment_id || !row.incident_id || !row.officer_id) return null;
@@ -95,7 +71,8 @@ export default function AssignmentRejectionAlertModal({ supervisorId = null }: A
       .from("incident_assignments")
       .select("assignment_id")
       .eq("incident_id", row.incident_id)
-      .eq("active_status", true);
+      .eq("active_status", true)
+      .neq("assignment_id", row.assignment_id);
 
     const remainingCount = ((activeAssignments as { assignment_id: string }[] | null) ?? []).length;
     const scenario = remainingCount > 0 ? "partial" : "all";
@@ -111,12 +88,75 @@ export default function AssignmentRejectionAlertModal({ supervisorId = null }: A
     } satisfies RejectionAlert;
   }, []);
 
+  const showFirstPendingRejection = useCallback(async (activeUserId: string) => {
+    const { data, error } = await supabase
+      .from("reject_assignment")
+      .select("assignment_id, shift_id, incident_id, officer_id, supervisor_id, rejection_reason, rejection_status, created_at")
+      .eq("supervisor_id", activeUserId)
+      .eq("rejection_status", "Unseen")
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.warn("[AssignmentRejectionAlertModal] pending rejection query failed", error.message);
+      return;
+    }
+
+    const pendingRows = ((data as RejectAssignmentRow[] | null) ?? []).filter((row) => row.assignment_id);
+
+    for (const row of pendingRows) {
+      const nextAlert = await buildAlert(row);
+      if (!nextAlert) continue;
+
+      setAlert(nextAlert);
+      acknowledgedRef.current = false;
+      setAcknowledged(false);
+      setVisible(true);
+      return;
+    }
+
+    if (!acknowledgedRef.current) {
+      setAlert(null);
+      setVisible(false);
+      setAcknowledged(false);
+    }
+  }, [buildAlert]);
+
+  const markAcknowledged = useCallback(async (assignmentId: string) => {
+    const { error } = await supabase
+      .from("reject_assignment")
+      .update({ rejection_status: "Acknowledged" })
+      .eq("assignment_id", assignmentId);
+
+    if (error) {
+      console.warn("[AssignmentRejectionAlertModal] acknowledgement update failed", error.message);
+      return false;
+    }
+
+    return true;
+  }, []);
+
   useEffect(() => {
     let alive = true;
 
+    const loadForUser = async (nextUserId: string | null) => {
+      if (!alive) return;
+      setUserId(nextUserId);
+
+      if (!nextUserId) {
+        setAlert(null);
+        setVisible(false);
+        acknowledgedRef.current = false;
+        setAcknowledged(false);
+        return;
+      }
+
+      if (!alive) return;
+      await showFirstPendingRejection(nextUserId);
+    };
+
     if (supervisorId) {
-      setUserId(supervisorId);
-      void loadAcknowledged(supervisorId);
+      void loadForUser(supervisorId);
       return () => {
         alive = false;
       };
@@ -125,19 +165,20 @@ export default function AssignmentRejectionAlertModal({ supervisorId = null }: A
     const bootstrap = async () => {
       const { data: sessionData } = await supabase.auth.getSession();
       const currentUserId = sessionData.session?.user.id ?? null;
-      if (!alive) return;
-      setUserId(currentUserId);
-      if (currentUserId) {
-        await loadAcknowledged(currentUserId);
-      }
+      await loadForUser(currentUserId);
     };
 
     void bootstrap();
 
+    const authListener = supabase.auth.onAuthStateChange((_event, session) => {
+      void loadForUser(session?.user.id ?? null);
+    });
+
     return () => {
       alive = false;
+      authListener.data.subscription.unsubscribe();
     };
-  }, [loadAcknowledged, supervisorId]);
+  }, [showFirstPendingRejection, supervisorId]);
 
   useEffect(() => {
     if (!userId) return;
@@ -147,21 +188,13 @@ export default function AssignmentRejectionAlertModal({ supervisorId = null }: A
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "reject_assignment",
           filter: `supervisor_id=eq.${userId}`,
         },
-        async (payload) => {
-          const row = payload.new as RejectAssignmentRow;
-          if (!row.assignment_id || acknowledgedIdsRef.current.has(row.assignment_id)) return;
-
-          const nextAlert = await buildAlert(row);
-          if (!nextAlert) return;
-
-          setAlert(nextAlert);
-          setAcknowledged(false);
-          setVisible(true);
+        async () => {
+          await showFirstPendingRejection(userId);
         }
       )
       .subscribe();
@@ -169,58 +202,44 @@ export default function AssignmentRejectionAlertModal({ supervisorId = null }: A
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [buildAlert, userId]);
-
-  const onCallOfficer = async () => {
-    if (!alert?.officerPhone) {
-      router.push({
-        pathname: "/sso/phonecalls",
-        params: { officerId: alert?.officerId ?? undefined },
-      });
-      return;
-    }
-
-    const tel = `tel:${alert.officerPhone}`;
-    try {
-      const canOpen = await Linking.canOpenURL(tel);
-      if (!canOpen) {
-        router.push({
-          pathname: "/sso/phonecalls",
-          params: { officerId: alert.officerId },
-        });
-        return;
-      }
-      await Linking.openURL(tel);
-    } catch {
-      router.push({
-        pathname: "/sso/phonecalls",
-        params: { officerId: alert.officerId },
-      });
-    }
-  };
+  }, [showFirstPendingRejection, userId]);
 
   const closeModal = () => {
     setVisible(false);
+    setShowCallModal(false);
     setAlert(null);
+    acknowledgedRef.current = false;
     setAcknowledged(false);
   };
 
   const onAcknowledge = async () => {
     if (!alert) return;
-    await markAcknowledged(alert.assignmentId);
+    acknowledgedRef.current = true;
+    const success = await markAcknowledged(alert.assignmentId);
+    if (!success) {
+      acknowledgedRef.current = false;
+      return;
+    }
     setAcknowledged(true);
   };
 
   const onDismiss = async () => {
-    if (alert) {
-      await markAcknowledged(alert.assignmentId);
+    if (!alert) {
+      closeModal();
+      return;
     }
+
+    const incidentRoute =
+      alert.scenario === "all"
+        ? `/sso/incident-before-assign?incidentId=${alert.incidentId}`
+        : `/sso/incident-after-assign?incidentId=${alert.incidentId}`;
+
     closeModal();
+    router.push(incidentRoute);
   };
 
   const onDispatchOfficers = async () => {
     if (alert) {
-      await markAcknowledged(alert.assignmentId);
       closeModal();
       router.push(`/sso/assign-officer?incidentId=${alert.incidentId}`);
     }
@@ -228,7 +247,6 @@ export default function AssignmentRejectionAlertModal({ supervisorId = null }: A
 
   const onReassignOfficers = async () => {
     if (alert) {
-      await markAcknowledged(alert.assignmentId);
       closeModal();
       router.push(`/sso/add-backup?incidentId=${alert.incidentId}`);
     }
@@ -259,46 +277,55 @@ export default function AssignmentRejectionAlertModal({ supervisorId = null }: A
         >
           <Text style={styles.title}>ASSIGNMENT REJECTED</Text>
           <Text style={styles.subtitle}>{alert.officerName} declined the incident.</Text>
-          <Text style={styles.reasonLabel}>Reason:</Text>
-          <Text style={styles.reasonText}>{alert.reason}</Text>
+          <View style={styles.reasonBox}>
+            <Text style={styles.reasonLabel}>Reason of rejection</Text>
+            <View style={styles.divider} />
+            <Text style={styles.reasonText}>{alert.reason}</Text>
+          </View>
 
-          {alert.scenario === "all" ? (
-            acknowledged ? (
+          {acknowledged ? (
+            alert.scenario === "all" ? (
               <View style={styles.actionColumn}>
-                <Pressable style={[styles.actionBtn, styles.callBtn]} onPress={() => void onCallOfficer()}>
+                <Pressable style={[styles.actionBtn, styles.callBtn]} onPress={() => setShowCallModal(true)}>
                   <PhoneCall size={16} color="#0F172A" />
                   <Text style={styles.callText}>Call {alert.officerName}</Text>
                 </Pressable>
                 <Pressable style={[styles.actionBtn, styles.primaryBtn]} onPress={() => void onDispatchOfficers()}>
+                  <BellRing size={22} color="#ffffff" />
                   <Text style={styles.primaryText}>Dispatch Officers</Text>
                 </Pressable>
               </View>
             ) : (
-              <Pressable style={styles.ackBtn} onPress={() => void onAcknowledge()}>
-                <Text style={styles.ackText}>I ACKNOWLEDGE THIS UPDATE</Text>
-              </Pressable>
+              <View style={styles.actionColumn}>
+                <Pressable style={[styles.actionBtn, styles.callBtn]} onPress={() => setShowCallModal(true)}>
+                  <PhoneCall size={16} color="#0F172A" />
+                  <Text style={styles.callText}>Call {alert.officerName}</Text>
+                </Pressable>
+                <Pressable style={[styles.actionBtn, styles.primaryBtn]} onPress={() => void onReassignOfficers()}>
+                  <Text style={styles.primaryText}>Reassign Officers</Text>
+                </Pressable>
+              </View>
             )
           ) : (
-            <View style={styles.actionColumn}>
-              {!acknowledged ? (
-                <Pressable style={styles.ackBtn} onPress={() => void onAcknowledge()}>
-                  <Text style={styles.ackText}>I ACKNOWLEDGE THIS UPDATE</Text>
-                </Pressable>
-              ) : null}
-              <Pressable style={[styles.actionBtn, styles.callBtn]} onPress={() => void onCallOfficer()}>
-                <PhoneCall size={16} color="#0F172A" />
-                <Text style={styles.callText}>Call {alert.officerName}</Text>
-              </Pressable>
-              <Pressable style={[styles.actionBtn, styles.primaryBtn]} onPress={() => void onReassignOfficers()}>
-                <Text style={styles.primaryText}>Reassign Officers</Text>
-              </Pressable>
-            </View>
+            <Pressable style={styles.ackBtn} onPress={() => void onAcknowledge()}>
+              <SquareCheckBig size={20} color="#FFFFFF" />
+              <Text style={styles.ackText}>I ACKNOWLEDGE THIS UPDATE</Text>
+            </Pressable>
           )}
 
-          <Pressable style={styles.dismissBtn} onPress={() => void onDismiss()}>
-            <Text style={styles.dismissText}>Close</Text>
-          </Pressable>
+          {acknowledged ? (
+            <Pressable style={styles.dismissBtn} onPress={() => void onDismiss()}>
+              <Text style={styles.dismissText}>Close</Text>
+            </Pressable>
+          ) : null}
         </LinearGradient>
+
+        <OfficerCallModal
+          visible={showCallModal}
+          officerName={alert.officerName}
+          phone={alert.officerPhone}
+          onClose={() => setShowCallModal(false)}
+        />
       </View>
     </Modal>
   );
@@ -336,16 +363,38 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   reasonLabel: {
-    marginTop: 14,
-    color: "#7C2D12",
-    fontSize: 12,
+    marginTop: 2,
+    marginLeft: 5,
+    marginBottom: 5,
+    color: "#0a133a",
+    fontSize: 16,
     fontWeight: "800",
     textAlign: "center",
   },
+  reasonBox: {
+    marginTop: 20,
+    minHeight: 58,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(124, 45, 18, 0.24)",
+    backgroundColor: "rgba(255, 255, 255, 0.72)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    justifyContent: "center",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#0d223d",
+    marginVertical: 3,
+    width: "100%",
+  },
   reasonText: {
-    marginTop: 6,
     color: "#1F2937",
     fontSize: 14,
+    lineHeight: 19,
+    marginLeft: 5,
+    marginTop: 8,
+    marginBottom: 10,
     fontWeight: "600",
     textAlign: "center",
   },
@@ -353,6 +402,7 @@ const styles = StyleSheet.create({
     marginTop: 18,
     height: 46,
     borderRadius: 12,
+    flexDirection: "row",
     backgroundColor: "#0B2D57",
     alignItems: "center",
     justifyContent: "center",
@@ -360,6 +410,8 @@ const styles = StyleSheet.create({
   ackText: {
     color: "#FFFFFF",
     fontSize: 14,
+    marginLeft: 14,
+    marginRight: 22,
     fontWeight: "900",
     textAlign: "center",
   },

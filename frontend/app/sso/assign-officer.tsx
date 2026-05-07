@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -13,8 +12,10 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CheckCircle2, ChevronLeft, Clock3, CircleX, PhoneCall, TriangleAlert } from "lucide-react-native";
+import Svg, { Path } from "react-native-svg";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
+import OfficerCallModal from "./components/OfficerCallModal";
 
 const DISPLAY_TIME_ZONE = "Asia/Singapore";
 const AVATAR_BUCKET = "profile-photos";
@@ -98,6 +99,7 @@ export default function SsoAssignOfficerPage() {
   const [supervisorName, setSupervisorName] = useState("-");
   const [candidates, setCandidates] = useState<CandidateOfficer[]>([]);
   const [selectedOfficerIds, setSelectedOfficerIds] = useState<Set<string>>(new Set());
+  const [callTarget, setCallTarget] = useState<{ name: string; phone: string | null } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -315,25 +317,6 @@ export default function SsoAssignOfficerPage() {
 
   const selectedCount = selectedOfficerIds.size;
 
-  const onCallOfficer = async (officerId: string, phone: string | null) => {
-    if (!phone?.trim()) {
-      router.push({ pathname: "/sso/phonecalls", params: { officerId } });
-      return;
-    }
-
-    const tel = `tel:${phone.trim()}`;
-    try {
-      const canOpen = await Linking.canOpenURL(tel);
-      if (!canOpen) {
-        router.push({ pathname: "/sso/phonecalls", params: { officerId } });
-        return;
-      }
-      await Linking.openURL(tel);
-    } catch {
-      router.push({ pathname: "/sso/phonecalls", params: { officerId } });
-    }
-  };
-
   const onToggleAssign = (officer: CandidateOfficer, canAssign: boolean) => {
     if (!canAssign) return;
 
@@ -426,36 +409,46 @@ export default function SsoAssignOfficerPage() {
                 return (
                   <View key={officer.officerId} style={styles.card}>
                     <View style={styles.topRow}>
-                      <View style={styles.profileRow}>
-                        <ProfileAvatar profilePhotoUri={officer.profilePhotoUrl} fullName={fullName} />
-                        <View style={styles.profileTextCol}>
-                          <Text style={styles.profileName}>{fullName}</Text>
-                          <Text style={styles.profileRole}>{officer.role ?? "Security Officer"}</Text>
+                      <View style={styles.cardInfoCol}>
+                        <View style={styles.profileRow}>
+                          <ProfileAvatar profilePhotoUri={officer.profilePhotoUrl} fullName={fullName} />
+                          <View style={styles.profileTextCol}>
+                            <Text style={styles.profileName}>{fullName}</Text>
+                            <Text style={styles.profileRole}>{officer.role ?? "Security Officer"}</Text>
+                          </View>
                         </View>
+                        <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
                       </View>
 
                       <View style={styles.badgesCol}>
                         <StatusBadge label={clockStatus.label} tone={clockStatus.tone} />
                         <StatusBadge label={availabilityStatus.label} tone={availabilityStatus.tone} />
-                        <Pressable style={styles.callBtn} onPress={() => { void onCallOfficer(officer.officerId, officer.phone); }}>
+                        <Pressable style={styles.callBtn} onPress={() => setCallTarget({ name: fullName, phone: officer.phone })}>
                           <PhoneCall size={14} color="#FFFFFF" />
                         </Pressable>
                       </View>
                     </View>
 
-                    <View style={styles.shiftDateRow}>
-                      <Text style={styles.shiftDate}>{formatDate(officer.shiftDate)}</Text>
-                    </View>
+                    <View style={styles.shiftSchedule}>
+                      <View style={styles.timeRow}>
+                        <View style={styles.timeColumn}>
+                          <View style={styles.timePill}>
+                            <Text style={styles.shiftLabel}>Start Time</Text>
+                            <Text style={styles.shiftTime}>{formatShiftTime(officer.shiftDate, officer.shiftStart)}</Text>
+                          </View>
+                        </View>
 
-                    <View style={styles.shiftRow}>
-                      <Text style={styles.shiftLabel}>Start Time</Text>
-                      <Text style={styles.arrowText}>{"<--->"}</Text>
-                      <Text style={[styles.shiftLabel, styles.shiftLabelRight]}>End Time</Text>
-                    </View>
+                        <View style={styles.timeConnector}>
+                          <TimeConnector />
+                        </View>
 
-                    <View style={styles.shiftTimeRow}>
-                      <Text style={styles.shiftTime}>{formatShiftTime(officer.shiftDate, officer.shiftStart)}</Text>
-                      <Text style={[styles.shiftTime, styles.shiftTimeRight]}>{formatShiftTime(officer.shiftDate, officer.shiftEnd)}</Text>
+                        <View style={[styles.timeColumn, styles.timeColumnRight]}>
+                          <View style={[styles.timePill, styles.timePillEnd]}>
+                            <Text style={[styles.shiftLabel, styles.shiftLabelRight]}>End Time</Text>
+                            <Text style={styles.shiftTime}>{formatShiftTime(officer.shiftDate, officer.shiftEnd)}</Text>
+                          </View>
+                        </View>
+                      </View>
                     </View>
 
                     <Pressable
@@ -505,7 +498,28 @@ export default function SsoAssignOfficerPage() {
           </ScrollView>
         )}
       </View>
+      <OfficerCallModal
+        visible={Boolean(callTarget)}
+        officerName={callTarget?.name ?? "Security Officer"}
+        phone={callTarget?.phone ?? null}
+        onClose={() => setCallTarget(null)}
+      />
     </SafeAreaView>
+  );
+}
+
+function TimeConnector() {
+  return (
+    <Svg width={64} height={24} viewBox="0 0 64 24">
+      <Path
+        d="M18 6L10 12L18 18M10 12H54M46 6L54 12L46 18"
+        fill="none"
+        stroke="#a8b3c4"
+        strokeWidth={2.2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
   );
 }
 
@@ -586,15 +600,6 @@ function formatDate(isoDate: string) {
     year: "numeric",
     timeZone: DISPLAY_TIME_ZONE,
   });
-}
-
-function formatTimeRange(startISO: string, endISO: string) {
-  const opts: Intl.DateTimeFormatOptions = {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: DISPLAY_TIME_ZONE,
-  };
-  return `${new Date(startISO).toLocaleTimeString([], opts)} - ${new Date(endISO).toLocaleTimeString([], opts)}`;
 }
 
 function formatShiftTime(shiftDate: string, shiftValue: string) {
@@ -756,13 +761,15 @@ const styles = StyleSheet.create({
   topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
+    alignItems: "flex-start",
+  },
+  cardInfoCol: {
+    flex: 1,
+    marginRight: 8,
   },
   profileRow: {
     flexDirection: "row",
     alignItems: "center",
-    flex: 1,
-    marginRight: 8,
   },
   avatar: {
     width: 52,
@@ -796,15 +803,17 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   badgesCol: {
-    gap: 6,
+    gap: 5,
     alignItems: "flex-end",
   },
   statusBadge: {
     minHeight: 21,
     borderRadius: 11,
-    paddingHorizontal: 8,
+    minWidth: 78,
+    paddingHorizontal: 9,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 4,
   },
   badgeGreen: {
@@ -829,66 +838,77 @@ const styles = StyleSheet.create({
     width: 32,
     height: 28,
     borderRadius: 10,
+    marginTop: 2,
     backgroundColor: "#0E2D52",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.2)",
   },
-  shiftRow: {
-    marginTop: 3,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  shiftSchedule: {
+    marginTop: 1,
   },
-  shiftDateRow: {
+  shiftLabel: {
+    color: "#64748B",
+    fontSize: 11,
+    lineHeight: 13,
+    fontWeight: "800",
+  },
+  shiftLabelRight: {
+    textAlign: "center",
+  },
+  timeRow: {
     marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 14,
   },
-  shiftLabel: {
-    color: "#6B7280",
-    fontSize: 10,
-    lineHeight: 13,
-    fontWeight: "600",
+  timeColumn: {
+    flex: 0,
+    width: 112,
+    alignItems: "flex-start",
   },
-  shiftLabelRight: {
-    textAlign: "right",
-  },
-  shiftTimeRow: {
-    marginTop: 2,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  shiftCol: {
-    flex: 1,
-  },
-  shiftColRight: {
+  timeColumnRight: {
     alignItems: "flex-end",
   },
   shiftDate: {
-    color: "#374151",
-    fontSize: 10,
-    lineHeight: 13,
-    fontWeight: "700",
+    marginTop: 13,
+    color: "#263344",
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "900",
+  },
+  timePill: {
+    width: 120,
+    minHeight: 48,
+    borderRadius: 14,
+    backgroundColor: "#EEF6FF",
+    borderWidth: 1,
+    borderColor: "#BFD7F3",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timePillEnd: {
+    backgroundColor: "#FFF4E8",
+    borderColor: "#F3C99E",
   },
   shiftTime: {
-    color: "#4B5563",
-    fontSize: 10,
-    lineHeight: 13,
-    fontWeight: "600",
-    marginTop: 0,
+    color: "#1F2937",
+    fontSize: 16,
+    lineHeight: 19,
+    fontWeight: "900",
+    marginTop: 3,
   },
-  shiftTimeRight: {
-    textAlign: "right",
-  },
-  arrowText: {
-    marginHorizontal: 8,
-    color: "#9CA3AF",
-    fontWeight: "700",
-    fontSize: 11,
+  timeConnector: {
+    flex: 1,
+    minWidth: 64,
+    maxWidth: 64,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
   },
   assignBtn: {
     alignSelf: "center",
@@ -899,7 +919,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 10,
-    marginTop: 10,
+    marginTop: 16,
   },
   assignBtnDisabled: {
     backgroundColor: "#9CA3AF",

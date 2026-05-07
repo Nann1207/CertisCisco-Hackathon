@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
 	ActivityIndicator,
@@ -137,6 +137,8 @@ export default function CurrentIncidentScreen() {
 	const [showReportModeModal, setShowReportModeModal] = useState(false);
 	const [showMapModal, setShowMapModal] = useState(false);
 	const [mapRegion, setMapRegion] = useState<Region | null>(null);
+	const [modalMapKey, setModalMapKey] = useState(0);
+	const previewMapRef = useRef<MapView | null>(null);
 	const modalMapRef = useRef<MapView | null>(null);
 	const [cctvUris, setCctvUris] = useState<Array<string | null>>([]);
 	const [showCctvModal, setShowCctvModal] = useState(false);
@@ -146,7 +148,10 @@ export default function CurrentIncidentScreen() {
 	const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
 	const [currentUserAvatarUrl, setCurrentUserAvatarUrl] = useState<string | null>(null);
 	const hasHydratedProgressRef = useRef(false);
+	const previewMapRegionRef = useRef<Region | null>(null);
+	const modalMapRegionRef = useRef<Region | null>(null);
 	const mapRegionAdjustingRef = useRef(false);
+	const hasFitInitialPreviewMapRef = useRef(false);
 
 	const progressStorageKey = useMemo(() => {
 		if (!currentUserId || !incidentId) return null;
@@ -586,11 +591,41 @@ export default function CurrentIncidentScreen() {
 		[incident?.latitude, incident?.longitude]
 	);
 
+	const defaultMapRegion = useMemo(
+		() =>
+			getRegionForPoints(
+				currentCoords,
+				incident?.latitude && incident?.longitude
+					? { latitude: incident.latitude, longitude: incident.longitude }
+					: null,
+				incidentRegion
+			),
+		[currentCoords, incident?.latitude, incident?.longitude, incidentRegion]
+	);
+
 	useEffect(() => {
 		if (!mapRegion) {
-			setMapRegion(incidentRegion);
+			setMapRegion(defaultMapRegion);
 		}
-	}, [incidentRegion, mapRegion]);
+	}, [defaultMapRegion, mapRegion]);
+
+	const fitInitialPreviewMap = useCallback(() => {
+		if (hasFitInitialPreviewMapRef.current || !currentCoords || !incident?.latitude || !incident?.longitude) return;
+		if (!previewMapRef.current) return;
+
+		hasFitInitialPreviewMapRef.current = true;
+		previewMapRef.current?.fitToCoordinates(
+			[currentCoords, { latitude: incident.latitude, longitude: incident.longitude }],
+			{
+				edgePadding: { top: 44, right: 44, bottom: 44, left: 44 },
+				animated: false,
+			}
+		);
+	}, [currentCoords, incident?.latitude, incident?.longitude]);
+
+	useEffect(() => {
+		fitInitialPreviewMap();
+	}, [fitInitialPreviewMap]);
 
 	const cctvItems = useMemo(
 		() => (cctvUris.length ? cctvUris : [null, null, null, null]),
@@ -729,8 +764,19 @@ export default function CurrentIncidentScreen() {
 	};
 
 	const onOpenMapModal = () => {
-		if (!mapRegion) setMapRegion(incidentRegion);
+		const nextRegion = previewMapRegionRef.current ?? mapRegion ?? defaultMapRegion;
+		modalMapRegionRef.current = nextRegion;
+		setMapRegion(nextRegion);
+		setModalMapKey((prev) => prev + 1);
 		setShowMapModal(true);
+	};
+
+	const onCloseMapModal = () => {
+		const nextRegion = modalMapRegionRef.current ?? mapRegion ?? defaultMapRegion;
+		previewMapRegionRef.current = nextRegion;
+		previewMapRef.current?.animateToRegion(nextRegion, 120);
+		setMapRegion(nextRegion);
+		setShowMapModal(false);
 	};
 
 	const onZoomModalMap = (direction: "in" | "out") => {
@@ -743,6 +789,7 @@ export default function CurrentIncidentScreen() {
 				longitudeDelta: clamp(base.longitudeDelta * factor, 0.0008, 0.2),
 			};
 			mapRegionAdjustingRef.current = true;
+			modalMapRegionRef.current = next;
 			modalMapRef.current?.animateToRegion(next, 180);
 			return next;
 		});
@@ -751,6 +798,7 @@ export default function CurrentIncidentScreen() {
 	const onRecenterModalMap = () => {
 		const next = incidentRegion;
 		mapRegionAdjustingRef.current = true;
+		modalMapRegionRef.current = next;
 		setMapRegion(next);
 		modalMapRef.current?.animateToRegion(next, 180);
 	};
@@ -824,10 +872,14 @@ export default function CurrentIncidentScreen() {
 						</View>
 						<Pressable style={styles.mapCard} onPress={onOpenMapModal}>
 							<MapView
+								ref={previewMapRef}
 								style={styles.map}
-								region={mapRegion ?? incidentRegion}
+								initialRegion={defaultMapRegion}
 								onPress={onOpenMapModal}
-								onRegionChangeComplete={setMapRegion}
+								onMapReady={fitInitialPreviewMap}
+								onRegionChangeComplete={(region) => {
+									previewMapRegionRef.current = region;
+								}}
 							>
 								{incident.latitude && incident.longitude ? (
 									<Marker
@@ -879,7 +931,7 @@ export default function CurrentIncidentScreen() {
 									</Pressable>
 								))}
 							</ScrollView>
-							<Text style={styles.cctvHintText}>Swipe for more CCTV images</Text>
+							<Text style={styles.cctvHintText} pointerEvents="none">Tap to zoom / Swipe for more CCTV images</Text>
 						</View>
 
 						<Text style={styles.sectionHeader}>AI Assessment Report</Text>
@@ -1031,7 +1083,7 @@ export default function CurrentIncidentScreen() {
 				visible={showMapModal}
 				transparent
 				animationType="fade"
-				onRequestClose={() => setShowMapModal(false)}
+				onRequestClose={onCloseMapModal}
 			>
 				<View style={styles.modalBackdrop}>
 					<View style={styles.mapModalCard}>
@@ -1040,16 +1092,18 @@ export default function CurrentIncidentScreen() {
 
 						<View style={styles.mapModalFrame}>
 							<MapView
+								key={`current-incident-modal-map-${modalMapKey}`}
 								ref={modalMapRef}
 								style={styles.mapModalMap}
-								region={mapRegion ?? incidentRegion}
+								initialRegion={mapRegion ?? defaultMapRegion}
 												onRegionChangeComplete={(region) => {
 													if (mapRegionAdjustingRef.current) {
 														mapRegionAdjustingRef.current = false;
 														return;
 													}
+									modalMapRegionRef.current = region;
 									setMapRegion(region);
-												}}
+								}}
 							>
 								{incident.latitude && incident.longitude ? (
 									<Marker
@@ -1091,7 +1145,7 @@ export default function CurrentIncidentScreen() {
 							</Pressable>
 							<Pressable
 								style={[styles.mapModalBtn, styles.mapModalBtnSecondary]}
-								onPress={() => setShowMapModal(false)}
+								onPress={onCloseMapModal}
 							>
 								<Text style={styles.mapModalBtnSecondaryText}>Close</Text>
 							</Pressable>
@@ -1299,6 +1353,26 @@ function clamp(value: number, min: number, max: number) {
 	return Math.min(Math.max(value, min), max);
 }
 
+function getRegionForPoints(
+	first: { latitude: number; longitude: number } | null,
+	second: { latitude: number; longitude: number } | null,
+	fallback: Region
+): Region {
+	if (!first || !second) return fallback;
+
+	const minLat = Math.min(first.latitude, second.latitude);
+	const maxLat = Math.max(first.latitude, second.latitude);
+	const minLng = Math.min(first.longitude, second.longitude);
+	const maxLng = Math.max(first.longitude, second.longitude);
+
+	return {
+		latitude: (minLat + maxLat) / 2,
+		longitude: (minLng + maxLng) / 2,
+		latitudeDelta: Math.max((maxLat - minLat) * 1.6, 0.005),
+		longitudeDelta: Math.max((maxLng - minLng) * 1.6, 0.005),
+	};
+}
+
 const styles = StyleSheet.create({
 	root: {
 		flex: 1,
@@ -1446,6 +1520,7 @@ const styles = StyleSheet.create({
 	},
 	cctvCarousel: {
 		marginTop: 4,
+		position: "relative",
 	},
 	cctvCarouselContent: {
 		gap: 0,
@@ -1473,11 +1548,18 @@ const styles = StyleSheet.create({
 		fontWeight: "700",
 	},
 	cctvHintText: {
-		marginTop: 6,
+		position: "absolute",
+		top: 8,
+		alignSelf: "center",
+		paddingHorizontal: 10,
+		paddingVertical: 4,
+		borderRadius: 999,
+		backgroundColor: "rgba(15, 23, 42, 0.62)",
 		fontSize: 12,
-		fontWeight: "600",
-		color: "#64748B",
+		fontWeight: "800",
+		color: "#FFFFFF",
 		textAlign: "center",
+		zIndex: 2,
 	},
 	assessmentBox: {
 		marginTop: 4,
