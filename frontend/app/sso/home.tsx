@@ -422,8 +422,15 @@ export default function Home() {
   }, [activeClockedInShiftId, currentTime, todayShifts]);
 
   const isClockedInForTodayShift = Boolean(
-    todayShift && activeClockedInShiftId && todayShift.id === activeClockedInShiftId
+    todayShift &&
+      activeClockedInShiftId &&
+      todayShift.id === activeClockedInShiftId &&
+      todayShift.clockin_time &&
+      !todayShift.clockout_time &&
+      !todayShift.completion_status
   );
+
+  const visibleActiveIncidents = isClockedInForTodayShift ? activeIncidents : [];
 
   const canClockOut = Boolean(
     isClockedInForTodayShift && isClockOutWindowOpen(currentTime, todayShift?.shift_end)
@@ -490,6 +497,7 @@ export default function Home() {
       )
     );
     setActiveClockedInShiftId(null);
+    setActiveIncidents([]);
     setIsSavingShiftAction(false);
     router.push({
       pathname: "/sso/shift-report",
@@ -615,7 +623,7 @@ export default function Home() {
               onPress={() => {
                 const combined = [...todayShifts, ...upcoming] as NotificationShift[];
                 const uniqueShifts = Array.from(new Map(combined.map((s) => [s.id, s])).values());
-                const assignments: NotificationAssignment[] = activeIncidents.map((a) => ({
+                const assignments: NotificationAssignment[] = visibleActiveIncidents.map((a) => ({
                   assignment_id: a.assignment_id,
                   incident_id: a.incident_id,
                   assigned_at: a.assigned_at,
@@ -735,8 +743,8 @@ export default function Home() {
         </View>
 
         <View style={[styles.incidentSummaryCard, { marginHorizontal: horizontalPadding }]}>
-          {activeIncidents.length > 0 ? (
-            activeIncidents.map((incident, index) => (
+          {visibleActiveIncidents.length > 0 ? (
+            visibleActiveIncidents.map((incident, index) => (
               <View key={incident.assignment_id || `${incident.incident_id}-${index}`}>
                 {index > 0 ? (
                   <View style={{ height: 1, backgroundColor: "rgba(186, 79, 79, 0.35)", marginVertical: 10 }} />
@@ -874,7 +882,7 @@ export default function Home() {
       </Modal>
 
       <ServicesModal visible={showServices} onClose={() => setShowServices(false)} />
-      <SupervisorIncidentAlertModal supervisorId={authUserId} />
+      {isClockedInForTodayShift ? <SupervisorIncidentAlertModal supervisorId={authUserId} /> : null}
     </View>
   );
 }
@@ -949,7 +957,7 @@ function getDisplayShiftForToday(todayShifts: Shift[], now: Date, activeClockedI
 
   if (activeClockedInShiftId) {
     const activeShift = sorted.find((shift) => shift.id === activeClockedInShiftId);
-    if (activeShift && !activeShift.clockout_time && !activeShift.completion_status) {
+    if (activeShift?.clockin_time && !activeShift.clockout_time && !activeShift.completion_status) {
       return activeShift;
     }
   }

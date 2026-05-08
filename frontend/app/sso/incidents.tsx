@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -273,7 +273,7 @@ function IncidentCard({
         <Text style={styles.locationText} numberOfLines={2}>{location || "Location unavailable"}</Text>
       </View>
 
-      <Pressable style={styles.ctaBtn} onPress={onPress}>
+      <Pressable style={[styles.ctaBtn, ctaLabel === "Open Incident" ? styles.ctaBtnWide : styles.ctaBtnCompact]} onPress={onPress}>
         <Text style={styles.ctaBtnText}>{ctaLabel}</Text>
       </Pressable>
     </View>
@@ -299,8 +299,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#F4F7FB",
   },
   header: {
-    paddingHorizontal: 12,
-    paddingTop: 40,
+    paddingHorizontal: 16,
+    paddingTop: 44,
     paddingBottom: 12,
     backgroundColor: "#0E2D52",
     flexDirection: "row",
@@ -315,7 +315,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerTitle: {
-    fontSize: 30,
+    fontSize: 20,
+    lineHeight: 24,
     fontWeight: "800",
     color: "#FFFFFF",
     marginLeft: 10,
@@ -401,13 +402,19 @@ const styles = StyleSheet.create({
   },
   ctaBtn: {
     marginTop: 12,
-    alignSelf: "flex-end",
-    minHeight: 32,
+    minHeight: 36,
     borderRadius: 999,
     backgroundColor: "#0E2D52",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 12,
+  },
+  ctaBtnWide: {
+    alignSelf: "stretch",
+  },
+  ctaBtnCompact: {
+    alignSelf: "flex-end",
+    minHeight: 32,
   },
   ctaBtnText: {
     color: "#FFFFFF",

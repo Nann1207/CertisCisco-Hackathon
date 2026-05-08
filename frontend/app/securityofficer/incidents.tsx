@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import Text from "../../components/TranslatedText";
 import { useRouter } from "expo-router";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronLeft, CircleAlert, CircleCheckBig, MapPin } from "lucide-react-native";
 import { supabase } from "../../lib/supabase";
 
 type IncidentItem = {
@@ -209,37 +209,35 @@ export default function IncidentsScreen() {
           <ActivityIndicator color="#0E2D52" />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.sectionTitle}>Current Incidents</Text>
+        <ScrollView contentContainerStyle={styles.content}>
+          <SectionTitle title="Active Incidents" />
           {currentIncidents.length === 0 ? (
-            <Text style={styles.emptyText}>No current incidents assigned to your shift.</Text>
+            <EmptyText text="No active incidents assigned to your shift." />
           ) : (
             currentIncidents.map((incident) => (
-              <View key={incident.id} style={styles.card}>
-                <Text style={styles.cardCategory}>{buildIncidentTitle(incident)}</Text>
-                <Text style={styles.cardMeta}>{buildLocation(incident)}</Text>
-                <Pressable
-                  style={styles.writeReportBtn}
-                  onPress={() => router.push(`/securityofficer/currentIncident?incidentId=${incident.id}`)}
-                >
-                  <Text style={styles.writeReportBtnText}>Open Incident</Text>
-                </Pressable>
-              </View>
+              <IncidentCard
+                key={incident.assignment_id}
+                incident={incident}
+                tone="active"
+                ctaLabel="Open Incident"
+                onPress={() => router.push(`/securityofficer/currentIncident?incidentId=${incident.id}`)}
+              />
             ))
           )}
 
-          <Text style={styles.sectionTitle}>Past Incidents</Text>
+          <SectionTitle title="Past Incidents" />
           {pastIncidents.length === 0 ? (
-            <Text style={styles.emptyText}>No past incidents resolved or handed over yet.</Text>
+            <EmptyText text="No past incidents resolved or handed over yet." />
           ) : (
             pastIncidents.map((incident) => (
-              <View key={incident.id} style={styles.card}>
-                <Text style={styles.cardCategory}>{buildIncidentTitle(incident)}</Text>
-                <Text style={styles.cardMeta}>{buildLocation(incident)}</Text>
-                <Text style={[styles.statusPill, incident.assignment_declined ? styles.statusPillDeclined : null]}>
-                  {getPastIncidentStatus(incident, latestReportByIncident).toUpperCase()}
-                </Text>
-              </View>
+              <IncidentCard
+                key={incident.assignment_id}
+                incident={incident}
+                tone="past"
+                statusLabel={getPastIncidentStatus(incident, latestReportByIncident)}
+                ctaLabel="View Reports"
+                onPress={() => router.push("/securityofficer/reports")}
+              />
             ))
           )}
         </ScrollView>
@@ -248,13 +246,73 @@ export default function IncidentsScreen() {
   );
 }
 
-function buildIncidentTitle(incident: IncidentItem) {
-  const category = (incident.incident_category ?? "Incident").trim();
-  const locationName = (incident.location_name ?? incident.location_description ?? "Unknown Location").trim();
-  return `${category} AT ${locationName}`;
+function SectionTitle({ title }: { title: string }) {
+  return <Text style={styles.sectionTitle}>{title}</Text>;
+}
+
+function EmptyText({ text }: { text: string }) {
+  return <Text style={styles.emptyText}>{text}</Text>;
+}
+
+function IncidentCard({
+  incident,
+  tone,
+  statusLabel,
+  ctaLabel,
+  onPress,
+}: {
+  incident: IncidentItem;
+  tone: "active" | "past";
+  statusLabel?: string;
+  ctaLabel: string;
+  onPress: () => void;
+}) {
+  const isActive = tone === "active";
+  const resolvedStatus = (statusLabel ?? (isActive ? "Active" : "Resolved")).toUpperCase();
+  const statusStyle = incident.assignment_declined ? styles.badgeDeclined : isActive ? styles.badgeActive : styles.badgePast;
+
+  return (
+    <View style={styles.card}>
+      <View style={styles.cardTopRow}>
+        <View style={[styles.statusBadge, statusStyle]}>
+          {isActive ? (
+            <CircleAlert size={14} color="#FFFFFF" />
+          ) : (
+            <CircleCheckBig size={14} color="#FFFFFF" />
+          )}
+          <Text style={styles.statusText}>{resolvedStatus}</Text>
+        </View>
+        <Text style={styles.dateText}>{formatDateTime(incident.assigned_at ?? incident.created_at)}</Text>
+      </View>
+
+      <Text style={styles.titleText}>{incident.incident_category?.trim() || "Incident"}</Text>
+
+      <View style={styles.locationRow}>
+        <MapPin size={14} color="#6B7280" />
+        <Text style={styles.locationText} numberOfLines={2}>
+          {buildLocation(incident) || "Location unavailable"}
+        </Text>
+      </View>
+
+      <Pressable
+        style={[styles.ctaBtn, ctaLabel === "Open Incident" ? styles.ctaBtnWide : styles.ctaBtnCompact]}
+        accessibilityLabel={`${ctaLabel}: ${buildLocationMeta(incident)}`}
+        onPress={onPress}
+      >
+        <Text style={styles.ctaBtnText}>{ctaLabel}</Text>
+      </Pressable>
+    </View>
+  );
 }
 
 function buildLocation(incident: IncidentItem) {
+  const locationName = incident.location_name?.trim() ?? "";
+  const unit = incident.location_unit_no?.trim() ?? "";
+  const desc = incident.location_description?.trim() ?? "";
+  return [locationName, unit ? `#${unit}` : "", desc].filter(Boolean).join(" ");
+}
+
+function buildLocationMeta(incident: IncidentItem) {
   const unit = incident.location_unit_no?.trim() ?? "";
   const desc = incident.location_description?.trim() ?? "";
   const createdAt = incident.created_at ? new Date(incident.created_at) : null;
@@ -269,6 +327,19 @@ function getPastIncidentStatus(incident: IncidentItem, latestReportByIncident: M
   return latestReportByIncident.get(incident.id)?.report_type ?? "Completed";
 }
 
+function formatDateTime(value: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "-";
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function toMillis(iso: string | null | undefined) {
   if (!iso) return 0;
   const date = new Date(iso);
@@ -281,8 +352,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#F5F7FA",
   },
   header: {
-    paddingHorizontal: 12,
-    paddingTop: 40,
+    paddingHorizontal: 16,
+    paddingTop: 44,
     paddingBottom: 12,
     backgroundColor: "#0E2D52",
     flexDirection: "row",
@@ -290,8 +361,9 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
   },
   headerTitle: {
-    fontSize: 27,
-    fontWeight: "700",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
     color: "#FFFFFF",
     marginLeft: 10,
   },
@@ -308,68 +380,102 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 22,
+  content: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
   },
   sectionTitle: {
-    marginTop: 10,
-    marginBottom: 8,
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#1E2A38",
+    marginTop: 4,
+    color: "#163A67",
+    fontSize: 22,
+    fontWeight: "800",
   },
   emptyText: {
-    color: "#5E6A78",
+    color: "#64748B",
     fontSize: 14,
-    marginBottom: 10,
+    fontWeight: "600",
+    marginBottom: 4,
   },
   card: {
+    borderRadius: 16,
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#E5EAF0",
-    borderRadius: 14,
+    borderColor: "#E2E8F0",
     paddingHorizontal: 12,
     paddingTop: 10,
     paddingBottom: 12,
-    marginBottom: 10,
   },
-  cardCategory: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0E2D52",
-    marginBottom: 4,
+  cardTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  cardMeta: {
+  statusBadge: {
+    minHeight: 24,
+    borderRadius: 999,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    gap: 6,
+  },
+  badgeActive: {
+    backgroundColor: "#B91C1C",
+  },
+  badgePast: {
+    backgroundColor: "#1D7A3E",
+  },
+  badgeDeclined: {
+    backgroundColor: "#D97706",
+  },
+  statusText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  dateText: {
+    color: "#6B7280",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  titleText: {
+    marginTop: 10,
+    color: "#0F172A",
+    fontSize: 22,
+    fontWeight: "800",
+  },
+  locationRow: {
+    marginTop: 7,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+  },
+  locationText: {
+    color: "#4B5563",
     fontSize: 13,
-    color: "#566271",
-    marginBottom: 8,
+    fontWeight: "600",
+    flex: 1,
   },
-  writeReportBtn: {
-    height: 36,
-    borderRadius: 10,
+  ctaBtn: {
+    marginTop: 12,
+    minHeight: 36,
+    borderRadius: 999,
     backgroundColor: "#0E2D52",
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 12,
   },
-  writeReportBtnText: {
-    fontSize: 14,
-    fontWeight: "700",
+  ctaBtnWide: {
+    alignSelf: "stretch",
+  },
+  ctaBtnCompact: {
+    alignSelf: "flex-end",
+    minHeight: 32,
+  },
+  ctaBtnText: {
     color: "#FFFFFF",
-  },
-  statusPill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    overflow: "hidden",
-    backgroundColor: "#E2E8F0",
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "700",
-    color: "#334155",
-  },
-  statusPillDeclined: {
-    backgroundColor: "#FEF3C7",
-    color: "#92400E",
   },
 });

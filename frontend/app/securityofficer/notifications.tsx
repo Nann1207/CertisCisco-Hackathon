@@ -386,8 +386,8 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: "#0E2D52",
     paddingHorizontal: 16,
-    paddingTop: 45,
-    paddingBottom: 14,
+    paddingTop: 44,
+    paddingBottom: 12,
   },
   backBtn: {
     flexDirection: "row",
@@ -397,7 +397,8 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: "#FFFFFF",
-    fontSize: 24,
+    fontSize: 20,
+    lineHeight: 24,
     fontWeight: "800",
   },
   contentWrap: {

@@ -33,8 +33,8 @@ export default function ShiftDetails() {
 
   const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
   const pagePad = Math.round(clamp(width * 0.05, 14, 24));
-  const headerTop = Math.round(clamp(height * 0.055, 24, 46));
-  const headerSize = Math.round(clamp(width * 0.06, 20, 24));
+  const headerTop = Math.round(clamp(height * 0.045, 32, 44));
+  const headerSize = 20;
   const valueSize = Math.round(clamp(width * 0.042, 14, 17));
   const labelSize = Math.round(clamp(width * 0.035, 12, 15));
 
@@ -188,9 +188,9 @@ function parseShiftData(raw: string | string[] | undefined): ShiftDetailsData | 
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, backgroundColor: '#fff' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, marginTop: 40 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, marginTop: 44 },
   backButton: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', marginTop: 4 },
-  header: { fontSize: 22, fontWeight: 'bold', marginLeft: 8 },
+  header: { fontSize: 20, lineHeight: 24, fontWeight: '800', marginLeft: 8 },
   row: { marginBottom: 15, borderBottomWidth: 1, borderBottomColor: '#eee', paddingBottom: 10 },
   label: { color: '#666', fontSize: 14, marginBottom: 4 },
   value: { fontSize: 16, fontWeight: '500' }

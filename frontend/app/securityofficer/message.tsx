@@ -1273,8 +1273,8 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: "#0F2C59",
-    paddingTop: 48,
-    paddingBottom: 16,
+    paddingTop: 44,
+    paddingBottom: 12,
     paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
@@ -1292,8 +1292,9 @@ const styles = StyleSheet.create({
     marginRight: 52,
     textAlign: "center",
     color: "#FFFFFF",
-    fontSize: 28,
-    fontWeight: "700",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
   },
   avatar: {
     overflow: "hidden",

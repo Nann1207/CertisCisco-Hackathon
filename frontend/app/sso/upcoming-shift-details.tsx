@@ -168,8 +168,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingTop: 46,
-    paddingBottom: 10,
+    paddingTop: 44,
+    paddingBottom: 12,
     backgroundColor: "#fff",
   },
   backButton: {
@@ -182,8 +182,9 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     marginLeft: 10,
-    fontSize: 24,
-    fontWeight: "700",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
     color: "#0E2D52",
   },
   loaderWrap: {

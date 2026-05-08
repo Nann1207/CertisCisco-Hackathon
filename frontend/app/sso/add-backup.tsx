@@ -217,7 +217,7 @@ export default function SsoAddBackupPage() {
         : shiftRows;
 
       const normalized = (
-        await Promise.all((sourceRows.length > 0 ? sourceRows : shiftRows).map(async (row) => {
+        await Promise.all((sourceRows.length > 0 ? sourceRows : shiftRows).map(async (row): Promise<CandidateOfficer | null> => {
           const employee = Array.isArray(row.employees) ? row.employees[0] : row.employees;
           if (!row.officer_id || !employee?.id) return null;
 
@@ -389,6 +389,20 @@ export default function SsoAddBackupPage() {
     if (error) {
       Alert.alert("Assign failed", error.message);
       return;
+    }
+
+    const { error: clearRequestError } = await supabase
+      .from("incident_assignments")
+      .update({
+        backup_requested: false,
+        backup_amount: null,
+        backup_reason: null,
+      })
+      .eq("incident_id", incidentId)
+      .eq("active_status", true);
+
+    if (clearRequestError) {
+      console.warn("[sso/add-backup] failed to clear backup request flag:", clearRequestError.message);
     }
 
     router.replace(`/sso/incident-after-assign?incidentId=${incidentId}`);
@@ -707,9 +721,9 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
   },
   header: {
-    paddingHorizontal: 12,
-    paddingTop: 40,
-    paddingBottom: 6,
+    paddingHorizontal: 16,
+    paddingTop: 44,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
   },
@@ -725,9 +739,9 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     marginLeft: 10,
-    fontSize: 24,
-    lineHeight: 22,
-    fontWeight: "600",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
     color: "#FFFFFF",
   },
   bodyPanel: {
@@ -896,8 +910,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   timeColumn: {
-    flex: 0,
-    width: 112,
+    flex: 1,
     alignItems: "flex-start",
   },
   timeColumnRight: {
@@ -920,13 +933,13 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   timePill: {
-    width: 106,
+    width: 100,
     minHeight: 48,
     borderRadius: 14,
     backgroundColor: "#EEF6FF",
     borderWidth: 1,
     borderColor: "#BFD7F3",
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     paddingVertical: 8,
     alignItems: "center",
     justifyContent: "center",
@@ -943,12 +956,13 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
   timeConnector: {
-    flex: 1,
-    minWidth: 64,
-    maxWidth: 64,
+    flex: 0.8,
+    minWidth: 40,
+    maxWidth: 80,
     height: 48,
     alignItems: "center",
     justifyContent: "center",
+    flexShrink: 1,
   },
   assignBtn: {
     alignSelf: "center",

@@ -713,7 +713,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  headerTitle: { color: "#fff", fontSize: 22, fontWeight: "700" },
+  headerTitle: { fontSize: 20, lineHeight: 24, fontWeight: "800", color: "#fff" },
   mapContainer: {
     backgroundColor: "#D1D5DB",
     position: "relative",

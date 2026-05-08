@@ -329,8 +329,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
-    paddingHorizontal: 12,
-    paddingTop: 40,
+    paddingHorizontal: 16,
+    paddingTop: 44,
     paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
@@ -344,7 +344,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 20,
+    lineHeight: 24,
     fontWeight: "800",
     color: "#FFFFFF",
     marginLeft: 10,

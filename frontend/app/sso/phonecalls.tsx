@@ -191,9 +191,9 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: "#0E2D52",
-    paddingTop: 40,
+    paddingTop: 44,
     paddingBottom: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-start",
@@ -210,8 +210,9 @@ const styles = StyleSheet.create({
 
   headerTitle: {
     color: "#fff",
-    fontSize: 23,
-    fontWeight: "700",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
     marginLeft: 10,
   },
 

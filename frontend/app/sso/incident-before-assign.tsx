@@ -16,7 +16,7 @@ import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import * as Location from "expo-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { BellRing, ChevronLeft, Settings2, MapPinned } from "lucide-react-native";
+import { BellRing, ChevronLeft, Maximize2, Minimize2, Settings2, MapPinned } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { getProfilePhotoUrlFromFolder, getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
@@ -61,6 +61,7 @@ export default function SsoIncidentBeforeAssignPage() {
   const [activeCctvIndex, setActiveCctvIndex] = useState(0);
   const [showAiSummaryModal, setShowAiSummaryModal] = useState(false);
   const [aiSummaryFontSize, setAiSummaryFontSize] = useState(16);
+  const [isAssessmentExpanded, setIsAssessmentExpanded] = useState(true);
   const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [currentUserAvatarUrl, setCurrentUserAvatarUrl] = useState<string | null>(null);
   const previewMapRegionRef = useRef<Region | null>(null);
@@ -343,6 +344,8 @@ export default function SsoIncidentBeforeAssignPage() {
   const mapDistanceLabel = formatDistanceText(distanceMeters);
   const hasRoute = routeCoords.length >= 2;
   const carouselWidth = Math.min(Dimensions.get("window").width - 44, 420);
+  const assessmentLineHeight = Math.round(aiSummaryFontSize * 1.35);
+  const minimizedAssessmentHeight = assessmentLineHeight * 10 + 20;
 
   const incidentTitle = useMemo(() => {
     const category = (incident?.incident_category ?? "Incident").toString();
@@ -504,12 +507,47 @@ export default function SsoIncidentBeforeAssignPage() {
               <Text style={styles.cctvHintText} pointerEvents="none">Tap to zoom / Swipe for more CCTV images</Text>
             </View>
 
-            <Text style={styles.assessmentTitle}>AI Assessment Report</Text>
-            <View style={styles.assessmentBox}>
-              <Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize }]}>
-                {incident.ai_assessment?.trim() || "No AI assessment available."}
-              </Text>
+            <View style={styles.assessmentHeaderRow}>
+              <Text style={[styles.assessmentTitle, styles.assessmentHeaderTitle]}>AI Assessment Report</Text>
+              <Pressable
+                style={styles.assessmentToggleBtn}
+                onPress={() => setIsAssessmentExpanded((prev) => !prev)}
+                accessibilityRole="button"
+                accessibilityLabel={isAssessmentExpanded ? "Minimize AI Assessment Report" : "Expand AI Assessment Report"}
+              >
+                {isAssessmentExpanded ? (
+                  <Minimize2 size={16} color="#0E2D52" />
+                ) : (
+                  <Maximize2 size={16} color="#0E2D52" />
+                )}
+                <Text style={styles.assessmentToggleText}>{isAssessmentExpanded ? "Minimize" : "Expand"}</Text>
+              </Pressable>
             </View>
+            {isAssessmentExpanded ? (
+              <View style={styles.assessmentBox}>
+                <Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize, lineHeight: assessmentLineHeight }]}>
+                  {incident.ai_assessment?.trim() || "No AI assessment available."}
+                </Text>
+              </View>
+            ) : (
+              <View style={[styles.assessmentBox, styles.assessmentBoxMinimized, { height: minimizedAssessmentHeight }]}>
+                <ScrollView
+                  style={styles.assessmentScroll}
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator
+                  persistentScrollbar
+                >
+                  <Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize, lineHeight: assessmentLineHeight }]}>
+                    {incident.ai_assessment?.trim() || "No AI assessment available."}
+                  </Text>
+                </ScrollView>
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={["rgba(233,242,245,0)", "rgba(233,242,245,0.4)"]}
+                  style={styles.assessmentBottomFade}
+                />
+              </View>
+            )}
           </View>
         </ScrollView>
 
@@ -701,9 +739,9 @@ const styles = StyleSheet.create({
     color: "#475569",
   },
   header: {
-    paddingHorizontal: 11,
-    paddingTop: 40,
-    paddingBottom: 14,
+    paddingHorizontal: 16,
+    paddingTop: 44,
+    paddingBottom: 12,
     backgroundColor: "#0E2D52",
     flexDirection: "row",
     alignItems: "center",
@@ -720,9 +758,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerTitle: {
-    fontSize: 24,
-    lineHeight: 22,
-    fontWeight: "600",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
     color: "#FFFFFF",
   },
   bodyPanel: {
@@ -904,9 +942,36 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   assessmentTitle: {
-    marginTop: 12,
     fontSize: 16,
     lineHeight: 22,
+    fontWeight: "800",
+    color: "#0E2D52",
+  },
+  assessmentHeaderRow: {
+    marginTop: 12,
+    marginBottom: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  assessmentHeaderTitle: {
+    flex: 1,
+  },
+  assessmentToggleBtn: {
+    minHeight: 30,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#AFC9DA",
+    backgroundColor: "#F7FBFD",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  assessmentToggleText: {
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: "800",
     color: "#0E2D52",
   },
@@ -919,6 +984,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     minHeight: 139,
+  },
+  assessmentBoxMinimized: {
+    overflow: "hidden",
+    position: "relative",
+  },
+  assessmentScroll: {
+    flex: 1,
+  },
+  assessmentBottomFade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 36,
   },
   assessmentText: {
     color: "#000000",
