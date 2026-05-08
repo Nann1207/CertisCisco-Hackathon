@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, View } from "react-native";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { ChevronLeft, FileText } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
@@ -34,47 +34,67 @@ const formatStatusLabel = (status: ReportStatus | null) => {
 export default function HarassmentWhistleblowingScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [reports, setReports] = useState<ReportListRow[]>([]);
+  const [harassmentReports, setHarassmentReports] = useState<ReportListRow[]>([]);
+  const [whistleReports, setWhistleReports] = useState<ReportListRow[]>([]);
 
   const loadReports = useCallback(async () => {
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     const userId = sessionData.session?.user.id ?? null;
     if (!userId) {
       Alert.alert("Load failed", sessionError?.message ?? "Unable to validate your session.");
-      setReports([]);
+      setHarassmentReports([]);
+      setWhistleReports([]);
       return;
     }
 
-    const { data, error } = await supabase
+    const { data: harassmentData, error: harassmentError } = await supabase
       .from("harassment_reports")
       .select("id, created_at, report_code, status")
       .eq("reporter_id", userId)
       .order("created_at", { ascending: false })
       .limit(20);
 
-    if (error) {
-      Alert.alert("Load failed", error.message);
-      setReports([]);
+    if (harassmentError) {
+      Alert.alert("Load failed", harassmentError.message);
+      setHarassmentReports([]);
       return;
     }
 
-    setReports(((data as ReportListRow[] | null) ?? []).filter(Boolean));
+    setHarassmentReports(((harassmentData as ReportListRow[] | null) ?? []).filter(Boolean));
+
+    const { data: whistleData, error: whistleError } = await supabase
+      .from("whistleblowing_reports")
+      .select("id, created_at, report_code, status")
+      .eq("reporter_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (whistleError) {
+      Alert.alert("Load failed", whistleError.message);
+      setWhistleReports([]);
+      return;
+    }
+
+    setWhistleReports(((whistleData as ReportListRow[] | null) ?? []).filter(Boolean));
   }, []);
 
-  useEffect(() => {
-    let alive = true;
-    const run = async () => {
-      setLoading(true);
-      await loadReports();
-      if (alive) setLoading(false);
-    };
-    void run();
-    return () => {
-      alive = false;
-    };
-  }, [loadReports]);
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      const run = async () => {
+        setLoading(true);
+        await loadReports();
+        if (alive) setLoading(false);
+      };
+      void run();
+      return () => {
+        alive = false;
+      };
+    }, [loadReports])
+  );
 
-  const hasReports = useMemo(() => reports.length > 0, [reports.length]);
+  const hasHarassmentReports = useMemo(() => harassmentReports.length > 0, [harassmentReports.length]);
+  const hasWhistleReports = useMemo(() => whistleReports.length > 0, [whistleReports.length]);
 
   return (
     <SafeAreaView style={styles.root}>
@@ -107,7 +127,7 @@ export default function HarassmentWhistleblowingScreen() {
 
         <Pressable
           style={styles.item}
-          onPress={() => Alert.alert("Coming soon", "Form download/upload is not available yet.")}
+          onPress={() => router.push("/sso/whistleblowing-report")}
         >
           <View style={styles.iconWrap}>
             <FileText size={20} color="#0AAFD0" />
@@ -126,9 +146,9 @@ export default function HarassmentWhistleblowingScreen() {
         </View>
 
         <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>My Reports</Text>
-          <Pressable onPress={() => void loadReports()} hitSlop={10}>
-            <Text style={styles.refreshText}>Refresh</Text>
+          <Text style={styles.sectionTitle}>My Harassment Reports</Text>
+          <Pressable onPress={() => void loadReports()} hitSlop={10} disabled={loading}>
+            {loading ? <ActivityIndicator /> : <Text style={styles.refreshText}>Refresh</Text>}
           </Pressable>
         </View>
 
@@ -136,15 +156,53 @@ export default function HarassmentWhistleblowingScreen() {
           <View style={styles.loadingRow}>
             <ActivityIndicator />
           </View>
-        ) : hasReports ? (
+        ) : hasHarassmentReports ? (
           <View style={styles.reportsWrap}>
-            {reports.map((report) => (
+            {harassmentReports.map((report) => (
               <Pressable
                 key={report.id}
                 style={styles.reportRow}
                 onPress={() =>
                   router.push({
                     pathname: "/sso/harassment-report-details",
+                    params: { id: report.id },
+                  } as any)
+                }
+              >
+                <View style={styles.reportLeft}>
+                  <Text style={styles.reportTitle}>{report.report_code ?? report.id}</Text>
+                  <Text style={styles.reportMeta}>{report.created_at ?? ""}</Text>
+                </View>
+                <View style={styles.statusPill}>
+                  <Text style={styles.statusText}>{formatStatusLabel(report.status)}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.emptyText}>No reports yet.</Text>
+        )}
+
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>My Whistleblowing Reports</Text>
+          <Pressable onPress={() => void loadReports()} hitSlop={10} disabled={loading}>
+            {loading ? <ActivityIndicator /> : <Text style={styles.refreshText}>Refresh</Text>}
+          </Pressable>
+        </View>
+
+        {loading ? (
+          <View style={styles.loadingRow}>
+            <ActivityIndicator />
+          </View>
+        ) : hasWhistleReports ? (
+          <View style={styles.reportsWrap}>
+            {whistleReports.map((report) => (
+              <Pressable
+                key={report.id}
+                style={styles.reportRow}
+                onPress={() =>
+                  router.push({
+                    pathname: "/sso/whistleblowing-report-details",
                     params: { id: report.id },
                   } as any)
                 }

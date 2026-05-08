@@ -28,6 +28,10 @@ type EmployeeProfile = {
 	email: string | null;
 	phone: string | null;
 	dob: string | null;
+	payment_mode: string | null;
+	payment_bank_name: string | null;
+	payment_bank_account: string | null;
+	payment_paynow_id: string | null;
 };
 
 function calculateAge(dob: string | null) {
@@ -65,6 +69,11 @@ export default function ProfileScreen() {
 	const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
 	const [phoneDraft, setPhoneDraft] = useState("");
 	const [isSavingPhone, setIsSavingPhone] = useState(false);
+	const [paymentModeDraft, setPaymentModeDraft] = useState<"bank_transfer" | "paynow" | "">("");
+	const [bankNameDraft, setBankNameDraft] = useState("");
+	const [bankAccountDraft, setBankAccountDraft] = useState("");
+	const [paynowDraft, setPaynowDraft] = useState("");
+	const [isSavingPayment, setIsSavingPayment] = useState(false);
 
 	useEffect(() => {
 		let alive = true;
@@ -138,7 +147,9 @@ export default function ProfileScreen() {
 
 			const { data: profileById, error: profileByIdError } = await supabase
 				.from("employees")
-				.select("id, first_name, last_name, profile_photo_path, emp_id, role, email, phone, dob")
+				.select(
+					"id, first_name, last_name, profile_photo_path, emp_id, role, email, phone, dob, payment_mode, payment_bank_name, payment_bank_account, payment_paynow_id"
+				)
 				.eq("id", userId)
 				.maybeSingle();
 
@@ -147,7 +158,9 @@ export default function ProfileScreen() {
 			if (!employee && userEmail) {
 				const { data: profileByEmail, error: profileByEmailError } = await supabase
 					.from("employees")
-					.select("id, first_name, last_name, profile_photo_path, emp_id, role, email, phone, dob")
+					.select(
+						"id, first_name, last_name, profile_photo_path, emp_id, role, email, phone, dob, payment_mode, payment_bank_name, payment_bank_account, payment_paynow_id"
+					)
 					.eq("email", userEmail)
 					.maybeSingle();
 
@@ -197,6 +210,14 @@ export default function ProfileScreen() {
 		setPhoneDraft(profile?.phone?.trim() ?? "");
 	}, [profile?.phone]);
 
+	useEffect(() => {
+		const mode = profile?.payment_mode?.trim() ?? "";
+		setPaymentModeDraft(mode === "bank_transfer" || mode === "paynow" ? (mode as any) : "");
+		setBankNameDraft(profile?.payment_bank_name?.trim() ?? "");
+		setBankAccountDraft(profile?.payment_bank_account?.trim() ?? "");
+		setPaynowDraft(profile?.payment_paynow_id?.trim() ?? "");
+	}, [profile?.payment_bank_account, profile?.payment_bank_name, profile?.payment_mode, profile?.payment_paynow_id]);
+
 	const roleText = profile?.role?.trim() || "Security Officer";
 	const idText = profile?.emp_id?.trim() || "-";
 	const ageText = calculateAge(profile?.dob ?? null);
@@ -208,6 +229,11 @@ export default function ProfileScreen() {
 			: require("../../assets/fortis-logo.png");
 
 	const isPhoneChanged = (profile?.phone?.trim() ?? "") !== phoneDraft.trim();
+	const isPaymentChanged =
+		(profile?.payment_mode?.trim() ?? "") !== paymentModeDraft.trim() ||
+		(profile?.payment_bank_name?.trim() ?? "") !== bankNameDraft.trim() ||
+		(profile?.payment_bank_account?.trim() ?? "") !== bankAccountDraft.trim() ||
+		(profile?.payment_paynow_id?.trim() ?? "") !== paynowDraft.trim();
 
 	const handleSavePhone = async () => {
 		if (!profile || isSavingPhone || !isPhoneChanged) return;
@@ -239,6 +265,38 @@ export default function ProfileScreen() {
 
 		setProfile((prev) => (prev ? { ...prev, phone: cleanPhone || null } : prev));
 		Alert.alert("Saved", "Phone number updated successfully.");
+	};
+
+	const handleSavePayment = async () => {
+		if (!profile || isSavingPayment || !isPaymentChanged) return;
+
+		setIsSavingPayment(true);
+
+		const payload: any = {
+			payment_mode: paymentModeDraft.trim() || null,
+			payment_bank_name: paymentModeDraft === "bank_transfer" ? bankNameDraft.trim() || null : null,
+			payment_bank_account: paymentModeDraft === "bank_transfer" ? bankAccountDraft.trim() || null : null,
+			payment_paynow_id: paymentModeDraft === "paynow" ? paynowDraft.trim() || null : null,
+		};
+
+		const { error: updateByIdError } = await supabase.from("employees").update(payload).eq("id", profile.id);
+
+		let updateError = updateByIdError;
+
+		if (updateByIdError && profile.email) {
+			const { error: updateByEmailError } = await supabase.from("employees").update(payload).eq("email", profile.email);
+			updateError = updateByEmailError;
+		}
+
+		setIsSavingPayment(false);
+
+		if (updateError) {
+			Alert.alert("Update failed", updateError.message);
+			return;
+		}
+
+		setProfile((prev) => (prev ? { ...prev, ...payload } : prev));
+		Alert.alert("Saved", "Payment details updated successfully.");
 	};
 
 	return (
@@ -293,6 +351,74 @@ export default function ProfileScreen() {
 								<Text style={styles.editButtonText}>{isSavingPhone ? "Saving" : "Save"}</Text>
 							</Pressable>
 						</View>
+
+						<View style={styles.sectionDivider} />
+						<Text style={styles.sectionTitle}>Payment</Text>
+
+						<View style={styles.paymentModeRow}>
+							<Pressable
+								style={[
+									styles.paymentModePill,
+									paymentModeDraft === "bank_transfer" ? styles.paymentModePillActive : null,
+								]}
+								onPress={() => setPaymentModeDraft("bank_transfer")}
+							>
+								<Text
+									style={[
+										styles.paymentModeText,
+										paymentModeDraft === "bank_transfer" ? styles.paymentModeTextActive : null,
+									]}
+								>
+									Bank Transfer
+								</Text>
+							</Pressable>
+							<Pressable
+								style={[styles.paymentModePill, paymentModeDraft === "paynow" ? styles.paymentModePillActive : null]}
+								onPress={() => setPaymentModeDraft("paynow")}
+							>
+								<Text
+									style={[
+										styles.paymentModeText,
+										paymentModeDraft === "paynow" ? styles.paymentModeTextActive : null,
+									]}
+								>
+									PayNow
+								</Text>
+							</Pressable>
+						</View>
+
+						{paymentModeDraft === "bank_transfer" ? (
+							<>
+								<EditableTextField label="Bank Name:" value={bankNameDraft} onChangeValue={setBankNameDraft} />
+								<EditableTextField
+									label="Bank Account:"
+									value={bankAccountDraft}
+									onChangeValue={setBankAccountDraft}
+									placeholder="e.g. 123456789"
+								/>
+							</>
+						) : paymentModeDraft === "paynow" ? (
+							<EditableTextField
+								label="PayNow ID:"
+								value={paynowDraft}
+								onChangeValue={setPaynowDraft}
+								placeholder="Phone / NRIC / UEN"
+							/>
+						) : (
+							<Text style={styles.helperText}>Select a payment mode to set your payout details.</Text>
+						)}
+
+						<View style={styles.editRow}>
+							<Pressable
+								style={[styles.editButton, (!isPaymentChanged || isSavingPayment) ? styles.editButtonDisabled : null]}
+								onPress={() => {
+									void handleSavePayment();
+								}}
+								disabled={!isPaymentChanged || isSavingPayment}
+							>
+								<Text style={styles.editButtonText}>{isSavingPayment ? "Saving" : "Save"}</Text>
+							</Pressable>
+						</View>
 					</ScrollView>
 				</>
 			)}
@@ -339,6 +465,33 @@ function EditablePhoneField({
 					onChangeText={onChangeValue}
 					keyboardType="phone-pad"
 					placeholder="Enter phone number"
+					placeholderTextColor="#7A8798"
+					style={styles.inputText}
+				/>
+			</View>
+		</View>
+	);
+}
+
+function EditableTextField({
+	label,
+	value,
+	onChangeValue,
+	placeholder,
+}: {
+	label: string;
+	value: string;
+	onChangeValue: (next: string) => void;
+	placeholder?: string;
+}) {
+	return (
+		<View style={styles.fieldWrap}>
+			<Text style={styles.fieldLabel}>{label}</Text>
+			<View style={styles.valuePill}>
+				<TextInput
+					value={value}
+					onChangeText={onChangeValue}
+					placeholder={placeholder ?? "Enter value"}
 					placeholderTextColor="#7A8798"
 					style={styles.inputText}
 				/>
@@ -460,4 +613,21 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 		fontWeight: "700",
 	},
+	sectionDivider: { height: 1, backgroundColor: "rgba(255,255,255,0.15)", marginTop: 18, marginBottom: 12 },
+	sectionTitle: { color: "#FFFFFF", fontWeight: "700", marginLeft: 6, marginBottom: 10 },
+	paymentModeRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
+	paymentModePill: {
+		flex: 1,
+		height: 38,
+		borderRadius: 19,
+		backgroundColor: "rgba(244,247,251,0.9)",
+		borderWidth: 1.6,
+		borderColor: "rgba(255,255,255,0.45)",
+		alignItems: "center",
+		justifyContent: "center",
+	},
+	paymentModePillActive: { borderColor: "#EB9431" },
+	paymentModeText: { color: "#1C2C44", fontSize: 12, fontWeight: "700" },
+	paymentModeTextActive: { color: "#0C1B34" },
+	helperText: { color: "rgba(255,255,255,0.8)", marginLeft: 10, marginTop: 4 },
 });

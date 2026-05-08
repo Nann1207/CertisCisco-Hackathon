@@ -1,11 +1,69 @@
-import React from "react";
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, View } from "react-native";
 import { useRouter } from "expo-router";
 import { ChevronLeft } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
+import { supabase } from "../../lib/supabase";
 
 export default function PayslipScreen() {
   const router = useRouter();
+
+  const [loading, setLoading] = useState(true);
+  const [payslips, setPayslips] = useState<
+    { id: string; pay_period_start: string; pay_period_end: string; gross_salary: number; net_salary: number; payment_date: string | null }[]
+  >([]);
+
+  const formatMonthLabel = useCallback((startDate: string) => {
+    const date = new Date(startDate);
+    if (Number.isNaN(date.getTime())) return startDate;
+    return date.toLocaleString(undefined, { month: "long", year: "numeric" });
+  }, []);
+
+  const formatMoney = useCallback((amount: number) => {
+    try {
+      return new Intl.NumberFormat(undefined, { style: "currency", currency: "SGD" }).format(amount);
+    } catch {
+      return `$${amount.toFixed(2)}`;
+    }
+  }, []);
+
+  const load = useCallback(async () => {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id ?? null;
+    if (!userId) {
+      Alert.alert("Load failed", sessionError?.message ?? "Unable to validate your session.");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("payslips")
+      .select("id, pay_period_start, pay_period_end, gross_salary, net_salary, payment_date")
+      .eq("employee_id", userId)
+      .order("pay_period_start", { ascending: false });
+
+    if (error) {
+      Alert.alert("Load failed", error.message);
+      setPayslips([]);
+      return;
+    }
+
+    setPayslips((data as any[]) ?? []);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const run = async () => {
+      setLoading(true);
+      await load();
+      if (alive) setLoading(false);
+    };
+    void run();
+    return () => {
+      alive = false;
+    };
+  }, [load]);
+
+  const hasPayslips = useMemo(() => payslips.length > 0, [payslips.length]);
 
   return (
     <SafeAreaView style={styles.root}>
@@ -19,17 +77,30 @@ export default function PayslipScreen() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.sectionTitle}>Recent Payslips</Text>
-        <Text style={styles.bodyText}>
-          Payslips are not connected yet. This page is currently showing placeholder content.
-        </Text>
-
-        {["April 2026", "March 2026", "February 2026"].map((month) => (
-          <View key={month} style={styles.card}>
-            <Text style={styles.cardTitle}>{month}</Text>
-            <Text style={styles.cardMeta}>Net Pay: -</Text>
-            <Text style={styles.cardMeta}>Gross Pay: -</Text>
+        {loading ? (
+          <View style={styles.center}>
+            <ActivityIndicator />
           </View>
-        ))}
+        ) : hasPayslips ? (
+          payslips.map((slip) => (
+            <Pressable
+              key={slip.id}
+              style={styles.card}
+              onPress={() =>
+                router.push({
+                  pathname: "/securityofficer/payslip-details",
+                  params: { id: slip.id },
+                })
+              }
+            >
+              <Text style={styles.cardTitle}>{formatMonthLabel(slip.pay_period_start)}</Text>
+              <Text style={styles.cardMeta}>Net Pay: {formatMoney(Number(slip.net_salary ?? 0))}</Text>
+              <Text style={styles.cardMeta}>Gross Pay: {formatMoney(Number(slip.gross_salary ?? 0))}</Text>
+            </Pressable>
+          ))
+        ) : (
+          <Text style={styles.bodyText}>No payslips yet.</Text>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -53,6 +124,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingBottom: 28 },
   sectionTitle: { fontSize: 16, fontWeight: "800", color: "#0F172A", marginBottom: 8 },
   bodyText: { color: "#334155", lineHeight: 20, marginBottom: 14 },
+  center: { paddingVertical: 24, alignItems: "center" },
   card: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
@@ -64,4 +136,3 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 15, fontWeight: "800", color: "#0F172A" },
   cardMeta: { marginTop: 4, color: "#475569" },
 });
-
