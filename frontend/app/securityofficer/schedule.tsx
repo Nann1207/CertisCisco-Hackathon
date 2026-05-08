@@ -171,8 +171,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingTop: 46,
-    paddingBottom: 10,
+    paddingTop: 44,
+    paddingBottom: 12,
     backgroundColor: "#fff",
   },
   backButton: {
@@ -183,7 +183,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#E9EEF5",
   },
-  headerTitle: { marginLeft: 10, fontSize: 24, fontWeight: "700", color: "#0E2D52" },
+  headerTitle: { fontSize: 20, lineHeight: 24, fontWeight: "800", marginLeft: 10, color: "#0E2D52" },
   card: {
     borderRadius: 10,
     backgroundColor: "#ECECEC",

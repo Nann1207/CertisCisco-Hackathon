@@ -48,7 +48,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
   },
   backBtn: { width: 40, height: 40, alignItems: "flex-start", justifyContent: "center" },
-  headerTitle: { fontSize: 18, fontWeight: "800", color: "#0F172A" },
+  headerTitle: { fontSize: 20, lineHeight: 24, fontWeight: "800", color: "#0F172A" },
   headerSpacer: { width: 40, height: 40 },
   content: { padding: 16, paddingBottom: 28 },
   sectionTitle: { fontSize: 16, fontWeight: "800", color: "#0F172A", marginBottom: 8 },

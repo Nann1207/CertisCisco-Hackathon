@@ -260,8 +260,8 @@ const styles = StyleSheet.create({
 	root: {
 		flex: 1,
 		backgroundColor: "#F4F4F4",
-		paddingHorizontal: 18,
-		paddingTop: 46,
+		paddingHorizontal: 16,
+		paddingTop: 44,
 	},
 	headerRow: {
 		marginBottom: 20,

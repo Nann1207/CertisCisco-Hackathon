@@ -76,6 +76,7 @@ type UpcomingShift = {
 
 type ActiveHomeIncident = {
   assignment_id: string;
+  shift_id: string | null;
   incident_id: string;
   incident_name: string | null;
   active_status: boolean | null;
@@ -87,11 +88,13 @@ type AcknowledgedAssignment = {
   incidentId: string;
   incidentName: string;
   locationUnitNo: string;
+  shiftId?: string | null;
 };
 
 type IncidentAssignmentRow = {
   assignment_id: string;
   incident_id: string | null;
+  shift_id: string | null;
   active_status: boolean | null;
   assigned_at: string | null;
   incidents:
@@ -324,7 +327,7 @@ export default function Home() {
 
       const { data: activeAssignmentsRaw, error: activeAssignmentsError } = await supabase
         .from("incident_assignments")
-        .select("assignment_id, incident_id, active_status, assigned_at, incidents(incident_id, incident_name)")
+        .select("assignment_id, shift_id, incident_id, active_status, assigned_at, incidents(incident_id, incident_name)")
         .eq("officer_id", userId)
         .eq("active_status", true)
         .order("assigned_at", { ascending: false })
@@ -407,6 +410,7 @@ export default function Home() {
 
           return {
             assignment_id: row.assignment_id,
+            shift_id: row.shift_id ?? null,
             incident_id: row.incident_id,
             incident_name: incident?.incident_name ?? null,
             active_status: row.active_status,
@@ -459,8 +463,18 @@ export default function Home() {
   }, [activeClockedInShiftId, currentTime, todayShifts]);
 
   const isClockedInForTodayShift = Boolean(
-    todayShift && activeClockedInShiftId && todayShift.id === activeClockedInShiftId
+    todayShift &&
+      activeClockedInShiftId &&
+      todayShift.id === activeClockedInShiftId &&
+      todayShift.clockin_time &&
+      !todayShift.clockout_time &&
+      !todayShift.completion_status
   );
+
+  const visibleActiveIncident =
+    isClockedInForTodayShift && activeIncident?.shift_id === activeClockedInShiftId
+      ? activeIncident
+      : null;
 
   const canClockOut = Boolean(
     isClockedInForTodayShift && isClockOutWindowOpen(currentTime, todayShift?.shift_end)
@@ -530,6 +544,7 @@ export default function Home() {
       )
     );
     setActiveClockedInShiftId(null);
+    setActiveIncident(null);
     setIsSavingShiftAction(false);
     router.push({
       pathname: "/securityofficer/shift-report",
@@ -563,13 +578,20 @@ export default function Home() {
   };
 
   const handleAssignmentAcknowledged = (assignment: AcknowledgedAssignment) => {
+    if (!activeClockedInShiftId || assignment.shiftId !== activeClockedInShiftId) return;
+
     setActiveIncident({
       assignment_id: assignment.assignmentId,
+      shift_id: assignment.shiftId ?? null,
       incident_id: assignment.incidentId,
       incident_name: assignment.incidentName,
       active_status: true,
       assigned_at: new Date().toISOString(),
     });
+  };
+
+  const openActiveIncident = (incidentId: string) => {
+    router.push(`/securityofficer/currentIncident?incidentId=${incidentId}`);
   };
 
   const todayDateText = todayShift
@@ -759,14 +781,14 @@ export default function Home() {
           <Text style={[styles.sectionTitle, { fontSize: scheduleTitleSize }]}>Incidents</Text>
         </View>
 
-        {activeIncident ? (
+        {visibleActiveIncident ? (
           <Pressable
             style={[styles.incidentSummaryCard, { marginHorizontal: horizontalPadding }]}
-            onPress={() => router.push("/securityofficer/incidents")}
+            onPress={() => openActiveIncident(visibleActiveIncident.incident_id)}
           >
             <View style={styles.incidentSummaryRow}>
               <Text style={styles.incidentSummaryTitle} numberOfLines={2}>
-                {activeIncident.incident_name?.trim() || "Active Incident"}
+                {visibleActiveIncident.incident_name?.trim() || "Active Incident"}
               </Text>
               <View style={styles.incidentStatusBadge}>
                 <Text style={styles.incidentStatusText}>ACTIVE</Text>
@@ -809,7 +831,7 @@ export default function Home() {
           });
 
           return (
-            <Pressable w vb
+            <Pressable
               style={styles.shiftCard} // Add shadow and background color in styles
               onPress={() => router.push({
                 pathname: "/securityofficer/upcoming-shift-details",
@@ -879,7 +901,7 @@ export default function Home() {
       />
       <AssignmentAlertModal
         officerId={authUserId}
-        currentShiftId={todayShift?.id ?? null}
+        currentShiftId={isClockedInForTodayShift ? todayShift?.id ?? null : null}
         onAcknowledgeAssignment={handleAssignmentAcknowledged}
       />
     </View>
@@ -959,7 +981,7 @@ function getDisplayShiftForToday(
 
   if (activeClockedInShiftId) {
     const activeShift = sorted.find((shift) => shift.id === activeClockedInShiftId);
-    if (activeShift && !activeShift.clockout_time && !activeShift.completion_status) {
+    if (activeShift?.clockin_time && !activeShift.clockout_time && !activeShift.completion_status) {
       return activeShift;
     }
   }

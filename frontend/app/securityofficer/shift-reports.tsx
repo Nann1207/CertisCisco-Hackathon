@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(243,156,82,0.22)",
   },
   header: {
-    paddingTop: 42,
+    paddingTop: 44,
     paddingBottom: 12,
     paddingHorizontal: 16,
     flexDirection: "row",
@@ -438,8 +438,9 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: "#fff",
-    fontSize: 28,
-    fontWeight: "700",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
   },
   loaderWrap: {
     flex: 1,

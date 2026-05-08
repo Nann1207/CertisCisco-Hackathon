@@ -11,13 +11,14 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  useWindowDimensions,
   View,
 } from "react-native";
 import MapView, { Marker, Polyline, type Region } from "react-native-maps";
 import * as Location from "expo-location";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { BellRing, ChevronLeft, ClipboardPen, PhoneCall, Settings2, MapPinned } from "lucide-react-native";
+import { BellRing, ChevronLeft, ClipboardPen, Maximize2, Minimize2, PhoneCall, Settings2, MapPinned } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { getProfilePhotoUrlFromFolder, getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
@@ -131,6 +132,7 @@ function toBackupRequestDetails(row: AssignmentRow, fallbackSuffix: string): Bac
 export default function SsoIncidentAfterAssignPage() {
   const router = useRouter();
   const { incidentId } = useLocalSearchParams<{ incidentId?: string }>();
+  const { width } = useWindowDimensions();
 
   const [loading, setLoading] = useState(true);
   const [incident, setIncident] = useState<IncidentRow | null>(null);
@@ -154,6 +156,7 @@ export default function SsoIncidentAfterAssignPage() {
   const [activeCctvIndex, setActiveCctvIndex] = useState(0);
   const [showAiSummaryModal, setShowAiSummaryModal] = useState(false);
   const [aiSummaryFontSize, setAiSummaryFontSize] = useState(16);
+  const [isAssessmentExpanded, setIsAssessmentExpanded] = useState(true);
   const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
   const [currentUserAvatarUrl, setCurrentUserAvatarUrl] = useState<string | null>(null);
 
@@ -577,7 +580,13 @@ export default function SsoIncidentAfterAssignPage() {
     inputRange: [0, 1],
     outputRange: ["0deg", "360deg"],
   });
-  const isTwoOfficerLayout = assignedOfficers.length === 2;
+  const assignedGridGap = 18;
+  const assignedGridHorizontalPadding = 36;
+  const assignedOfficerWidth = Math.floor(
+    Math.max(88, Math.min(112, (width - assignedGridHorizontalPadding - assignedGridGap * 2) / 3))
+  );
+  const assessmentLineHeight = Math.round(aiSummaryFontSize * 1.35);
+  const minimizedAssessmentHeight = assessmentLineHeight * 10 + 24;
 
   const onOpenMapModal = () => {
     const nextRegion = previewMapRegionRef.current ?? mapRegion ?? defaultMapRegion;
@@ -814,20 +823,55 @@ export default function SsoIncidentAfterAssignPage() {
 
           <View style={styles.sectionDivider} />
 
-          <Text style={styles.sectionLabel}>AI Assessment Report</Text>
-          <View style={styles.assessmentBox}>
-            <Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize }]}>
-              {incident.ai_assessment?.trim() || "No AI assessment available."}
-            </Text>
+          <View style={styles.assessmentHeaderRow}>
+            <Text style={[styles.sectionLabel, styles.assessmentHeaderTitle]}>AI Assessment Report</Text>
+            <Pressable
+              style={styles.assessmentToggleBtn}
+              onPress={() => setIsAssessmentExpanded((prev) => !prev)}
+              accessibilityRole="button"
+              accessibilityLabel={isAssessmentExpanded ? "Minimize AI Assessment Report" : "Expand AI Assessment Report"}
+            >
+              {isAssessmentExpanded ? (
+                <Minimize2 size={16} color="#0E2D52" />
+              ) : (
+                <Maximize2 size={16} color="#0E2D52" />
+              )}
+              <Text style={styles.assessmentToggleText}>{isAssessmentExpanded ? "Minimize" : "Expand"}</Text>
+            </Pressable>
           </View>
+          {isAssessmentExpanded ? (
+            <View style={styles.assessmentBox}>
+              <Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize, lineHeight: assessmentLineHeight }]}>
+                {incident.ai_assessment?.trim() || "No AI assessment available."}
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.assessmentBox, styles.assessmentBoxMinimized, { height: minimizedAssessmentHeight }]}>
+              <ScrollView
+                style={styles.assessmentScroll}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
+                persistentScrollbar
+              >
+                <Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize, lineHeight: assessmentLineHeight }]}>
+                  {incident.ai_assessment?.trim() || "No AI assessment available."}
+                </Text>
+              </ScrollView>
+              <LinearGradient
+                pointerEvents="none"
+                colors={["rgba(233,242,245,0)", "rgba(233,242,245,0.4)"]}
+                style={styles.assessmentBottomFade}
+              />
+            </View>
+          )}
 
           <Text style={styles.sectionLabel}>Assigned Officers</Text>
-          <View style={[styles.assignedStrip, isTwoOfficerLayout ? styles.assignedStripTwoItems : null]}>
+          <View style={styles.assignedStrip}>
             {assignedOfficers.length > 0 ? (
               assignedOfficers.map((officer) => (
                 <View
                   key={officer.assignmentId}
-                  style={[styles.assignedOfficerItem, isTwoOfficerLayout ? styles.assignedOfficerItemTwo : null]}
+                  style={[styles.assignedOfficerItem, { width: assignedOfficerWidth }]}
                 >
                   <OfficerAvatar profilePhotoUrl={officer.profilePhotoUrl} officerName={officer.officerName} />
                   <Text style={styles.assignedOfficerName} numberOfLines={1}>
@@ -1077,8 +1121,8 @@ async function refreshAssignedOfficers(
   if (pendingRequest) {
     const { row: pendingRow } = pendingRequest;
     setBackupRequestDetails(toBackupRequestDetails(pendingRow, "request"));
-    setShowBackupRequestModal(true);
-    setBackupAttentionActive(false);
+    setShowBackupRequestModal(false);
+    setBackupAttentionActive(true);
     return;
   }
 
@@ -1219,9 +1263,9 @@ const styles = StyleSheet.create({
     paddingBottom: 2,
   },
   header: {
-    paddingHorizontal: 12,
-    paddingTop: 40,
-    paddingBottom: 6,
+    paddingHorizontal: 16,
+    paddingTop: 44,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1240,9 +1284,9 @@ const styles = StyleSheet.create({
     flex: 1,
     marginHorizontal: 10,
     color: "#FFFFFF",
-    fontSize: 24,
-    lineHeight: 22,
-    fontWeight: "600",
+    fontSize: 20,
+    lineHeight: 24,
+    fontWeight: "800",
   },
   bodyPanel: {
     flex: 1,
@@ -1477,6 +1521,34 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: "700",
   },
+  assessmentHeaderRow: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  assessmentHeaderTitle: {
+    marginTop: 0,
+    flex: 1,
+  },
+  assessmentToggleBtn: {
+    minHeight: 30,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#AFC9DA",
+    backgroundColor: "#F7FBFD",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  assessmentToggleText: {
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    color: "#0E2D52",
+  },
   assessmentBox: {
     marginTop: 4,
     borderRadius: 8,
@@ -1486,6 +1558,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     minHeight: 78,
+  },
+  assessmentBoxMinimized: {
+    overflow: "hidden",
+    position: "relative",
+  },
+  assessmentScroll: {
+    flex: 1,
+  },
+  assessmentBottomFade: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 36,
   },
   assessmentText: {
     color: "#000000",
@@ -1498,21 +1584,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     columnGap: 18,
-    rowGap: 14,
+    rowGap: 18,
     minHeight: 86,
-    justifyContent: "space-between",
-  },
-  assignedStripTwoItems: {
     justifyContent: "flex-start",
-    columnGap: 28,
   },
   assignedOfficerItem: {
-    width: "30%",
-    minWidth: 92,
     alignItems: "center",
-  },
-  assignedOfficerItemTwo: {
-    width: 110,
   },
   assignedAvatar: {
     width: 56,

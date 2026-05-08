@@ -270,8 +270,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#F4F7FB",
   },
   header: {
-    paddingHorizontal: 12,
-    paddingTop: 40,
+    paddingHorizontal: 16,
+    paddingTop: 44,
     paddingBottom: 12,
     backgroundColor: "#0E2D52",
     flexDirection: "row",
@@ -286,7 +286,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   headerTitle: {
-    fontSize: 30,
+    fontSize: 20,
+    lineHeight: 24,
     fontWeight: "800",
     color: "#FFFFFF",
     marginLeft: 10,

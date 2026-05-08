@@ -804,7 +804,7 @@ const styles = StyleSheet.create({
 	headerRow: {
 		paddingTop: 44,
 		paddingHorizontal: 16,
-		paddingBottom: 6,
+		paddingBottom: 12,
 		flexDirection: "row",
 		alignItems: "center",
 		gap: 6,
@@ -819,8 +819,9 @@ const styles = StyleSheet.create({
 	},
 	headerTitle: {
 		color: "#FFFFFF",
-		fontSize: 26,
-		fontWeight: "700",
+		fontSize: 20,
+		lineHeight: 24,
+		fontWeight: "800",
 	},
 	loaderWrap: {
 		flex: 1,

@@ -147,9 +147,9 @@ const styles = StyleSheet.create({
 		backgroundColor: "#F3F6FA",
 	},
 	header: {
-		paddingTop: 40,
+		paddingTop: 44,
 		paddingBottom: 12,
-		paddingHorizontal: 12,
+		paddingHorizontal: 16,
 		backgroundColor: "#0E2D52",
 		flexDirection: "row",
 		alignItems: "center",
@@ -164,8 +164,9 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 	},
 	headerTitle: {
-		fontSize: 27,
-		fontWeight: "700",
+		fontSize: 20,
+    lineHeight: 24,
+		fontWeight: "800",
 		color: "#FFFFFF",
 	},
 	headerSpacer: {

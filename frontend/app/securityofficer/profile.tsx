@@ -357,8 +357,8 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 	},
 	headerRow: {
-		paddingTop: 58,
-		paddingHorizontal: 28,
+		paddingTop: 44,
+		paddingHorizontal: 16,
 	},
 	backButton: {
 		width: 34,
@@ -367,7 +367,7 @@ const styles = StyleSheet.create({
 		justifyContent: "center",
 	},
 	scrollContent: {
-		paddingHorizontal: 28,
+		paddingHorizontal: 16,
 		paddingBottom: 22,
 	},
 	profileTop: {

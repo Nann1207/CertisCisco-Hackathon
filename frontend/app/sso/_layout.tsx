@@ -1,13 +1,18 @@
 import React from "react";
-import { View, StyleSheet } from "react-native";
+import { KeyboardAvoidingView, Platform, View, StyleSheet } from "react-native";
 import { Stack } from "expo-router";
 import BottomBar from "./components/BottomBar";
 import FloatingChatButton from "../securityofficer/components/FloatingChatButton";
+import BackupRequestAlertModal from "./components/BackupRequestAlertModal";
 
 export default function Layout() {
   return (
     <View style={styles.root}>
-      <View style={styles.content}>
+      <KeyboardAvoidingView
+        style={styles.content}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
+      >
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="home" />
           <Stack.Screen name="reports" />
@@ -39,9 +44,10 @@ export default function Layout() {
         <Stack.Screen name="sop" />
         <Stack.Screen name="chatbot" />
       </Stack>
-      </View>
+      </KeyboardAvoidingView>
 
       <FloatingChatButton bottomOffset={98} rightOffset={20} targetHref="/sso/chatbot" />
+      <BackupRequestAlertModal />
       <BottomBar />
     </View>
   );

@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { Modal, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { X } from "lucide-react-native";
 import Text from "../../../components/TranslatedText";
@@ -44,7 +44,11 @@ export default function RejectAssignmentModal({
       navigationBarTranslucent
       onRequestClose={onClose}
     >
-      <View style={styles.backdrop}>
+      <KeyboardAvoidingView
+        style={styles.backdrop}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
+      >
         <LinearGradient
           colors={["#FFE2C9", "#F6D5E0", "#542A7C"]}
           locations={[0.1, 0.55, 1]}
@@ -102,7 +106,7 @@ export default function RejectAssignmentModal({
             </Pressable>
           </View>
         </LinearGradient>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

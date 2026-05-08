@@ -3,15 +3,17 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
 	ActivityIndicator,
 	Alert,
-	Dimensions,
 	Image,
+	KeyboardAvoidingView,
 	Linking,
 	Modal,
+	Platform,
 	Pressable,
 	SafeAreaView,
 	ScrollView,
 	StyleSheet,
 	TextInput,
+	useWindowDimensions,
 	View,
 } from "react-native";
 import MapView, { Marker, Polyline, type Region } from "react-native-maps";
@@ -19,7 +21,7 @@ import * as Location from "expo-location";
 import Constants from "expo-constants";
 import { LinearGradient } from "expo-linear-gradient";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { BellRing, ChevronLeft, ClipboardPen, PhoneCall, Settings2 } from "lucide-react-native";
+import { BellRing, ChevronLeft, ClipboardPen, Maximize2, Minimize2, PhoneCall, Settings2, MapPinned } from "lucide-react-native";
 import Text from "../../components/TranslatedText";
 import { resolveIncidentFrameUrls } from "../../lib/incidentFrames";
 import { getProfilePhotoUrlFromFolder, getProfilePhotoUrlFromPath } from "../../lib/profilePhotos";
@@ -113,6 +115,7 @@ function normalizeChecklistItems(raw: unknown, fallback: string[], minimumCount:
 export default function CurrentIncidentScreen() {
 	const router = useRouter();
 	const { incidentId } = useLocalSearchParams<{ incidentId?: string }>();
+	const { width } = useWindowDimensions();
 
 	const [loading, setLoading] = useState(true);
 	const [incident, setIncident] = useState<IncidentRow | null>(null);
@@ -145,6 +148,7 @@ export default function CurrentIncidentScreen() {
 	const [activeCctvIndex, setActiveCctvIndex] = useState(0);
 	const [showAiSummaryModal, setShowAiSummaryModal] = useState(false);
 	const [aiSummaryFontSize, setAiSummaryFontSize] = useState(16);
+	const [isAssessmentExpanded, setIsAssessmentExpanded] = useState(true);
 	const [routeCoords, setRouteCoords] = useState<Array<{ latitude: number; longitude: number }>>([]);
 	const [currentUserAvatarUrl, setCurrentUserAvatarUrl] = useState<string | null>(null);
 	const hasHydratedProgressRef = useRef(false);
@@ -634,7 +638,39 @@ export default function CurrentIncidentScreen() {
 
 	const mapDistanceLabel = formatDistanceText(distanceMeters);
 	const hasRoute = routeCoords.length >= 2;
-	const carouselWidth = Math.min(Dimensions.get("window").width - 44, 420);
+	const carouselWidth = Math.min(width - 44, 420);
+	const backupModalWidth = Math.min(width - 32, 362);
+	const backupTileWidth = Math.floor(clamp((backupModalWidth - 52 - 28) / 3, 72, 96));
+	const backupTileHeight = Math.round(clamp(backupTileWidth * 1.22, 88, 113));
+	const backupCountGridWidth = backupTileWidth * 3 + 28;
+	const backupPersonHeadSize = Math.round(clamp(backupTileWidth * 0.14, 10, 12));
+	const backupPersonBodyWidth = Math.round(clamp(backupTileWidth * 0.2, 15, 18));
+	const backupPersonBodyHeight = Math.round(clamp(backupTileWidth * 0.14, 10, 12));
+	const backupPersonBorderWidth = Math.round(clamp(backupTileWidth * 0.028, 2, 3));
+	const backupPersonOffset = -Math.round(clamp(backupTileWidth * 0.035, 2, 4));
+	const backupCountTileStyle = {
+		width: backupTileWidth,
+		height: backupTileHeight,
+	};
+	const backupPersonHeadStyle = {
+		width: backupPersonHeadSize,
+		height: backupPersonHeadSize,
+		borderRadius: backupPersonHeadSize / 2,
+		borderWidth: backupPersonBorderWidth,
+	};
+	const backupPersonBodyStyle = {
+		marginTop: Math.round(clamp(backupTileWidth * 0.045, 3, 4)),
+		width: backupPersonBodyWidth,
+		height: backupPersonBodyHeight,
+		borderTopLeftRadius: backupPersonBodyWidth / 2,
+		borderTopRightRadius: backupPersonBodyWidth / 2,
+		borderWidth: backupPersonBorderWidth,
+	};
+	const backupPersonOffsetStyle = {
+		marginLeft: backupPersonOffset,
+	};
+	const assessmentLineHeight = Math.round(aiSummaryFontSize * 1.35);
+	const minimizedAssessmentHeight = assessmentLineHeight * 10 + 24;
 
 	const canMarkArrived =
 		testingMode || (distanceMeters !== null && distanceMeters <= NEARBY_DISTANCE_METERS);
@@ -851,7 +887,6 @@ export default function CurrentIncidentScreen() {
 			</View>
 
 			<View style={styles.bodyPanel}>
-				<View style={styles.leftRail} />
 				<ScrollView
 					contentContainerStyle={[
 						styles.scrollContent,
@@ -868,7 +903,7 @@ export default function CurrentIncidentScreen() {
 
 						<View style={styles.mapInfoRow}>
 							<Text style={styles.mapHintText}>Tap map to open navigation view</Text>
-							<Text style={styles.mapDistanceText}>{mapDistanceLabel}</Text>
+							<View style={styles.mapDistanceWrap}>{mapDistanceLabel}</View>
 						</View>
 						<Pressable style={styles.mapCard} onPress={onOpenMapModal}>
 							<MapView
@@ -934,12 +969,73 @@ export default function CurrentIncidentScreen() {
 							<Text style={styles.cctvHintText} pointerEvents="none">Tap to zoom / Swipe for more CCTV images</Text>
 						</View>
 
-						<Text style={styles.sectionHeader}>AI Assessment Report</Text>
-						<View style={styles.assessmentBox}>
-							<Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize }]}>
-								{incident.ai_assessment?.trim() || "No AI assessment available."}
-							</Text>
+						{isArrived ? (
+							<View style={styles.actionsRow}>
+								<Pressable style={[styles.actionBtn, styles.backupBtn]} onPress={() => setShowBackupModal(true)}>
+									<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+										<BellRing size={16} color="#9C2222" />
+										<Text style={styles.actionBtnText}>Request Backup</Text>
+									</View>
+								</Pressable>
+								<Pressable
+									style={[styles.actionBtn, styles.hotlineBtn]}
+									onPress={() => {
+										void onCallSupervisor();
+									}}
+								>
+									<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+										<PhoneCall size={16} color="#5A6E85" />
+										<Text style={styles.hotlineBtnText}>Supervisor</Text>
+									</View>
+								</Pressable>
+							</View>
+						) : null}
+
+						<View style={styles.sectionDivider} />
+
+						<View style={styles.assessmentHeaderRow}>
+							<Text style={[styles.sectionHeader, styles.assessmentHeaderTitle]}>AI Assessment Report</Text>
+							<Pressable
+								style={styles.assessmentToggleBtn}
+								onPress={() => setIsAssessmentExpanded((prev) => !prev)}
+								accessibilityRole="button"
+								accessibilityLabel={isAssessmentExpanded ? "Minimize AI Assessment Report" : "Expand AI Assessment Report"}
+							>
+								{isAssessmentExpanded ? (
+									<Minimize2 size={16} color="#0E2D52" />
+								) : (
+									<Maximize2 size={16} color="#0E2D52" />
+								)}
+								<Text style={styles.assessmentToggleText}>
+									{isAssessmentExpanded ? "Minimize" : "Expand"}
+								</Text>
+							</Pressable>
 						</View>
+						{isAssessmentExpanded ? (
+							<View style={styles.assessmentBox}>
+								<Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize, lineHeight: assessmentLineHeight }]}>
+									{incident.ai_assessment?.trim() || "No AI assessment available."}
+								</Text>
+							</View>
+						) : (
+							<View style={[styles.assessmentBox, styles.assessmentBoxMinimized, { height: minimizedAssessmentHeight }]}>
+								<ScrollView
+									style={styles.assessmentScroll}
+									nestedScrollEnabled
+									showsVerticalScrollIndicator
+									persistentScrollbar
+								>
+									<Text style={[styles.assessmentText, { fontSize: aiSummaryFontSize, lineHeight: assessmentLineHeight }]}>
+										{incident.ai_assessment?.trim() || "No AI assessment available."}
+									</Text>
+								</ScrollView>
+								<LinearGradient
+									pointerEvents="none"
+									colors={["rgba(233,242,245,0)", "rgba(233,242,245,0.4)"]}
+									style={styles.assessmentBottomFade}
+								/>
+							</View>
+						)}
 
 						{!isArrived ? (
 							<>
@@ -990,26 +1086,6 @@ export default function CurrentIncidentScreen() {
 							</>
 						) : (
 							<>
-								<View style={styles.actionsRow}>
-									<Pressable style={[styles.actionBtn, styles.backupBtn]} onPress={() => setShowBackupModal(true)}>
-										<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-											<BellRing size={16} color="#9C2222" />
-											<Text style={styles.actionBtnText}>Request Backup</Text>
-										</View>
-									</Pressable>
-									<Pressable
-										style={[styles.actionBtn, styles.hotlineBtn]}
-										onPress={() => {
-											void onCallSupervisor();
-										}}
-									>
-										<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-											<PhoneCall size={16} color="#5A6E85" />
-											<Text style={styles.hotlineBtnText}>Supervisor</Text>
-										</View>
-									</Pressable>
-								</View>
-
 								<Text style={styles.sectionHeader}>Checklist of SOP Guidelines</Text>
 								{checklistLoading ? (
 									<Pressable style={[styles.primaryBtn, styles.checklistLoadingBtn]} disabled>
@@ -1177,7 +1253,11 @@ export default function CurrentIncidentScreen() {
 				navigationBarTranslucent
 				onRequestClose={() => setShowBackupModal(false)}
 			>
-				<View style={styles.backupModalBackdrop}>
+				<KeyboardAvoidingView
+					style={styles.backupModalBackdrop}
+					behavior={Platform.OS === "ios" ? "padding" : "height"}
+					keyboardVerticalOffset={0}
+				>
 					<LinearGradient
 						colors={["#FFECEB", "#F4DFEF", "#170075"]}
 						locations={[0.08, 0.52, 1]}
@@ -1191,29 +1271,36 @@ export default function CurrentIncidentScreen() {
 						<Text style={styles.backupModalTitle}>REQUEST BACKUP</Text>
 						<Text style={styles.backupModalSubtitle}>Pick the amount of officer(s) for backup</Text>
 
-						<View style={styles.backupModalCountGrid}>
+						<View style={[styles.backupModalCountGrid, { width: backupCountGridWidth }]}>
 							{["1", "2", "3", "4", "5+"].map((count) => {
 								const selected = backupCount === count;
 								return (
 									<Pressable
 										key={count}
-										style={[styles.backupModalCountTileWrap, selected ? styles.backupModalCountTileWrapActive : null]}
+										style={[
+											styles.backupModalCountTileWrap,
+											{ width: backupTileWidth },
+											selected ? styles.backupModalCountTileWrapActive : null,
+										]}
 										onPress={() => setBackupCount(count)}
 									>
 										<LinearGradient
 											colors={selected ? ["#0E2D52", "#1A4A7A"] : ["#36475B", "#EF5449"]}
 											start={{ x: 0.1, y: 0 }}
 											end={{ x: 0.9, y: 1 }}
-											style={styles.backupModalCountTile}
+											style={[styles.backupModalCountTile, backupCountTileStyle]}
 										>
 											<View style={styles.backupModalPeopleRow}>
 												{Array.from({ length: count === "1" ? 1 : count === "2" ? 2 : count === "3" ? 3 : count === "4" ? 4 : 5 }).map((_, index) => (
 													<View
 														key={`${count}-${index}`}
-														style={[styles.backupModalPerson, index > 0 ? styles.backupModalPersonOffset : null]}
+														style={[
+															styles.backupModalPerson,
+															index > 0 ? backupPersonOffsetStyle : null,
+														]}
 													>
-														<View style={styles.backupModalPersonHead} />
-														<View style={styles.backupModalPersonBody} />
+														<View style={[styles.backupModalPersonHead, backupPersonHeadStyle]} />
+														<View style={[styles.backupModalPersonBody, backupPersonBodyStyle]} />
 													</View>
 												))}
 											</View>
@@ -1250,7 +1337,7 @@ export default function CurrentIncidentScreen() {
 							</LinearGradient>
 						</Pressable>
 					</LinearGradient>
-				</View>
+				</KeyboardAvoidingView>
 			</Modal>
 
 			<Modal
@@ -1333,11 +1420,28 @@ function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: numbe
 }
 
 function formatDistanceText(distanceMeters: number | null) {
-	if (distanceMeters === null) return "Location distance unavailable";
-	if (distanceMeters > 1000) {
-		return `Location ${formatKm(distanceMeters)}km away`;
-	}
-	return `Location ${Math.round(distanceMeters)}m away`;
+  if (distanceMeters === null) {
+      return (
+    <View style={styles.mapDistanceInner}>
+      <MapPinned size={16} color="#b90a0a"/>
+      <Text style={styles.mapDistanceText}>Location distance unavailable</Text>
+    </View>
+    );
+  }
+
+  const distanceValue = distanceMeters > 1000 
+    ? `${formatKm(distanceMeters)}km` 
+    : `${Math.round(distanceMeters)}m`;
+  const distanceValueStyle = distanceMeters < 100 ? styles.mapDistanceValueNear : styles.mapDistanceValueFar;
+
+  return (
+    <View style={styles.mapDistanceInner}>
+      <MapPinned size={16} color="#b90a0a"/>
+      <Text style={styles.mapDistanceText}>Location</Text>
+      <Text style={[styles.mapDistanceText, distanceValueStyle]}>{distanceValue}</Text>
+      <Text style={styles.mapDistanceText}>away</Text>
+    </View>
+  );
 }
 
 function formatKm(distanceMeters: number) {
@@ -1394,9 +1498,9 @@ const styles = StyleSheet.create({
 		paddingBottom: 2,
 	},
 	header: {
-		paddingHorizontal: 12,
-		paddingTop: 40,
-		paddingBottom: 8,
+		paddingHorizontal: 16,
+		paddingTop: 44,
+		paddingBottom: 12,
 		flexDirection: "row",
 		alignItems: "center",
 		justifyContent: "space-between",
@@ -1404,9 +1508,9 @@ const styles = StyleSheet.create({
 	headerTitle: {
 		flex: 1,
 		marginHorizontal: 10,
-		fontSize: 24,
-		lineHeight: 22,
-		fontWeight: "600",
+		fontSize: 20,
+		lineHeight: 24,
+		fontWeight: "800",
 		color: "#FFFFFF",
 	},
 	iconBtn: {
@@ -1434,6 +1538,12 @@ const styles = StyleSheet.create({
 		width: 7,
 		borderRadius: 14,
 		backgroundColor: "#5074A6",
+	},
+	sectionDivider: {
+		marginTop: 12,
+		height: 4,
+		backgroundColor: "#F1F1F1",
+		borderRadius: 999,
 	},
 	scrollContent: {
 		paddingHorizontal: 22,
@@ -1487,9 +1597,25 @@ const styles = StyleSheet.create({
 		color: "#274C77",
 	},
 	mapDistanceText: {
-		fontSize: 12,
-		fontWeight: "700",
-		color: "#0F172A",
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0F172A",
+	},
+	mapDistanceValueFar: {
+		color: "#c51010",
+		fontWeight: "900",
+	},
+	mapDistanceValueNear: {
+		color: "#046427",
+		fontWeight: "900",
+	},
+	mapDistanceWrap: {
+		flexShrink: 0,
+	},
+	mapDistanceInner: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 6,
 	},
 	userMarker: {
 		width: 36,
@@ -1549,7 +1675,7 @@ const styles = StyleSheet.create({
 	},
 	cctvHintText: {
 		position: "absolute",
-		top: 8,
+		bottom: 8,
 		alignSelf: "center",
 		paddingHorizontal: 10,
 		paddingVertical: 4,
@@ -1570,6 +1696,20 @@ const styles = StyleSheet.create({
 		paddingHorizontal: 14,
 		paddingVertical: 12,
 		minHeight: 78,
+	},
+	assessmentBoxMinimized: {
+		overflow: "hidden",
+		position: "relative",
+	},
+	assessmentScroll: {
+		flex: 1,
+	},
+	assessmentBottomFade: {
+		position: "absolute",
+		left: 0,
+		right: 0,
+		bottom: 0,
+		height: 36,
 	},
 	assessmentText: {
 		color: "#000000",
@@ -1637,6 +1777,36 @@ const styles = StyleSheet.create({
 		fontSize: 16,
 		lineHeight: 22,
 		fontWeight: "700",
+		color: "#0E2D52",
+	},
+	assessmentHeaderRow: {
+		marginTop: 14,
+		marginBottom: 8,
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "space-between",
+		gap: 10,
+	},
+	assessmentHeaderTitle: {
+		marginTop: 0,
+		marginBottom: 0,
+		flex: 1,
+	},
+	assessmentToggleBtn: {
+		minHeight: 30,
+		paddingHorizontal: 10,
+		borderRadius: 999,
+		borderWidth: 1,
+		borderColor: "#AFC9DA",
+		backgroundColor: "#F7FBFD",
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 6,
+	},
+	assessmentToggleText: {
+		fontSize: 12,
+		lineHeight: 16,
+		fontWeight: "800",
 		color: "#0E2D52",
 	},
 	lineItem: {
@@ -2070,15 +2240,16 @@ const styles = StyleSheet.create({
 	},
 	backupModalTitle: {
 		marginTop: 4,
-		fontSize: 20,
+		fontSize: 24,
 		lineHeight: 22,
 		fontWeight: "800",
 		textAlign: "center",
 		color: "#0E2D52",
 	},
 	backupModalSubtitle: {
-		marginTop: 2,
-		fontSize: 11,
+		marginTop: 10,
+		marginBottom: 10,
+		fontSize: 13,
 		lineHeight: 13,
 		fontWeight: "700",
 		textAlign: "center",
@@ -2086,6 +2257,7 @@ const styles = StyleSheet.create({
 	},
 	backupModalCountGrid: {
 		marginTop: 18,
+		alignSelf: "center",
 		flexDirection: "row",
 		flexWrap: "wrap",
 		justifyContent: "flex-start",
@@ -2093,8 +2265,6 @@ const styles = StyleSheet.create({
 		rowGap: 16,
 	},
 	backupModalCountTileWrap: {
-		width: "30%",
-		minWidth: 87,
 		borderRadius: 14,
 	},
 	backupModalCountTileWrapActive: {
@@ -2105,11 +2275,10 @@ const styles = StyleSheet.create({
 		elevation: 6,
 	},
 	backupModalCountTile: {
-		height: 113,
 		borderRadius: 14,
 		alignItems: "center",
 		justifyContent: "space-between",
-		paddingTop: 24,
+		paddingTop: 18,
 		paddingBottom: 12,
 	},
 	backupModalPeopleRow: {
@@ -2121,23 +2290,10 @@ const styles = StyleSheet.create({
 	backupModalPerson: {
 		alignItems: "center",
 	},
-	backupModalPersonOffset: {
-		marginLeft: -3,
-	},
 	backupModalPersonHead: {
-		width: 12,
-		height: 12,
-		borderRadius: 6,
-		borderWidth: 2.5,
 		borderColor: "#FFFFFF",
 	},
 	backupModalPersonBody: {
-		marginTop: 4,
-		width: 18,
-		height: 12,
-		borderTopLeftRadius: 9,
-		borderTopRightRadius: 9,
-		borderWidth: 2.5,
 		borderBottomWidth: 0,
 		borderColor: "#FFFFFF",
 	},
@@ -2220,9 +2376,8 @@ const styles = StyleSheet.create({
 		paddingBottom: 22,
 	},
 	successModalEyebrow: {
-		fontSize: 16,
+		fontSize: 22,
 		fontWeight: "800",
-		letterSpacing: 1.2,
 		textAlign: "center",
 		color: "#B45309",
 	},
@@ -2236,7 +2391,7 @@ const styles = StyleSheet.create({
 	},
 	successModalBody: {
 		marginTop: 10,
-		fontSize: 14,
+		fontSize: 16,
 		lineHeight: 20,
 		fontWeight: "600",
 		textAlign: "center",

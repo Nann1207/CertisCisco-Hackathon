@@ -180,7 +180,7 @@ const styles = StyleSheet.create({
     borderBottomColor: "#E5E7EB",
   },
   backBtn: { width: 40, height: 40, alignItems: "flex-start", justifyContent: "center" },
-  headerTitle: { fontSize: 16, fontWeight: "800", color: "#0F172A", textAlign: "center" },
+  headerTitle: { fontSize: 20, lineHeight: 24, fontWeight: "800", color: "#0F172A", textAlign: "center" },
   headerSpacer: { width: 40, height: 40 },
   content: { padding: 16, paddingBottom: 28 },
   bodyText: { color: "#334155", lineHeight: 20, marginBottom: 14 },
