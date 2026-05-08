@@ -45,6 +45,9 @@ export default function NotificationsPage() {
   const NOTIF_DISMISS_PREFIX = "notifications_dismissed";
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>("today");
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [localScheduled, setLocalScheduled] = useState<Record<string, any>>({});
+  const [localInbox, setLocalInbox] = useState<any[]>([]);
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -63,6 +66,7 @@ export default function NotificationsPage() {
 
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       const userId = sessionData.session?.user.id;
+      if (alive) setAuthUserId(userId ?? null);
 
       if (!userId) {
         if (alive) {
@@ -132,9 +136,15 @@ export default function NotificationsPage() {
       if (userId) {
         try {
           const key = `${NOTIF_DISMISS_PREFIX}:${userId}`;
-          const stored = await AsyncStorage.getItem(key);
-          const parsed = stored ? (JSON.parse(stored) as Record<string, string>) : {};
+          const [storedDismissed, storedScheduled, storedInbox] = await Promise.all([
+            AsyncStorage.getItem(key),
+            AsyncStorage.getItem(`scheduled_local_notifications:${userId}`),
+            AsyncStorage.getItem(`local_inbox_notifications:${userId}`),
+          ]);
+          const parsed = storedDismissed ? (JSON.parse(storedDismissed) as Record<string, string>) : {};
           setDismissedMap(parsed);
+          setLocalScheduled(storedScheduled ? JSON.parse(storedScheduled) : {});
+          setLocalInbox(storedInbox ? JSON.parse(storedInbox) : []);
         } catch (err) {
           console.warn("Failed to load dismissed notifications:", err);
         }
@@ -149,9 +159,55 @@ export default function NotificationsPage() {
     };
   }, []);
 
+  const localEntries = useMemo(() => {
+    const nowMs = currentTime.getTime();
+    const scheduledItems: NotificationItem[] = Object.entries(localScheduled ?? {})
+      .map(([key, value]: any) => {
+        const at = Number(value?.at);
+        if (!Number.isFinite(at)) return null;
+        const isDue = at <= nowMs;
+        const isOverdue = at < nowMs;
+        const title = (value?.title ?? "Reminder").toString();
+        const bodyRaw = (value?.body ?? "").toString();
+        const body = isOverdue ? `Overdue: ${bodyRaw}` : bodyRaw;
+        return {
+          id: `local:${key}`,
+          title,
+          body,
+          timestamp: new Date(at).toLocaleString(),
+          kind: isDue ? ("today" as any) : ("upcoming" as any),
+          priority: typeof value?.priority === "number" ? value.priority : 0,
+          time: typeof value?.time === "number" ? value.time : at,
+          dismissedAt: dismissedMap[`local:${key}`] ?? null,
+        } satisfies NotificationItem;
+      })
+      .filter(Boolean) as NotificationItem[];
+
+    const inboxItems: NotificationItem[] = (localInbox ?? [])
+      .map((it: any) => {
+        const at = Number(it?.at ?? it?.time ?? 0);
+        if (!Number.isFinite(at) || at <= 0) return null;
+        const id = `local_inbox:${String(it.id ?? at)}`;
+        return {
+          id,
+          title: String(it.title ?? "Notification"),
+          body: String(it.body ?? ""),
+          timestamp: new Date(at).toLocaleString(),
+          kind: (it.kind ?? "today") as any,
+          priority: typeof it.priority === "number" ? it.priority : 2,
+          time: typeof it.time === "number" ? it.time : at,
+          dismissedAt: dismissedMap[id] ?? null,
+        } satisfies NotificationItem;
+      })
+      .filter(Boolean) as NotificationItem[];
+
+    return [...scheduledItems, ...inboxItems];
+  }, [currentTime, dismissedMap, localInbox, localScheduled]);
+
   const entries = useMemo(() => {
-    return generateNotifications(shiftRows, null, null, assignmentRows, currentTime, { includePast: true });
-  }, [currentTime, shiftRows, assignmentRows]);
+    const generated = generateNotifications(shiftRows, null, null, assignmentRows, currentTime, { includePast: true });
+    return [...localEntries, ...generated];
+  }, [assignmentRows, currentTime, localEntries, shiftRows]);
 
   const entriesWithDismissed = useMemo(() => {
     return entries.map((e) => ({ ...e, dismissedAt: dismissedMap[e.id] ?? null }));
@@ -190,27 +246,16 @@ export default function NotificationsPage() {
     // De-duplicate by id to avoid duplicate-key rendering errors
     list = Array.from(new Map(list.map((e) => [e.id, e])).values());
 
-    // Re-sort based on active filter to surface the most-relevant items first
+    // Order by time (upcoming: soonest first; everything else: most recent first)
     list.sort((a, b) => {
-      const pa = a.priority ?? 99;
-      const pb = b.priority ?? 99;
-      if (pa !== pb) return pa - pb;
       const ta = a.time ?? 0;
       const tb = b.time ?? 0;
-      if (activeFilter === "upcoming") return ta - tb; // soonest first
-      if (activeFilter === "today") {
-        // incidents: most recent first; today: earliest first; assignment/report: most recent first
-        if (a.kind === "incident" && b.kind === "incident") return tb - ta;
-        if (a.kind === "today" && b.kind === "today") return ta - tb;
-        if ((a.kind === "assignment" || a.kind === "report") && (b.kind === "assignment" || b.kind === "report")) return tb - ta;
-        return pa - pb;
-      }
-      if (activeFilter === "past") return tb - ta; // recent past first
-      return pb - pa;
+      if (activeFilter === "upcoming") return ta - tb;
+      return tb - ta;
     });
 
     return list;
-  }, [activeFilter, entries]);
+  }, [activeFilter, currentTime, entriesWithDismissed]);
 
   const hasEntries = filteredEntries.length > 0;
 
@@ -219,6 +264,37 @@ export default function NotificationsPage() {
     const currentFilterLabel = FILTER_TABS.find((tab) => tab.key === activeFilter)?.label ?? "All";
     return `${currentFilterLabel} Notifications`;
   }, [activeFilter, hasEntries]);
+
+  const onPressEntry = async (entry: NotificationItem) => {
+    if (!authUserId) return;
+    const id = entry.id;
+    if (!id) return;
+    const nowISO = new Date().toISOString();
+    const key = `${NOTIF_DISMISS_PREFIX}:${authUserId}`;
+    const next = { ...(dismissedMap ?? {}), [id]: nowISO } as Record<string, string>;
+    try {
+      await AsyncStorage.setItem(key, JSON.stringify(next));
+    } catch (err) {
+      console.warn("Failed to persist dismissed notification", err);
+    }
+    setDismissedMap(next);
+
+    if (id.startsWith("local_inbox:payslip:")) {
+      const parts = id.split(":");
+      const payslipId = parts.length >= 4 ? parts[3] : "";
+      if (payslipId) {
+        router.push({ pathname: "/securityofficer/payslip-details", params: { id: payslipId } });
+      } else {
+        router.push("/securityofficer/payslip");
+      }
+      return;
+    }
+
+    if (id.startsWith("local:shift:") || entry.title.toLowerCase().includes("shift") || entry.title.toLowerCase().includes("clock")) {
+      router.push({ pathname: "/securityofficer/shift-notification", params: { message: entry.body || "baaa" } });
+      return;
+    }
+  };
 
   return (
     <SafeAreaView style={styles.root}>
@@ -271,7 +347,7 @@ export default function NotificationsPage() {
               </View>
             ) : (
               filteredEntries.map((entry) => (
-                <View key={entry.id} style={styles.entryCard}>
+                <Pressable key={entry.id} style={styles.entryCard} onPress={() => void onPressEntry(entry)}>
                   <View style={styles.entryIconWrap}>{iconForKind(entry.kind)}</View>
 
                   <View style={styles.entryTextWrap}>
@@ -279,7 +355,7 @@ export default function NotificationsPage() {
                     <Text style={styles.entryBody}>{entry.body}</Text>
                     <Text style={styles.entryTime}>{entry.timestamp}</Text>
                   </View>
-                </View>
+                </Pressable>
               ))
             )}
           </ScrollView>

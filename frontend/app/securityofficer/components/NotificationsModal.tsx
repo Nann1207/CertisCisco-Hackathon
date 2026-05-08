@@ -9,6 +9,7 @@ type NotificationsModalProps = {
   notifications: NotificationItem[];
   onClose: () => void;
   onDelete: (id: string) => void;
+  onPressItem?: (item: NotificationItem) => void;
   onViewAll?: () => void;
 };
 
@@ -17,6 +18,7 @@ export default function NotificationsModal({
   notifications,
   onClose,
   onDelete,
+  onPressItem,
   onViewAll,
 }: NotificationsModalProps) {
   const activeNotifications = React.useMemo(() => {
@@ -56,7 +58,10 @@ export default function NotificationsModal({
                 <Text style={styles.notificationsEmptyText}>No notifications right now.</Text>
               }
               renderItem={({ item }) => (
-                <View style={styles.notificationItemCard}>
+                <Pressable
+                  style={styles.notificationItemCard}
+                  onPress={() => onPressItem?.(item)}
+                >
                   <View style={styles.notificationTextWrap}>
                     <Text style={styles.notificationItemTitle}>{item.title}</Text>
                     <Text style={styles.notificationItemBody}>{item.body}</Text>
@@ -65,7 +70,7 @@ export default function NotificationsModal({
                   <Pressable style={styles.notificationDeleteBtn} onPress={() => onDelete(item.id)}>
                     <X color="#B91C1C" size={12} strokeWidth={3} />
                   </Pressable>
-                </View>
+                </Pressable>
               )}
             />
 

@@ -18,6 +18,22 @@ export const styles = StyleSheet.create({
   welcomeText: { color: "#fff", fontSize: 20, fontWeight: "900", marginTop: 2 },
 
   headerIcons: { flexDirection: "row", gap: 14, marginTop: 6 },
+  headerIconWrap: { position: "relative" },
+  bellBadge: {
+    position: "absolute",
+    right: -6,
+    top: -6,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    backgroundColor: "#EF4444",
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.85)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bellBadgeText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900", lineHeight: 12 },
 
   quickRow: {
     flexDirection: "row",

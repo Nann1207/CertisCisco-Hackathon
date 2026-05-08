@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
-  Text as RNText,
   Image,
   ImageBackground,
   Pressable,
@@ -133,6 +132,7 @@ export default function Home() {
   const [authUserId, setAuthUserId] = useState<string | null>(null);
   const [dismissedMap, setDismissedMap] = useState<Record<string, string>>({});
   const [showServices, setShowServices] = useState(false);
+  const [bellCount, setBellCount] = useState(0);
 
   const NOTIF_DISMISS_PREFIX = "notifications_dismissed";
 
@@ -155,6 +155,83 @@ export default function Home() {
 
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!authUserId) return;
+
+    let alive = true;
+
+    const refreshBellCount = async () => {
+      try {
+        const [scheduledRaw, localInboxRaw] = await Promise.all([
+          AsyncStorage.getItem(`scheduled_local_notifications:${authUserId}`),
+          AsyncStorage.getItem(`local_inbox_notifications:${authUserId}`),
+        ]);
+
+        const scheduled = scheduledRaw ? JSON.parse(scheduledRaw) : {};
+        const localInbox = localInboxRaw ? JSON.parse(localInboxRaw) : [];
+
+        const nowMs = Date.now();
+
+        const scheduledItems: NotificationItem[] = Object.entries(scheduled ?? {})
+          .map(([key, value]: any) => {
+            const at = Number(value?.at);
+            if (!Number.isFinite(at)) return null;
+            const isDue = at <= nowMs;
+            const title = (value?.title ?? "Reminder").toString();
+            const bodyRaw = (value?.body ?? "").toString();
+            const body = at < nowMs ? `Overdue: ${bodyRaw}` : bodyRaw;
+            return {
+              id: `local:${key}`,
+              title,
+              body,
+              timestamp: new Date(at).toLocaleString(),
+              kind: isDue ? ("today" as any) : ("upcoming" as any),
+              priority: typeof value?.priority === "number" ? value.priority : 0,
+              time: typeof value?.time === "number" ? value.time : at,
+            } satisfies NotificationItem;
+          })
+          .filter(Boolean) as NotificationItem[];
+
+        const inboxItems: NotificationItem[] = (localInbox ?? [])
+          .map((it: any) => {
+            const at = Number(it?.at ?? it?.time ?? 0);
+            if (!Number.isFinite(at) || at <= 0) return null;
+            return {
+              id: `local_inbox:${String(it.id ?? at)}`,
+              title: String(it.title ?? "Notification"),
+              body: String(it.body ?? ""),
+              timestamp: new Date(at).toLocaleString(),
+              kind: (it.kind ?? "today") as any,
+              priority: typeof it.priority === "number" ? it.priority : 2,
+              time: typeof it.time === "number" ? it.time : at,
+            } satisfies NotificationItem;
+          })
+          .filter(Boolean) as NotificationItem[];
+
+        const combined = [...todayShifts, ...upcoming];
+        const uniqueShifts = Array.from(new Map(combined.map((s) => [s.id, s])).values());
+        const shiftEntries = generateShiftNotifications(uniqueShifts as any, new Date(), { includePast: false });
+
+        const dueScheduled = scheduledItems.filter((it) => (it.time ?? 0) <= nowMs);
+        const merged = [...dueScheduled, ...inboxItems, ...shiftEntries];
+        const unique = Array.from(new Map(merged.map((e) => [e.id, e])).values());
+        const unread = unique.filter((e) => !dismissedMap[e.id]).length;
+
+        if (alive) setBellCount(unread);
+      } catch {
+        if (alive) setBellCount(0);
+      }
+    };
+
+    void refreshBellCount();
+    const timer = setInterval(() => void refreshBellCount(), 60 * 1000);
+
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [authUserId, dismissedMap, todayShifts, upcoming]);
 
   useEffect(() => {
     if (!clockedInShiftId || !clockedInAt) return;
@@ -602,6 +679,40 @@ export default function Home() {
         visible={showNotifications}
         notifications={notificationsList}
         onClose={() => setShowNotifications(false)}
+        onPressItem={async (item) => {
+          if (!authUserId) return;
+          const id = item.id;
+          if (!id) return;
+
+          const nowISO = new Date().toISOString();
+          const key = `${NOTIF_DISMISS_PREFIX}:${authUserId}`;
+          const next = { ...(dismissedMap ?? {}), [id]: nowISO } as Record<string, string>;
+          try {
+            await AsyncStorage.setItem(key, JSON.stringify(next));
+          } catch (err) {
+            console.warn("Failed to persist dismissed notification", err);
+          }
+          setDismissedMap(next);
+          setNotificationsList((prev) => prev.map((n) => (n.id === id ? { ...n, dismissedAt: nowISO } : n)));
+
+          if (id.startsWith("local_inbox:payslip:")) {
+            const parts = id.split(":");
+            const payslipId = parts.length >= 4 ? parts[3] : "";
+            setShowNotifications(false);
+            if (payslipId) {
+              router.push({ pathname: "/securityofficer/payslip-details", params: { id: payslipId } });
+            } else {
+              router.push("/securityofficer/payslip");
+            }
+            return;
+          }
+
+          if (id.startsWith("local:shift:") || item.title.toLowerCase().includes("shift") || item.title.toLowerCase().includes("clock")) {
+            setShowNotifications(false);
+            router.push({ pathname: "/securityofficer/shift-notification", params: { message: item.body || "baaa" } });
+            return;
+          }
+        }}
         onDelete={async (id) => {
           // mark as dismissed with timestamp and persist
           if (!authUserId) {
@@ -639,7 +750,7 @@ export default function Home() {
             <View>
               <View style={{ flexDirection: "row", alignItems: "baseline" }}>
                 <Text style={styles.hiText}>Hi </Text>
-                <RNText style={styles.hiText}>{name}!</RNText>
+                <Text style={styles.hiText}>{name}!</Text>
               </View>
               <Text style={styles.welcomeText}>Welcome Back</Text>
             </View>
@@ -649,22 +760,93 @@ export default function Home() {
             <Pressable onPress={() => router.push("/securityofficer/translate")}>
               <Languages color="#fff" size={22} />
             </Pressable>
-            <Pressable
-              onPress={() => {
-                const combined = [...todayShifts, ...upcoming];
-                // dedupe shifts by id before generating notifications
-                const uniqueShifts = Array.from(new Map(combined.map((s) => [s.id, s])).values());
-                const entries = generateShiftNotifications(uniqueShifts as any, new Date(), { includePast: false });
-                const annotated = entries.map((entry) => ({
-                  ...entry,
-                  dismissedAt: dismissedMap[entry.id] ?? null,
-                }));
-                setNotificationsList(annotated);
-                setShowNotifications(true);
-              }}
-            >
-              <Bell color="#fff" size={22} />
-            </Pressable>
+            <View style={styles.headerIconWrap}>
+              <Pressable
+                onPress={async () => {
+                  const combined = [...todayShifts, ...upcoming];
+                  // dedupe shifts by id before generating notifications
+                  const uniqueShifts = Array.from(new Map(combined.map((s) => [s.id, s])).values());
+                  const entries = generateShiftNotifications(uniqueShifts as any, new Date(), { includePast: false });
+                  let scheduled: any = {};
+                  let localInbox: any[] = [];
+                  if (authUserId) {
+                    try {
+                      const raw = await AsyncStorage.getItem(`scheduled_local_notifications:${authUserId}`);
+                      scheduled = raw ? JSON.parse(raw) : {};
+                    } catch (e) {
+                      console.warn("Failed reading scheduled notifications:", e);
+                    }
+                    try {
+                      const raw = await AsyncStorage.getItem(`local_inbox_notifications:${authUserId}`);
+                      localInbox = raw ? JSON.parse(raw) : [];
+                    } catch (e) {
+                      console.warn("Failed reading local inbox notifications:", e);
+                    }
+                  }
+
+                  const nowMs = Date.now();
+                  const scheduledItems: NotificationItem[] = Object.entries(scheduled ?? {})
+                    .map(([key, value]: any) => {
+                      const at = Number(value?.at);
+                      if (!Number.isFinite(at)) return null;
+                      const isDue = at <= nowMs;
+                      const isOverdue = at < nowMs;
+                      const title = (value?.title ?? "Reminder").toString();
+                      const bodyRaw = (value?.body ?? "").toString();
+                      const body = isOverdue ? `Overdue: ${bodyRaw}` : bodyRaw;
+                      return {
+                        id: `local:${key}`,
+                        title,
+                        body,
+                        timestamp: new Date(at).toLocaleString(),
+                        kind: isDue ? ("today" as any) : ("upcoming" as any),
+                        priority: typeof value?.priority === "number" ? value.priority : 0,
+                        time: typeof value?.time === "number" ? value.time : at,
+                      } satisfies NotificationItem;
+                    })
+                    .filter(Boolean) as NotificationItem[];
+
+                  // bell modal: real-time only (show due/overdue reminders)
+                  const dueScheduled = scheduledItems
+                    .filter((it) => (it.time ?? 0) <= nowMs)
+                    .sort((a, b) => (b.time ?? 0) - (a.time ?? 0))
+                    .slice(0, 18);
+
+                  const inboxItems: NotificationItem[] = (localInbox ?? [])
+                    .map((it: any) => {
+                      const at = Number(it?.at ?? it?.time ?? 0);
+                      if (!Number.isFinite(at) || at <= 0) return null;
+                      return {
+                        id: `local_inbox:${String(it.id ?? at)}`,
+                        title: String(it.title ?? "Notification"),
+                        body: String(it.body ?? ""),
+                        timestamp: new Date(at).toLocaleString(),
+                        kind: (it.kind ?? "today") as any,
+                        priority: typeof it.priority === "number" ? it.priority : 2,
+                        time: typeof it.time === "number" ? it.time : at,
+                      } satisfies NotificationItem;
+                    })
+                    .filter(Boolean) as NotificationItem[];
+
+                  const merged = [...dueScheduled, ...inboxItems, ...entries];
+                  const annotated = merged.map((entry) => ({
+                    ...entry,
+                    dismissedAt: dismissedMap[entry.id] ?? null,
+                  }));
+                  setNotificationsList(
+                    annotated.sort((a, b) => (a.time ?? 0) - (b.time ?? 0))
+                  );
+                  setShowNotifications(true);
+                }}
+              >
+                <Bell color="#fff" size={22} />
+              </Pressable>
+              {bellCount > 0 ? (
+                <View style={styles.bellBadge}>
+                  <Text style={styles.bellBadgeText}>{bellCount > 99 ? "99+" : String(bellCount)}</Text>
+                </View>
+              ) : null}
+            </View>
             <Pressable onPress={() => router.push("/securityofficer/settings")}>
               <Settings color="#fff" size={22} />
             </Pressable>
@@ -689,9 +871,9 @@ export default function Home() {
               <Text style={[styles.cardTitle, { fontSize: calendarDateFontSize }]}>{todayDateText}</Text>
               <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
                 <Text style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>Location: </Text>
-                <RNText style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>
+                <Text style={[styles.todayShiftLocation, { fontSize: calendarLocationFontSize }]}>
                   {todayShift.location ?? "-"}
-                </RNText>
+                </Text>
               </View>
             </View>
             {isClockedInForTodayShift ? (

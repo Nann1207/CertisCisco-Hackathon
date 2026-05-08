@@ -9,9 +9,10 @@ const SHIFT_CHANNEL_ID = "shift-reminders";
 const PAYSLIP_CHANNEL_ID = "payslips";
 const INBOX_CHANNEL_ID = "inbox-email";
 
-const SHIFT_CLOCKIN_MINUTES_BEFORE = 10;
-const SHIFT_CLOCKOUT_MINUTES_BEFORE = 10;
-const SHIFT_REPORT_MINUTES_BEFORE = 5;
+const SHIFT_CLOCKIN_REMINDER_MINUTES = [10, 5, 1] as const;
+const SHIFT_CLOCKOUT_REMINDER_MINUTES = [10, 5, 1] as const;
+const SHIFT_CLOCKIN_POST_MINUTES = [1, 5, 10] as const;
+const SHIFT_CLOCKOUT_POST_MINUTES = [1, 5, 10] as const;
 const UPCOMING_SHIFT_LOOKAHEAD_DAYS = 7;
 
 type ShiftRow = {
@@ -45,18 +46,43 @@ type ScheduledMap = Record<
   {
     id: string;
     at: number;
+    title?: string;
+    body?: string;
+    kind?: "upcoming" | "today" | "past";
+    priority?: number;
+    time?: number;
   }
 >;
 
 const storageKey = (userId: string) => `scheduled_local_notifications:${userId}`;
-const lastPayslipKey = (userId: string) => `last_payslip_notified:${userId}`;
+const lastPayslipPeriodKey = (userId: string) => `last_payslip_period_notified:${userId}`;
+const localInboxKey = (userId: string) => `local_inbox_notifications:${userId}`;
 
 const minutesBefore = (iso: string, minutes: number) => new Date(new Date(iso).getTime() - minutes * 60 * 1000);
+const minutesAfter = (iso: string, minutes: number) => new Date(new Date(iso).getTime() + minutes * 60 * 1000);
+
+const makeDateTrigger = (date: Date, channelId?: string) =>
+  Platform.OS === "android"
+    ? ({ type: Notifications.SchedulableTriggerInputTypes.DATE, date, channelId } as const)
+    : ({ type: Notifications.SchedulableTriggerInputTypes.DATE, date } as const);
+
+const makeImmediateTrigger = (channelId?: string) =>
+  Platform.OS === "android"
+    ? ({ type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 1, repeats: false, channelId } as const)
+    : ({ type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 1, repeats: false } as const);
 
 const formatMonthLabel = (startDate: string) => {
   const date = new Date(startDate);
   if (Number.isNaN(date.getTime())) return startDate;
   return date.toLocaleString(undefined, { month: "long", year: "numeric" });
+};
+
+const payslipPeriodKey = (startDate: string) => {
+  const date = new Date(startDate);
+  if (Number.isNaN(date.getTime())) return startDate;
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
 };
 
 const ensureChannels = async () => {
@@ -67,6 +93,7 @@ const ensureChannels = async () => {
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
     lightColor: "#1E64A6",
+    sound: "default",
   });
 
   await Notifications.setNotificationChannelAsync(PAYSLIP_CHANNEL_ID, {
@@ -74,6 +101,7 @@ const ensureChannels = async () => {
     importance: Notifications.AndroidImportance.DEFAULT,
     vibrationPattern: [0, 200, 100, 200],
     lightColor: "#1E64A6",
+    sound: "default",
   });
 
   await Notifications.setNotificationChannelAsync(INBOX_CHANNEL_ID, {
@@ -81,6 +109,7 @@ const ensureChannels = async () => {
     importance: Notifications.AndroidImportance.DEFAULT,
     vibrationPattern: [0, 150, 75, 150],
     lightColor: "#0F2C59",
+    sound: "default",
   });
 };
 
@@ -117,6 +146,31 @@ async function cancelAllScheduled(userId: string) {
     })
   );
   await writeScheduled(userId, {});
+}
+
+type LocalInboxItem = {
+  id: string;
+  title: string;
+  body: string;
+  at: number;
+  kind: "today" | "upcoming" | "past";
+  priority: number;
+  time: number;
+};
+
+async function upsertLocalInbox(userId: string, item: LocalInboxItem) {
+  try {
+    const raw = await AsyncStorage.getItem(localInboxKey(userId));
+    const list = (raw ? (JSON.parse(raw) as LocalInboxItem[]) : []).filter(Boolean);
+    const map = new Map<string, LocalInboxItem>(list.map((it) => [it.id, it]));
+    map.set(item.id, item);
+    const next = Array.from(map.values())
+      .sort((a, b) => (b.time ?? 0) - (a.time ?? 0))
+      .slice(0, 50);
+    await AsyncStorage.setItem(localInboxKey(userId), JSON.stringify(next));
+  } catch (e) {
+    console.warn("Failed persisting local inbox notification:", e);
+  }
 }
 
 export default function SystemNotificationListener() {
@@ -182,55 +236,102 @@ export default function SystemNotificationListener() {
       for (const shift of shifts) {
         const loc = shift.location?.trim() ? ` at ${shift.location.trim()}` : "";
 
-        const clockInAt = minutesBefore(shift.shift_start, SHIFT_CLOCKIN_MINUTES_BEFORE);
-        if (!shift.clockin_time && clockInAt.getTime() > nowMs) {
-          const identifier = await Notifications.scheduleNotificationAsync({
-            content: {
-              title: "Shift Reminder",
-              body: `Clock in in ${SHIFT_CLOCKIN_MINUTES_BEFORE} min${loc}.`,
-              data: { kind: "shift_clockin", shiftId: shift.shift_id },
-              interruptionLevel: "timeSensitive",
-            },
-            trigger:
-              Platform.OS === "android"
-                ? { channelId: SHIFT_CHANNEL_ID, date: clockInAt }
-                : { date: clockInAt },
-          });
-          nextMap[`shift:${shift.shift_id}:clockin`] = { id: identifier, at: clockInAt.getTime() };
+        for (const minutes of SHIFT_CLOCKIN_REMINDER_MINUTES) {
+          const clockInAt = minutesBefore(shift.shift_start, minutes);
+          if (!shift.clockin_time && clockInAt.getTime() > nowMs) {
+            const title = "Shift Reminder";
+            const body = `Shift starting in ${minutes} min${loc}. Remember to clock in on time!`;
+            const identifier = await Notifications.scheduleNotificationAsync({
+              content: {
+                title,
+                body,
+                data: { kind: "shift_clockin", shiftId: shift.shift_id, minutesBefore: minutes },
+                interruptionLevel: "timeSensitive",
+                sound: "default",
+              },
+              trigger: makeDateTrigger(clockInAt, SHIFT_CHANNEL_ID),
+            });
+            nextMap[`shift:${shift.shift_id}:clockin:${minutes}`] = { id: identifier, at: clockInAt.getTime() };
+            nextMap[`shift:${shift.shift_id}:clockin:${minutes}`].title = title;
+            nextMap[`shift:${shift.shift_id}:clockin:${minutes}`].body = body;
+            nextMap[`shift:${shift.shift_id}:clockin:${minutes}`].kind = "upcoming";
+            nextMap[`shift:${shift.shift_id}:clockin:${minutes}`].priority = 0;
+            nextMap[`shift:${shift.shift_id}:clockin:${minutes}`].time = clockInAt.getTime();
+          }
         }
 
-        const clockOutAt = minutesBefore(shift.shift_end, SHIFT_CLOCKOUT_MINUTES_BEFORE);
-        if (!shift.clockout_time && clockOutAt.getTime() > nowMs) {
-          const identifier = await Notifications.scheduleNotificationAsync({
-            content: {
-              title: "Shift Reminder",
-              body: `Clock out in ${SHIFT_CLOCKOUT_MINUTES_BEFORE} min${loc}.`,
-              data: { kind: "shift_clockout", shiftId: shift.shift_id },
-              interruptionLevel: "timeSensitive",
-            },
-            trigger:
-              Platform.OS === "android"
-                ? { channelId: SHIFT_CHANNEL_ID, date: clockOutAt }
-                : { date: clockOutAt },
-          });
-          nextMap[`shift:${shift.shift_id}:clockout`] = { id: identifier, at: clockOutAt.getTime() };
+        for (const minutes of SHIFT_CLOCKIN_POST_MINUTES) {
+          const clockInAt = minutesAfter(shift.shift_start, minutes);
+          if (!shift.clockin_time && clockInAt.getTime() > nowMs) {
+            const title = "Clock In Reminder";
+            const body = `You are ${minutes} min past shift start${loc}. Please clock in now.`;
+            const identifier = await Notifications.scheduleNotificationAsync({
+              content: {
+                title,
+                body,
+                data: { kind: "shift_clockin_late", shiftId: shift.shift_id, minutesAfter: minutes },
+                interruptionLevel: "timeSensitive",
+                sound: "default",
+              },
+              trigger: makeDateTrigger(clockInAt, SHIFT_CHANNEL_ID),
+            });
+            const k = `shift:${shift.shift_id}:clockin_post:${minutes}`;
+            nextMap[k] = { id: identifier, at: clockInAt.getTime(), title, body, kind: "today", priority: 0, time: clockInAt.getTime() };
+          }
         }
 
-        const reportAt = minutesBefore(shift.shift_end, SHIFT_REPORT_MINUTES_BEFORE);
-        if (!shift.completion_status && reportAt.getTime() > nowMs) {
-          const identifier = await Notifications.scheduleNotificationAsync({
-            content: {
-              title: "End-of-Shift Report",
-              body: `Submit your report before ending your shift${loc}.`,
-              data: { kind: "shift_report", shiftId: shift.shift_id },
-              interruptionLevel: "timeSensitive",
-            },
-            trigger:
-              Platform.OS === "android"
-                ? { channelId: SHIFT_CHANNEL_ID, date: reportAt }
-                : { date: reportAt },
-          });
-          nextMap[`shift:${shift.shift_id}:report`] = { id: identifier, at: reportAt.getTime() };
+        for (const minutes of SHIFT_CLOCKOUT_REMINDER_MINUTES) {
+          const clockOutAt = minutesBefore(shift.shift_end, minutes);
+          if (!shift.clockout_time && clockOutAt.getTime() > nowMs) {
+            const needsReport = !shift.completion_status;
+            const title = "Shift Reminder";
+            const body = needsReport
+              ? `Shift ending in ${minutes} min${loc}. Please remember to clock out and submit your end-of-shift report before ending your shift.`
+              : `Shift ending in ${minutes} min${loc}. Please remember to clock out.`;
+            const identifier = await Notifications.scheduleNotificationAsync({
+              content: {
+                title,
+                body,
+                data: {
+                  kind: needsReport ? "shift_clockout_report" : "shift_clockout",
+                  shiftId: shift.shift_id,
+                  minutesBefore: minutes,
+                },
+                interruptionLevel: "timeSensitive",
+                sound: "default",
+              },
+              trigger: makeDateTrigger(clockOutAt, SHIFT_CHANNEL_ID),
+            });
+            nextMap[`shift:${shift.shift_id}:clockout:${minutes}`] = { id: identifier, at: clockOutAt.getTime() };
+            nextMap[`shift:${shift.shift_id}:clockout:${minutes}`].title = title;
+            nextMap[`shift:${shift.shift_id}:clockout:${minutes}`].body = body;
+            nextMap[`shift:${shift.shift_id}:clockout:${minutes}`].kind = "upcoming";
+            nextMap[`shift:${shift.shift_id}:clockout:${minutes}`].priority = 0;
+            nextMap[`shift:${shift.shift_id}:clockout:${minutes}`].time = clockOutAt.getTime();
+          }
+        }
+
+        for (const minutes of SHIFT_CLOCKOUT_POST_MINUTES) {
+          const clockOutAt = minutesAfter(shift.shift_end, minutes);
+          if (!shift.clockout_time && clockOutAt.getTime() > nowMs) {
+            const needsReport = !shift.completion_status;
+            const title = "Clock Out Reminder";
+            const body = needsReport
+              ? `You are ${minutes} min past shift end${loc}. Please submit your end-of-shift report and clock out now.`
+              : `You are ${minutes} min past shift end${loc}. Please clock out now.`;
+            const identifier = await Notifications.scheduleNotificationAsync({
+              content: {
+                title,
+                body,
+                data: { kind: needsReport ? "shift_clockout_report_late" : "shift_clockout_late", shiftId: shift.shift_id, minutesAfter: minutes },
+                interruptionLevel: "timeSensitive",
+                sound: "default",
+              },
+              trigger: makeDateTrigger(clockOutAt, SHIFT_CHANNEL_ID),
+            });
+            const k = `shift:${shift.shift_id}:clockout_post:${minutes}`;
+            nextMap[k] = { id: identifier, at: clockOutAt.getTime(), title, body, kind: "today", priority: 0, time: clockOutAt.getTime() };
+          }
         }
       }
 
@@ -276,19 +377,30 @@ export default function SystemNotificationListener() {
 
       if (error || !data?.id) return;
 
-      const lastNotified = await AsyncStorage.getItem(lastPayslipKey(userId));
-      if (lastNotified === data.id) return;
+      const period = payslipPeriodKey(data.pay_period_start);
+      const lastNotifiedPeriod = await AsyncStorage.getItem(lastPayslipPeriodKey(userId));
+      if (lastNotifiedPeriod === period) return;
 
       await Notifications.scheduleNotificationAsync({
         content: {
           title: "Payslip available",
           body: `Your payslip for ${formatMonthLabel(data.pay_period_start)} is ready.`,
           data: { kind: "payslip", payslipId: data.id },
+          sound: "default",
         },
-        trigger: Platform.OS === "android" ? { channelId: PAYSLIP_CHANNEL_ID, seconds: 1 } : null,
+        trigger: makeImmediateTrigger(PAYSLIP_CHANNEL_ID),
       });
 
-      await AsyncStorage.setItem(lastPayslipKey(userId), data.id);
+      await AsyncStorage.setItem(lastPayslipPeriodKey(userId), period);
+      await upsertLocalInbox(userId, {
+        id: `payslip:${period}:${data.id}`,
+        title: "Payslip available",
+        body: `Your payslip for ${formatMonthLabel(data.pay_period_start)} is ready.`,
+        at: Date.now(),
+        kind: "today",
+        priority: 2,
+        time: Date.now(),
+      });
     };
 
     notifyLatestPayslipIfNeeded().catch((e) => console.error("Payslip notify check error:", e));
@@ -306,15 +418,28 @@ export default function SystemNotificationListener() {
         async (payload) => {
           if (!hasPermissionRef.current) return;
           const slip = payload.new as PayslipRow;
+          const period = payslipPeriodKey(slip.pay_period_start);
+          const lastNotifiedPeriod = await AsyncStorage.getItem(lastPayslipPeriodKey(userId));
+          if (lastNotifiedPeriod === period) return;
           await Notifications.scheduleNotificationAsync({
             content: {
               title: "Payslip available",
               body: `Your payslip for ${formatMonthLabel(slip.pay_period_start)} is ready.`,
               data: { kind: "payslip", payslipId: slip.id },
+              sound: "default",
             },
-            trigger: Platform.OS === "android" ? { channelId: PAYSLIP_CHANNEL_ID, seconds: 1 } : null,
+            trigger: makeImmediateTrigger(PAYSLIP_CHANNEL_ID),
           });
-          await AsyncStorage.setItem(lastPayslipKey(userId), slip.id);
+          await AsyncStorage.setItem(lastPayslipPeriodKey(userId), period);
+          await upsertLocalInbox(userId, {
+            id: `payslip:${period}:${slip.id}`,
+            title: "Payslip available",
+            body: `Your payslip for ${formatMonthLabel(slip.pay_period_start)} is ready.`,
+            at: Date.now(),
+            kind: "today",
+            priority: 2,
+            time: Date.now(),
+          });
         }
       )
       .subscribe();
@@ -348,8 +473,9 @@ export default function SystemNotificationListener() {
               title: `New email from ${sender}`,
               body: subject,
               data: { kind: "inbox_email", emailId: email.id },
+              sound: "default",
             },
-            trigger: Platform.OS === "android" ? { channelId: INBOX_CHANNEL_ID, seconds: 1 } : null,
+            trigger: makeImmediateTrigger(INBOX_CHANNEL_ID),
           });
         }
       )
