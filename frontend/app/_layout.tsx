@@ -9,6 +9,7 @@ import {
   setLanguagePreference,
 } from "../lib/language-preferences";
 import ChatNotificationListener from "../components/ChatNotificationListener";
+import SystemNotificationListener from "../components/SystemNotificationListener";
 import AssignmentRejectionAlertModal from "./sso/components/AssignmentRejectionAlertModal";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -156,6 +157,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ChatNotificationListener />
+      <SystemNotificationListener />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />

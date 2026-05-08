@@ -18,6 +18,7 @@ import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { useVideoPlayer, VideoView } from "expo-video";
 import DateTimePicker from "@react-native-community/datetimepicker";
 
@@ -29,6 +30,71 @@ type PickedDocument = {
   mimeType: string | null;
   size: number | null;
   kind: "file" | "photo" | "video";
+};
+
+const getUploadContentType = (doc: PickedDocument) => {
+  if (doc.mimeType) return doc.mimeType;
+  if (doc.kind === "photo") return "image/jpeg";
+  if (doc.kind === "video") return "video/mp4";
+  const lower = doc.name.toLowerCase();
+  if (/\.(png)$/.test(lower)) return "image/png";
+  if (/\.(jpg|jpeg)$/.test(lower)) return "image/jpeg";
+  if (/\.(gif)$/.test(lower)) return "image/gif";
+  if (/\.(webp)$/.test(lower)) return "image/webp";
+  if (/\.(heic)$/.test(lower)) return "image/heic";
+  if (/\.(mp4)$/.test(lower)) return "video/mp4";
+  if (/\.(mov)$/.test(lower)) return "video/quicktime";
+  if (/\.(m4v)$/.test(lower)) return "video/x-m4v";
+  if (/\.(webm)$/.test(lower)) return "video/webm";
+  return "application/octet-stream";
+};
+
+const base64ToUint8Array = (base64: string) => {
+  const clean = base64.replace(/[\r\n\s]/g, "");
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const lookup = new Uint8Array(256);
+  for (let i = 0; i < chars.length; i++) lookup[chars.charCodeAt(i)] = i;
+
+  const len = clean.length;
+  if (len === 0) return new Uint8Array(0);
+
+  const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0;
+  const outLen = Math.floor((len * 3) / 4) - padding;
+  const out = new Uint8Array(outLen);
+
+  let outIndex = 0;
+  for (let i = 0; i < len; i += 4) {
+    const a = lookup[clean.charCodeAt(i)];
+    const b = lookup[clean.charCodeAt(i + 1)];
+    const c = lookup[clean.charCodeAt(i + 2)];
+    const d = lookup[clean.charCodeAt(i + 3)];
+    const triple = (a << 18) | (b << 12) | (c << 6) | d;
+    if (outIndex < outLen) out[outIndex++] = (triple >> 16) & 0xff;
+    if (outIndex < outLen) out[outIndex++] = (triple >> 8) & 0xff;
+    if (outIndex < outLen) out[outIndex++] = triple & 0xff;
+  }
+
+  return out;
+};
+
+const readUploadBody = async (uri: string): Promise<ArrayBuffer> => {
+  try {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    if (blob.size > 0 && typeof (blob as any).arrayBuffer === "function") {
+      const buf = await (blob as any).arrayBuffer();
+      if (buf && (buf as ArrayBuffer).byteLength > 0) return buf as ArrayBuffer;
+    }
+  } catch {
+    // fall through
+  }
+
+  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" as any });
+  const bytes = base64ToUint8Array(base64);
+  if (bytes.length === 0) {
+    throw new Error("Selected file is empty or could not be read.");
+  }
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 };
 
 const HARASSMENT_TYPES = [
@@ -209,19 +275,51 @@ export default function HarassmentReportScreen() {
         const uniquePrefix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const storagePath = `${reporterId}/${reportId}/${uniquePrefix}-${safeFileName}`;
 
-        const response = await fetch(doc.uri);
-        const blob = await response.blob();
+        let body: ArrayBuffer;
+        try {
+          body = await readUploadBody(doc.uri);
+        } catch (e: any) {
+          setSubmitting(false);
+          Alert.alert("Upload failed", e?.message ?? "Unable to read the selected file.");
+          return;
+        }
 
         const { error: uploadError } = await supabase.storage
           .from("harassment-supporting-documents")
-          .upload(storagePath, blob as any, {
-            contentType: doc.mimeType ?? "application/octet-stream",
+          .upload(storagePath, body as any, {
+            contentType: getUploadContentType(doc),
             upsert: false,
           });
 
         if (uploadError) {
           setSubmitting(false);
           Alert.alert("Upload failed", uploadError.message);
+          return;
+        }
+
+        const { data: verifyData, error: verifyError } = await supabase.storage
+          .from("harassment-supporting-documents")
+          .createSignedUrl(storagePath, 60);
+        if (verifyError || !verifyData?.signedUrl) {
+          setSubmitting(false);
+          Alert.alert("Upload failed", verifyError?.message ?? "Unable to verify uploaded file.");
+          return;
+        }
+
+        try {
+          const verifyUri = `${FileSystem.cacheDirectory ?? ""}harassment-upload-verify-${Date.now()}-${safeFileName}`;
+          if (!verifyUri) throw new Error("Missing cache directory.");
+          const verifyResult: any = await FileSystem.downloadAsync(encodeURI(verifyData.signedUrl), verifyUri);
+          if (typeof verifyResult?.status === "number" && verifyResult.status !== 200) {
+            throw new Error(`Download returned HTTP ${verifyResult.status}.`);
+          }
+          const verifyInfo = await FileSystem.getInfoAsync(verifyUri);
+          if (!verifyInfo.exists || (typeof (verifyInfo as any).size === "number" && (verifyInfo as any).size <= 0)) {
+            throw new Error("Uploaded file is empty after upload.");
+          }
+        } catch (e: any) {
+          setSubmitting(false);
+          Alert.alert("Upload failed", e?.message ?? "Unable to verify uploaded file.");
           return;
         }
 

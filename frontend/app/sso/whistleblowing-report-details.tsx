@@ -13,7 +13,7 @@ import {
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ChevronLeft, FileText, RefreshCw, Send, X } from "lucide-react-native";
+import { ChevronLeft, FileText, Send, X } from "lucide-react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
@@ -28,12 +28,11 @@ type ReportRow = {
   report_code: string | null;
   status: ReportStatus | null;
   incident_date: string | null;
-  harassment_type: string | null;
-  harassment_type_other: string | null;
-  persons_involved: string | null;
-  incident_description: string | null;
-  witness_status: string | null;
-  witness_name: string | null;
+  category: string | null;
+  category_other: string | null;
+  department_of_people_involved: string | null;
+  details_of_concern: string | null;
+  evidence_status: string | null;
 };
 
 type MessageRow = {
@@ -69,7 +68,7 @@ const normalizeStoragePath = (rawPath: string) => {
   if (!trimmed) return trimmed;
 
   let path = trimmed.replace(/^\/+/, "");
-  const bucketPrefix = "harassment-supporting-documents/";
+  const bucketPrefix = "whistleblowing-supporting-documents/";
   if (path.startsWith(bucketPrefix)) {
     path = path.slice(bucketPrefix.length);
   }
@@ -81,8 +80,11 @@ const buildAttachmentCacheUri = (attachmentId: string, fileName: string) => {
   if (!cacheRoot) return null;
 
   const safeName = fileName.replace(/[^\w.\- ()\[\]]+/g, "_").trim() || "attachment";
-  return `${cacheRoot}harassment-attachment-${attachmentId}-${safeName}`;
+  return `${cacheRoot}whistleblowing-attachment-${attachmentId}-${safeName}`;
 };
+
+const toSignedRequestUrl = (signedUrl: string) =>
+  signedUrl.replace(/\[/g, "%5B").replace(/\]/g, "%5D").replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/ /g, "%20");
 
 const cacheImageAttachment = async (attachmentId: string, fileName: string, signedUrl: string) => {
   const cacheUri = buildAttachmentCacheUri(attachmentId, fileName);
@@ -94,7 +96,7 @@ const cacheImageAttachment = async (attachmentId: string, fileName: string, sign
       return cachedInfo.uri;
     }
 
-    const downloadResult: any = await FileSystem.downloadAsync(encodeURI(signedUrl), cacheUri);
+    const downloadResult: any = await FileSystem.downloadAsync(toSignedRequestUrl(signedUrl), cacheUri);
     if (typeof downloadResult?.status === "number" && downloadResult.status !== 200) {
       return null;
     }
@@ -127,7 +129,7 @@ const formatStatusLabel = (status: ReportStatus | null) => {
   }
 };
 
-export default function HarassmentReportDetailsScreen() {
+export default function WhistleblowingReportDetailsScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id?: string }>();
 
@@ -175,9 +177,9 @@ export default function HarassmentReportDetailsScreen() {
     }
 
     const { data: reportRow, error: reportError } = await supabase
-      .from("harassment_reports")
+      .from("whistleblowing_reports")
       .select(
-        "id, created_at, report_code, status, incident_date, harassment_type, harassment_type_other, persons_involved, incident_description, witness_status, witness_name"
+        "id, created_at, report_code, status, incident_date, category, category_other, department_of_people_involved, details_of_concern, evidence_status"
       )
       .eq("id", reportId)
       .maybeSingle();
@@ -190,7 +192,7 @@ export default function HarassmentReportDetailsScreen() {
     setReport((reportRow as ReportRow | null) ?? null);
 
     const { data: messageRows, error: messageError } = await supabase
-      .from("harassment_report_messages")
+      .from("whistleblowing_report_messages")
       .select("id, created_at, sender_role, message")
       .eq("report_id", reportId)
       .order("created_at", { ascending: true });
@@ -203,7 +205,7 @@ export default function HarassmentReportDetailsScreen() {
     setMessages(((messageRows as MessageRow[] | null) ?? []).filter(Boolean));
 
     const { data: attachmentRows, error: attachmentError } = await supabase
-      .from("harassment_report_documents")
+      .from("whistleblowing_report_documents")
       .select("id, created_at, file_path, file_name, content_type, file_size")
       .eq("report_id", reportId)
       .order("created_at", { ascending: false });
@@ -222,7 +224,7 @@ export default function HarassmentReportDetailsScreen() {
     const signedResults = await Promise.all(
       rawAttachments.map(async (row) => {
         const { data, error } = await supabase.storage
-          .from("harassment-supporting-documents")
+          .from("whistleblowing-supporting-documents")
           .createSignedUrl(normalizeStoragePath(row.file_path), 60 * 60);
         if (error || !data?.signedUrl) return null;
         return { ...row, signed_url: data.signedUrl, cached_uri: null } as AttachmentRow;
@@ -242,6 +244,30 @@ export default function HarassmentReportDetailsScreen() {
 
     setAttachments(hydratedAttachments as AttachmentRow[]);
   }, [canLoad, reportId]);
+
+  useEffect(() => {
+    if (previewTimeoutRef.current) {
+      clearTimeout(previewTimeoutRef.current);
+      previewTimeoutRef.current = null;
+    }
+
+    setPreviewError(null);
+    setPreviewLoading(false);
+
+    if (previewing && getAttachmentKind(previewing.content_type, previewing.file_name) === "image") {
+      previewTimeoutRef.current = setTimeout(() => {
+        setPreviewLoading(false);
+        setPreviewError("Preview is taking too long to load. Tap Open to view it externally.");
+      }, 8000);
+    }
+
+    return () => {
+      if (previewTimeoutRef.current) {
+        clearTimeout(previewTimeoutRef.current);
+        previewTimeoutRef.current = null;
+      }
+    };
+  }, [previewing]);
 
   useEffect(() => {
     let alive = true;
@@ -266,30 +292,6 @@ export default function HarassmentReportDetailsScreen() {
     setRefreshing(false);
   }, [load]);
 
-  useEffect(() => {
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current);
-      previewTimeoutRef.current = null;
-    }
-
-    setPreviewError(null);
-    setPreviewLoading(Boolean(previewing));
-
-    if (previewing && getAttachmentKind(previewing.content_type, previewing.file_name) === "image") {
-      previewTimeoutRef.current = setTimeout(() => {
-        setPreviewLoading(false);
-        setPreviewError("Preview is taking too long to load. Tap Open to view it externally.");
-      }, 8000);
-    }
-
-    return () => {
-      if (previewTimeoutRef.current) {
-        clearTimeout(previewTimeoutRef.current);
-        previewTimeoutRef.current = null;
-      }
-    };
-  }, [previewing]);
-
   const sendMessage = async () => {
     if (!trimmedMessage) return;
     if (!canLoad) return;
@@ -303,7 +305,7 @@ export default function HarassmentReportDetailsScreen() {
 
     setSending(true);
 
-    const { error } = await supabase.from("harassment_report_messages").insert({
+    const { error } = await supabase.from("whistleblowing_report_messages").insert({
       report_id: reportId,
       sender_id: userId,
       sender_role: "reporter",
@@ -345,18 +347,7 @@ export default function HarassmentReportDetailsScreen() {
           <ChevronLeft size={22} color="#0F172A" />
         </Pressable>
         <Text style={styles.headerTitle}>Report Details</Text>
-        <Pressable
-          onPress={() => void onRefresh()}
-          disabled={loading || refreshing}
-          style={styles.headerRightBtn}
-          hitSlop={10}
-        >
-          {loading || refreshing ? (
-            <ActivityIndicator />
-          ) : (
-            <RefreshCw size={18} color="#0F172A" />
-          )}
-        </Pressable>
+        <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView
@@ -372,23 +363,17 @@ export default function HarassmentReportDetailsScreen() {
           <>
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Report</Text>
-              <Text style={styles.meta}>
-                Report ID: {report?.report_code ?? report?.id ?? "-"}
-              </Text>
+              <Text style={styles.meta}>Report ID: {report?.report_code ?? report?.id ?? "-"}</Text>
               <Text style={styles.meta}>Status: {formatStatusLabel(report?.status ?? "submitted")}</Text>
               <Text style={styles.meta}>Incident Date: {report?.incident_date ?? "-"}</Text>
               <Text style={styles.meta}>
-                Type:{" "}
-                {report?.harassment_type === "Other"
-                  ? `Other (${report?.harassment_type_other ?? "-"})`
-                  : report?.harassment_type ?? "-"}
+                Category: {report?.category === "Other" ? `Other (${report?.category_other ?? "-"})` : report?.category ?? "-"}
               </Text>
-              <Text style={styles.meta}>Persons Involved: {report?.persons_involved ?? "-"}</Text>
+              <Text style={styles.meta}>Department: {report?.department_of_people_involved ?? "-"}</Text>
+              <Text style={styles.meta}>Evidence: {report?.evidence_status ?? "-"}</Text>
               <Text style={styles.meta}>Submitted At: {formatDateTime(report?.created_at ?? null) || "-"}</Text>
-              <Text style={styles.meta}>Witnesses: {report?.witness_status ?? "-"}</Text>
-              {report?.witness_name ? <Text style={styles.meta}>Witness Name: {report.witness_name}</Text> : null}
-              <Text style={styles.metaBold}>Description</Text>
-              <Text style={styles.bodyText}>{report?.incident_description ?? "-"}</Text>
+              <Text style={styles.metaBold}>Details</Text>
+              <Text style={styles.bodyText}>{report?.details_of_concern ?? "-"}</Text>
             </View>
 
             <Text style={styles.sectionTitle}>Attachments</Text>
@@ -399,30 +384,16 @@ export default function HarassmentReportDetailsScreen() {
                 attachments.map((att) => {
                   const kind = getAttachmentKind(att.content_type, att.file_name);
                   return (
-                    <Pressable
-                      key={att.id}
-                      style={styles.attachmentRow}
-                      onPress={() => {
-                        if (kind === "file") {
-                          void WebBrowser.openBrowserAsync(att.signed_url);
-                          return;
-                        }
-                        setPreviewing(att);
-                      }}
-                    >
-                      {kind === "image" ? (
-                        <Image source={{ uri: att.cached_uri ?? att.signed_url }} style={styles.attachmentThumb} />
-                      ) : (
-                        <View style={styles.attachmentThumbPlaceholder}>
-                          <FileText size={18} color="#088EAB" />
-                        </View>
-                      )}
+                    <Pressable key={att.id} style={styles.attachmentRow} onPress={() => setPreviewing(att)}>
+                      <View style={styles.attachmentIcon}>
+                        <FileText size={18} color="#088EAB" />
+                      </View>
                       <View style={styles.attachmentTextCol}>
                         <Text style={styles.attachmentName} numberOfLines={1}>
                           {att.file_name}
                         </Text>
                         <Text style={styles.attachmentMeta} numberOfLines={1}>
-                          {kind.toUpperCase()} • {formatDateTime(att.created_at)}
+                          {kind.toUpperCase()} • {formatDateTime(att.created_at) || "-"}
                         </Text>
                       </View>
                     </Pressable>
@@ -474,7 +445,7 @@ export default function HarassmentReportDetailsScreen() {
               <Text style={styles.previewTitle}>Attachment</Text>
               <View style={styles.previewHeaderRight}>
                 {previewing ? (
-                  <Pressable onPress={() => void WebBrowser.openBrowserAsync(encodeURI(previewing.signed_url))} hitSlop={10}>
+                  <Pressable onPress={() => void WebBrowser.openBrowserAsync(toSignedRequestUrl(previewing.signed_url))} hitSlop={10}>
                     <Text style={styles.openText}>Open</Text>
                   </Pressable>
                 ) : null}
@@ -488,12 +459,19 @@ export default function HarassmentReportDetailsScreen() {
               getAttachmentKind(previewing.content_type, previewing.file_name) === "image" ? (
                 <View style={styles.previewMediaWrap}>
                   <Image
-                    source={{ uri: previewing.cached_uri ?? encodeURI(previewing.signed_url) }}
+                    source={{ uri: previewing.cached_uri ?? toSignedRequestUrl(previewing.signed_url) }}
                     style={styles.imagePreview}
                     resizeMode="contain"
                     onLoadStart={() => {
                       setPreviewError(null);
                       setPreviewLoading(true);
+                    }}
+                    onLoad={() => {
+                      if (previewTimeoutRef.current) {
+                        clearTimeout(previewTimeoutRef.current);
+                        previewTimeoutRef.current = null;
+                      }
+                      setPreviewLoading(false);
                     }}
                     onLoadEnd={() => {
                       if (previewTimeoutRef.current) {
@@ -516,10 +494,11 @@ export default function HarassmentReportDetailsScreen() {
                       <ActivityIndicator color="#FFFFFF" />
                     </View>
                   ) : null}
+                  {previewError ? <Text style={styles.previewError}>{previewError}</Text> : null}
                 </View>
               ) : getAttachmentKind(previewing.content_type, previewing.file_name) === "video" ? (
                 <View style={styles.previewMediaWrap}>
-                  <VideoPlayerBox uri={encodeURI(previewing.signed_url)} />
+                  <VideoPlayerBox uri={toSignedRequestUrl(previewing.signed_url)} />
                 </View>
               ) : (
                 <View style={styles.filePreview}>
@@ -529,8 +508,6 @@ export default function HarassmentReportDetailsScreen() {
                 </View>
               )
             ) : null}
-
-            {previewError ? <Text style={styles.previewError}>{previewError}</Text> : null}
           </View>
         </View>
       </Modal>
@@ -553,7 +530,6 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, alignItems: "flex-start", justifyContent: "center" },
   headerTitle: { fontSize: 18, fontWeight: "800", color: "#0F172A" },
   headerSpacer: { width: 40, height: 40 },
-  headerRightBtn: { width: 40, height: 40, alignItems: "flex-end", justifyContent: "center" },
   content: { padding: 16, paddingBottom: 28 },
   center: { padding: 24, alignItems: "center" },
   bodyText: { color: "#334155", lineHeight: 20 },
@@ -567,23 +543,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: { fontSize: 15, fontWeight: "900", color: "#0F172A", marginBottom: 10 },
   meta: { color: "#334155", marginBottom: 6, lineHeight: 20 },
-  metaBold: { marginTop: 6, marginBottom: 6, color: "#0F172A", fontWeight: "900" },
-  attachmentRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10 },
-  attachmentThumb: { width: 44, height: 44, borderRadius: 12, marginRight: 12, backgroundColor: "#E5E7EB" },
-  attachmentThumbPlaceholder: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    marginRight: 12,
-    backgroundColor: "#F3FAFD",
-    borderWidth: 1,
-    borderColor: "#D7EEF5",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  attachmentTextCol: { flex: 1 },
-  attachmentName: { color: "#0F172A", fontWeight: "900" },
-  attachmentMeta: { marginTop: 2, color: "#64748B", fontSize: 12, fontWeight: "700" },
+  metaBold: { marginTop: 6, fontWeight: "900", color: "#0F172A" },
   msgRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#E5E7EB" },
   msgRole: { fontWeight: "900", color: "#0F172A" },
   msgText: { marginTop: 4, color: "#334155", lineHeight: 20 },
@@ -608,23 +568,55 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sendBtnDisabled: { opacity: 0.6 },
-  previewOverlay: { flex: 1, backgroundColor: "rgba(15, 23, 42, 0.55)", justifyContent: "center", padding: 16 },
-  previewCard: { backgroundColor: "#FFFFFF", borderRadius: 14, padding: 12, maxHeight: "80%" },
-  previewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-  previewHeaderRight: { flexDirection: "row", alignItems: "center", gap: 14 },
-  previewTitle: { color: "#0F172A", fontWeight: "900", fontSize: 16 },
-  openText: { color: "#088EAB", fontWeight: "900" },
-  previewMediaWrap: { width: "100%", height: 360, backgroundColor: "#0B1220" },
-  imagePreview: { width: "100%", height: 360, backgroundColor: "#0B1220" },
-  videoPreview: { width: "100%", height: 360, backgroundColor: "#0B1220" },
+  attachmentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "#E2E8F0",
+  },
+  attachmentIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: "#E0F2F1",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  attachmentTextCol: { flex: 1 },
+  attachmentName: { fontSize: 14, color: "#0F172A", fontWeight: "600" },
+  attachmentMeta: { fontSize: 12, color: "#64748B", marginTop: 2 },
+  previewOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.6)",
+    justifyContent: "center",
+    padding: 16,
+  },
+  previewCard: { backgroundColor: "#FFFFFF", borderRadius: 18, overflow: "hidden" },
+  previewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E2E8F0",
+  },
+  previewTitle: { fontSize: 16, fontWeight: "700", color: "#0F172A" },
+  previewHeaderRight: { flexDirection: "row", alignItems: "center", gap: 12 },
+  openText: { fontSize: 15, fontWeight: "700", color: "#088EAB" },
+  previewMediaWrap: { width: "100%", aspectRatio: 1, backgroundColor: "#0F172A" },
+  imagePreview: { width: "100%", height: "100%" },
+  videoPreview: { width: "100%", height: "100%" },
   previewLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(11, 18, 32, 0.35)",
+    backgroundColor: "rgba(15, 23, 42, 0.25)",
   },
-  previewError: { marginTop: 10, color: "#DC2626", fontWeight: "800", lineHeight: 20 },
-  filePreview: { alignItems: "center", paddingVertical: 30, gap: 10 },
-  filePreviewName: { color: "#0F172A", fontWeight: "900", textAlign: "center" },
-  filePreviewHint: { color: "#64748B", textAlign: "center", lineHeight: 20 },
+  previewError: { padding: 12, color: "#FFFFFF", fontSize: 13 },
+  filePreview: { padding: 24, alignItems: "center", gap: 10 },
+  filePreviewName: { fontSize: 14, fontWeight: "600", color: "#0F172A" },
+  filePreviewHint: { fontSize: 12, color: "#64748B", textAlign: "center" },
 });

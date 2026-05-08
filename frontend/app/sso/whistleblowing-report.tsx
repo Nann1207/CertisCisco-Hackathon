@@ -14,15 +14,15 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { ChevronLeft, FileText, Image as ImageIcon, Video as VideoIcon, X } from "lucide-react-native";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import Text from "../../components/TranslatedText";
 import { supabase } from "../../lib/supabase";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useVideoPlayer, VideoView } from "expo-video";
-import DateTimePicker from "@react-native-community/datetimepicker";
 
-type WitnessStatus = "yes" | "no" | "unsure";
+type EvidenceStatus = "yes" | "no";
 
 type PickedDocument = {
   uri: string;
@@ -77,6 +77,9 @@ const base64ToUint8Array = (base64: string) => {
   return out;
 };
 
+const toSignedRequestUrl = (signedUrl: string) =>
+  signedUrl.replace(/\[/g, "%5B").replace(/\]/g, "%5D").replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/ /g, "%20");
+
 const readUploadBody = async (uri: string): Promise<ArrayBuffer> => {
   try {
     const response = await fetch(uri);
@@ -91,18 +94,18 @@ const readUploadBody = async (uri: string): Promise<ArrayBuffer> => {
 
   const base64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" as any });
   const bytes = base64ToUint8Array(base64);
-  if (bytes.length === 0) {
-    throw new Error("Selected file is empty or could not be read.");
-  }
+  if (bytes.length === 0) throw new Error("Selected file is empty or could not be read.");
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 };
 
-const HARASSMENT_TYPES = [
-  "Verbal",
-  "Physical",
-  "Sexual",
-  "Discriminatory",
-  "Cyberbullying",
+const CATEGORIES = [
+  "Financial misconduct",
+  "Health & safety violation",
+  "Data/privacy breach",
+  "Discrimination or bias",
+  "Abuse of authority",
+  "Fraud",
+  "Other policy breach",
   "Other",
 ] as const;
 
@@ -120,23 +123,21 @@ const formatDdMmYyyy = (date: Date) => {
   return `${d}/${m}/${y}`;
 };
 
-export default function HarassmentReportScreen() {
+export default function WhistleblowingReportScreen() {
   const router = useRouter();
 
   const [incidentDate, setIncidentDate] = useState<Date>(new Date());
   const [datePickerOpen, setDatePickerOpen] = useState(false);
-  const [harassmentType, setHarassmentType] = useState<(typeof HARASSMENT_TYPES)[number] | "">("");
-  const [harassmentTypeOther, setHarassmentTypeOther] = useState("");
-  const [personsInvolved, setPersonsInvolved] = useState("");
-  const [description, setDescription] = useState("");
-  const [witnessStatus, setWitnessStatus] = useState<WitnessStatus>("no");
-  const [witnessName, setWitnessName] = useState("");
+  const [category, setCategory] = useState<(typeof CATEGORIES)[number] | "">("");
+  const [categoryOther, setCategoryOther] = useState("");
+  const [department, setDepartment] = useState("");
+  const [details, setDetails] = useState("");
+  const [evidenceStatus, setEvidenceStatus] = useState<EvidenceStatus>("no");
   const [documents, setDocuments] = useState<PickedDocument[]>([]);
-  const [submitting, setSubmitting] = useState(false);
   const [previewing, setPreviewing] = useState<PickedDocument | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const normalizedWitnessName = useMemo(() => witnessName.trim(), [witnessName]);
-  const normalizedHarassmentTypeOther = useMemo(() => harassmentTypeOther.trim(), [harassmentTypeOther]);
+  const trimmedCategoryOther = useMemo(() => categoryOther.trim(), [categoryOther]);
 
   const addSupportingFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -210,25 +211,24 @@ export default function HarassmentReportScreen() {
   };
 
   const submit = async () => {
-    const isoIncidentDate = toIsoDate(incidentDate);
-    if (!harassmentType) {
-      Alert.alert("Submit failed", "Please select a harassment type.");
+    if (!category) {
+      Alert.alert("Submit failed", "Please select a category of concern.");
       return;
     }
-    if (harassmentType === "Other" && !normalizedHarassmentTypeOther) {
-      Alert.alert("Submit failed", "Please specify the harassment type for 'Other'.");
+    if (category === "Other" && !trimmedCategoryOther) {
+      Alert.alert("Submit failed", "Please specify the category for 'Other'.");
       return;
     }
-    if (!personsInvolved.trim()) {
-      Alert.alert("Submit failed", "Please enter the person(s) involved.");
+    if (!department.trim()) {
+      Alert.alert("Submit failed", "Please enter the department of people involved.");
       return;
     }
-    if (!description.trim()) {
-      Alert.alert("Submit failed", "Please enter a description of the incident.");
+    if (!details.trim()) {
+      Alert.alert("Submit failed", "Please enter the details of concern.");
       return;
     }
-    if (witnessStatus === "yes" && !normalizedWitnessName) {
-      Alert.alert("Submit failed", "Please enter the witness name.");
+    if (evidenceStatus === "yes" && documents.length === 0) {
+      Alert.alert("Submit failed", "Please upload supporting evidence, or choose 'No'.");
       return;
     }
 
@@ -243,18 +243,17 @@ export default function HarassmentReportScreen() {
 
     const payload = {
       reporter_id: reporterId,
-      reporter_role: "securityofficer",
-      incident_date: isoIncidentDate,
-      harassment_type: harassmentType,
-      harassment_type_other: harassmentType === "Other" ? normalizedHarassmentTypeOther : null,
-      persons_involved: personsInvolved.trim(),
-      incident_description: description.trim(),
-      witness_status: witnessStatus,
-      witness_name: witnessStatus === "yes" ? normalizedWitnessName : null,
+      reporter_role: "sso",
+      incident_date: toIsoDate(incidentDate),
+      category,
+      category_other: category === "Other" ? trimmedCategoryOther : null,
+      department_of_people_involved: department.trim(),
+      details_of_concern: details.trim(),
+      evidence_status: evidenceStatus,
     };
 
     const { data: insertedRow, error } = await supabase
-      .from("harassment_reports")
+      .from("whistleblowing_reports")
       .insert(payload)
       .select("id, report_code")
       .single();
@@ -271,7 +270,7 @@ export default function HarassmentReportScreen() {
     if (documents.length > 0) {
       for (const doc of documents) {
         const fileName = doc.name || "document";
-        const safeFileName = fileName.replace(/[^\w.\- ()[\]]+/g, "_");
+        const safeFileName = fileName.replace(/[^\w.\-]+/g, "_");
         const uniquePrefix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const storagePath = `${reporterId}/${reportId}/${uniquePrefix}-${safeFileName}`;
 
@@ -285,7 +284,7 @@ export default function HarassmentReportScreen() {
         }
 
         const { error: uploadError } = await supabase.storage
-          .from("harassment-supporting-documents")
+          .from("whistleblowing-supporting-documents")
           .upload(storagePath, body as any, {
             contentType: getUploadContentType(doc),
             upsert: false,
@@ -298,7 +297,7 @@ export default function HarassmentReportScreen() {
         }
 
         const { data: verifyData, error: verifyError } = await supabase.storage
-          .from("harassment-supporting-documents")
+          .from("whistleblowing-supporting-documents")
           .createSignedUrl(storagePath, 60);
         if (verifyError || !verifyData?.signedUrl) {
           setSubmitting(false);
@@ -307,9 +306,9 @@ export default function HarassmentReportScreen() {
         }
 
         try {
-          const verifyUri = `${FileSystem.cacheDirectory ?? ""}harassment-upload-verify-${Date.now()}-${safeFileName}`;
+          const verifyUri = `${FileSystem.cacheDirectory ?? ""}whistleblowing-upload-verify-${Date.now()}-${safeFileName}`;
           if (!verifyUri) throw new Error("Missing cache directory.");
-          const verifyResult: any = await FileSystem.downloadAsync(encodeURI(verifyData.signedUrl), verifyUri);
+          const verifyResult: any = await FileSystem.downloadAsync(toSignedRequestUrl(verifyData.signedUrl), verifyUri);
           if (typeof verifyResult?.status === "number" && verifyResult.status !== 200) {
             throw new Error(`Download returned HTTP ${verifyResult.status}.`);
           }
@@ -323,7 +322,7 @@ export default function HarassmentReportScreen() {
           return;
         }
 
-        const { error: docRowError } = await supabase.from("harassment_report_documents").insert({
+        const { error: docRowError } = await supabase.from("whistleblowing_report_documents").insert({
           report_id: reportId,
           uploader_id: reporterId,
           file_path: storagePath,
@@ -343,7 +342,7 @@ export default function HarassmentReportScreen() {
     setSubmitting(false);
     Alert.alert(
       "Submitted",
-      reportCode ? `Your harassment report has been submitted.\nReport ID: ${reportCode}` : "Your harassment report has been submitted."
+      reportCode ? `Your whistleblowing report has been submitted.\nReport ID: ${reportCode}` : "Your whistleblowing report has been submitted."
     );
     router.back();
   };
@@ -354,7 +353,7 @@ export default function HarassmentReportScreen() {
         <Pressable onPress={() => router.back()} style={styles.backBtn} hitSlop={10}>
           <ChevronLeft size={22} color="#0F172A" />
         </Pressable>
-        <Text style={styles.headerTitle}>Harassment Report</Text>
+        <Text style={styles.headerTitle}>Whistleblowing Report</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -364,66 +363,65 @@ export default function HarassmentReportScreen() {
           <Text style={styles.dateText}>{formatDdMmYyyy(incidentDate)}</Text>
         </Pressable>
 
-        <Text style={styles.label}>TYPE OF HARASSMENT</Text>
+        <Text style={styles.label}>CATEGORY OF CONCERN</Text>
         <View style={styles.selectWrap}>
-          {HARASSMENT_TYPES.map((type) => {
-            const selected = harassmentType === type;
+          {CATEGORIES.map((item) => {
+            const selected = category === item;
             return (
               <Pressable
-                key={type}
-                onPress={() => setHarassmentType(type)}
+                key={item}
+                onPress={() => setCategory(item)}
                 style={[styles.selectPill, selected && styles.selectPillActive]}
               >
-                <Text style={[styles.selectText, selected && styles.selectTextActive]}>{type}</Text>
+                <Text style={[styles.selectText, selected && styles.selectTextActive]}>{item}</Text>
               </Pressable>
             );
           })}
         </View>
 
-        {harassmentType === "Other" ? (
+        {category === "Other" ? (
           <>
             <Text style={styles.label}>PLEASE SPECIFY</Text>
             <TextInput
-              value={harassmentTypeOther}
-              onChangeText={setHarassmentTypeOther}
-              placeholder="Enter type of harassment"
+              value={categoryOther}
+              onChangeText={setCategoryOther}
+              placeholder="Enter category"
               placeholderTextColor="#94A3B8"
               style={styles.input}
             />
           </>
         ) : null}
 
-        <Text style={styles.label}>PERSON(S) INVOLVED</Text>
+        <Text style={styles.label}>DEPARTMENT OF PEOPLE INVOLVED</Text>
         <TextInput
-          value={personsInvolved}
-          onChangeText={setPersonsInvolved}
-          placeholder="Name or role of the individual(s)"
+          value={department}
+          onChangeText={setDepartment}
+          placeholder="e.g. Finance, Operations..."
           placeholderTextColor="#94A3B8"
           style={styles.input}
         />
 
-        <Text style={styles.label}>DESCRIPTION OF INCIDENT</Text>
+        <Text style={styles.label}>DETAILS OF CONCERN</Text>
         <TextInput
-          value={description}
-          onChangeText={setDescription}
-          placeholder="Describe what happened in as much detail as you feel comfortable sharing..."
+          value={details}
+          onChangeText={setDetails}
+          placeholder="Provide as much detail as possible, including dates, people involved, and any evidence..."
           placeholderTextColor="#94A3B8"
           style={[styles.input, styles.textarea]}
           multiline
         />
 
-        <Text style={styles.label}>WERE THERE WITNESSES?</Text>
+        <Text style={styles.label}>DO YOU HAVE SUPPORTING EVIDENCE?</Text>
         <View style={styles.radioRow}>
           {([
             { id: "yes", label: "Yes" },
             { id: "no", label: "No" },
-            { id: "unsure", label: "Unsure" },
           ] as const).map((option) => {
-            const selected = witnessStatus === option.id;
+            const selected = evidenceStatus === option.id;
             return (
               <Pressable
                 key={option.id}
-                onPress={() => setWitnessStatus(option.id)}
+                onPress={() => setEvidenceStatus(option.id)}
                 style={styles.radioItem}
               >
                 <View style={[styles.radioOuter, selected && styles.radioOuterSelected]}>
@@ -435,78 +433,65 @@ export default function HarassmentReportScreen() {
           })}
         </View>
 
-        {witnessStatus === "yes" ? (
+        {evidenceStatus === "yes" ? (
           <>
-            <Text style={styles.label}>WITNESS NAME</Text>
-            <TextInput
-              value={witnessName}
-              onChangeText={setWitnessName}
-              placeholder="Enter witness name"
-              placeholderTextColor="#94A3B8"
-              style={styles.input}
-            />
-          </>
-        ) : null}
+            <Text style={styles.label}>SUPPORTING EVIDENCE (OPTIONAL)</Text>
+            <View style={styles.uploadRow}>
+              <Pressable
+                disabled={submitting}
+                onPress={() => void addSupportingFile()}
+                style={[styles.uploadBtn, submitting && styles.submitBtnDisabled]}
+              >
+                <FileText size={16} color="#088EAB" />
+                <Text style={styles.uploadBtnText}>File</Text>
+              </Pressable>
+              <Pressable
+                disabled={submitting}
+                onPress={() => void addSupportingMedia("photo")}
+                style={[styles.uploadBtn, submitting && styles.submitBtnDisabled]}
+              >
+                <ImageIcon size={16} color="#088EAB" />
+                <Text style={styles.uploadBtnText}>Photo</Text>
+              </Pressable>
+              <Pressable
+                disabled={submitting}
+                onPress={() => void addSupportingMedia("video")}
+                style={[styles.uploadBtn, submitting && styles.submitBtnDisabled]}
+              >
+                <VideoIcon size={16} color="#088EAB" />
+                <Text style={styles.uploadBtnText}>Video</Text>
+              </Pressable>
+            </View>
 
-        <Text style={styles.label}>SUPPORTING DOCUMENTS (OPTIONAL)</Text>
-        <View style={styles.uploadRow}>
-          <Pressable
-            disabled={submitting}
-            onPress={() => void addSupportingFile()}
-            style={[styles.uploadBtn, submitting && styles.submitBtnDisabled]}
-          >
-            <FileText size={16} color="#088EAB" />
-            <Text style={styles.uploadBtnText}>File</Text>
-          </Pressable>
-          <Pressable
-            disabled={submitting}
-            onPress={() => void addSupportingMedia("photo")}
-            style={[styles.uploadBtn, submitting && styles.submitBtnDisabled]}
-          >
-            <ImageIcon size={16} color="#088EAB" />
-            <Text style={styles.uploadBtnText}>Photo</Text>
-          </Pressable>
-          <Pressable
-            disabled={submitting}
-            onPress={() => void addSupportingMedia("video")}
-            style={[styles.uploadBtn, submitting && styles.submitBtnDisabled]}
-          >
-            <VideoIcon size={16} color="#088EAB" />
-            <Text style={styles.uploadBtnText}>Video</Text>
-          </Pressable>
-        </View>
-
-        {documents.length > 0 ? (
-          <View style={styles.docList}>
-            {documents.map((doc, idx) => (
-              <View key={`${doc.uri}-${idx}`} style={styles.docRow}>
-                <Pressable
-                  style={styles.docLeft}
-                  disabled={submitting}
-                  onPress={() => setPreviewing(doc)}
-                >
-                  {doc.kind === "photo" ? (
-                    <Image source={{ uri: doc.uri }} style={styles.thumb} />
-                  ) : (
-                    <View style={styles.thumbPlaceholder}>
-                      <Text style={styles.thumbPlaceholderText}>{doc.kind.toUpperCase()}</Text>
-                    </View>
-                  )}
-                  <View style={styles.docTextCol}>
-                    <Text style={styles.docName} numberOfLines={1}>
-                      {doc.name}
-                    </Text>
-                    <Text style={styles.docMeta} numberOfLines={1}>
-                      {doc.kind}
-                    </Text>
+            {documents.length > 0 ? (
+              <View style={styles.docList}>
+                {documents.map((doc, idx) => (
+                  <View key={`${doc.uri}-${idx}`} style={styles.docRow}>
+                    <Pressable style={styles.docLeft} disabled={submitting} onPress={() => setPreviewing(doc)}>
+                      {doc.kind === "photo" ? (
+                        <Image source={{ uri: doc.uri }} style={styles.thumb} />
+                      ) : (
+                        <View style={styles.thumbPlaceholder}>
+                          <Text style={styles.thumbPlaceholderText}>{doc.kind.toUpperCase()}</Text>
+                        </View>
+                      )}
+                      <View style={styles.docTextCol}>
+                        <Text style={styles.docName} numberOfLines={1}>
+                          {doc.name}
+                        </Text>
+                        <Text style={styles.docMeta} numberOfLines={1}>
+                          {doc.kind}
+                        </Text>
+                      </View>
+                    </Pressable>
+                    <Pressable disabled={submitting} onPress={() => setDocuments((prev) => prev.filter((_, i) => i !== idx))}>
+                      <Text style={styles.removeText}>Remove</Text>
+                    </Pressable>
                   </View>
-                </Pressable>
-                <Pressable disabled={submitting} onPress={() => setDocuments((prev) => prev.filter((_, i) => i !== idx))}>
-                  <Text style={styles.removeText}>Remove</Text>
-                </Pressable>
+                ))}
               </View>
-            ))}
-          </View>
+            ) : null}
+          </>
         ) : null}
 
         <Pressable
@@ -514,11 +499,7 @@ export default function HarassmentReportScreen() {
           onPress={() => void submit()}
           style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
         >
-          {submitting ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.submitBtnText}>Submit</Text>
-          )}
+          {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.submitBtnText}>Submit</Text>}
         </Pressable>
       </ScrollView>
 
@@ -651,25 +632,6 @@ const styles = StyleSheet.create({
   radioOuterSelected: { borderColor: "#0AAFD0" },
   radioInner: { width: 9, height: 9, borderRadius: 999, backgroundColor: "#0AAFD0" },
   radioLabel: { color: "#0F172A", fontWeight: "700" },
-  submitBtn: {
-    marginTop: 18,
-    backgroundColor: "#0AAFD0",
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  submitBtnDisabled: { opacity: 0.6 },
-  submitBtnText: { color: "#FFFFFF", fontWeight: "900" },
-  secondaryBtn: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#D7EEF5",
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    alignItems: "center",
-  },
-  secondaryBtnText: { color: "#088EAB", fontWeight: "900" },
   uploadRow: { flexDirection: "row", gap: 10 },
   uploadBtn: {
     flex: 1,
@@ -712,6 +674,15 @@ const styles = StyleSheet.create({
   thumbPlaceholderText: { color: "#088EAB", fontWeight: "900", fontSize: 10 },
   docName: { flex: 1, marginRight: 10, color: "#0F172A", fontWeight: "700" },
   removeText: { color: "#DC2626", fontWeight: "900" },
+  submitBtn: {
+    marginTop: 18,
+    backgroundColor: "#0AAFD0",
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  submitBtnDisabled: { opacity: 0.6 },
+  submitBtnText: { color: "#FFFFFF", fontWeight: "900" },
   previewOverlay: { flex: 1, backgroundColor: "rgba(15, 23, 42, 0.55)", justifyContent: "center", padding: 16 },
   previewCard: { backgroundColor: "#FFFFFF", borderRadius: 14, padding: 12, maxHeight: "80%" },
   previewHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
