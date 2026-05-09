@@ -270,6 +270,48 @@ Rules:
 
     return {"questions": normalized_questions}
 
+def _group_steps_by_doc(sop_rows: list[dict]) -> list[dict]:
+    """
+    Groups raw SOP rows (across all categories/titles) into 'documents'
+    shaped like: {category, title, steps:[{step_no, step_short, step_description}, ...]}
+    """
+    docs_map = {}
+
+    for row in sop_rows:
+        category = str(row.get("category") or "").strip()
+        title = str(row.get("title") or "").strip()
+        step_no = row.get("step_no")
+        step_short = row.get("step_short")
+        step_description = row.get("step_description")
+
+        if not category or not title:
+            continue
+
+        key = (category, title)
+        if key not in docs_map:
+            docs_map[key] = {
+                "category": category,
+                "title": title,
+                "steps": [],
+            }
+
+        docs_map[key]["steps"].append(
+            {
+                "step_no": step_no,
+                "step_short": step_short,
+                "step_description": step_description,
+            }
+        )
+
+    # sort steps in each doc
+    docs = list(docs_map.values())
+    for d in docs:
+        d["steps"].sort(key=lambda s: _safe_step_no(s.get("step_no")))
+
+    # stable order
+    docs.sort(key=lambda d: (d["category"].lower(), d["title"].lower()))
+    return docs
+
 
 @app.post("/quiz/generate")
 def quiz_generate():
@@ -305,6 +347,55 @@ def quiz_generate():
         return jsonify(error=f"Quiz generation failed: {exc}"), 500
 
     return jsonify(quiz)
+
+@app.post("/quiz/generate-mixed")
+def quiz_generate_mixed():
+    payload = request.get_json(silent=True) or {}
+    num_questions = payload.get("num_questions", 15)
+
+    if not isinstance(num_questions, int) or num_questions < 1 or num_questions > 15:
+        return jsonify(error="'num_questions' must be an int between 1 and 15."), 400
+
+    # How many SOP documents to mix (category+title groups)
+    docs_to_mix = payload.get("docs_to_mix", 6)
+    if not isinstance(docs_to_mix, int) or docs_to_mix < 2 or docs_to_mix > 20:
+        return jsonify(error="'docs_to_mix' must be an int between 2 and 20."), 400
+
+    try:
+        # ✅ Backend fetches SOP directly (recommended)
+        sop_rows = _fetch_sop_rows()
+
+        docs = _group_steps_by_doc(sop_rows)
+        if not docs:
+            return jsonify(error="No SOP documents found."), 500
+
+        # Prefer docs that have some usable steps
+        valid_docs = [d for d in docs if isinstance(d.get("steps"), list) and len(d["steps"]) > 0]
+        if len(valid_docs) < 2:
+            return jsonify(error="Not enough SOP documents to generate mixed test."), 500
+
+        chosen_docs = random.sample(valid_docs, k=min(docs_to_mix, len(valid_docs)))
+
+        mixed_steps = []
+        for d in chosen_docs:
+            mixed_steps.extend(d["steps"])
+
+        if len(mixed_steps) == 0:
+            return jsonify(error="Selected SOP documents had no steps."), 500
+
+        # ✅ Reuse same generator so response format matches old quiz
+        quiz = generate_quiz_from_steps(
+            category="SOP Test",
+            title="Mixed Categories",
+            steps=mixed_steps,
+            num_questions=num_questions,
+        )
+        return jsonify(quiz)
+
+    except json.JSONDecodeError:
+        return jsonify(error="AI returned non-JSON text. Adjust prompt or retry."), 502
+    except Exception as exc:
+        return jsonify(error=f"Mixed quiz generation failed: {exc}"), 500
 
 
 # =========================

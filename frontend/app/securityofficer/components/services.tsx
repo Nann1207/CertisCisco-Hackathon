@@ -91,6 +91,7 @@ export default function ServicesModal({ visible, onClose }: ServicesModalProps) 
     { id: "shift-reports", label: "Shift Reports", Icon: ScrollText, href: "/securityofficer/all-shift-reports" },
     { id: "schedule", label: "Upcoming Schedule", Icon: CalendarDays, href: "/securityofficer/schedule" },
     { id: "payslip", label: "Payslip", Icon: FileText, href: "/securityofficer/payslip" },
+    { id: "sop-test", label: "SOP Test", Icon: ScrollText, href: "/securityofficer/sop-test" },
     {
       id: "harassment-whistleblowing",
       label: "Harassment &\nWhistleblowing Forms",

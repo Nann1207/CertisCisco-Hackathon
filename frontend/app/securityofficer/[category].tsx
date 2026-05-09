@@ -6,9 +6,10 @@ import {
   Modal,
   ScrollView,
   Image,
+  StyleSheet,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "../../lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import YoutubePlayer from "react-native-youtube-iframe";
@@ -23,6 +24,28 @@ type QuizQuestion = {
   explanation: string;
 };
 
+type QuizAttemptRow = {
+  id: string;
+  employee_id: string | null;
+  category: string;
+  sop_title: string;
+  score: number;
+  total_questions: number;
+  percentage: number;
+  created_at: string;
+};
+
+type QuizAnswerRow = {
+  id: string;
+  attempt_id: string;
+  question: string;
+  selected_answer: number;
+  correct_answer: number;
+  is_correct: boolean;
+  explanation: string | null;
+  created_at: string;
+};
+
 export default function CategoryPage() {
   // IMPORTANT: For Expo Go on a phone, this must be your laptop's LAN IP.
   // If your IP changes, update it.
@@ -34,7 +57,10 @@ export default function CategoryPage() {
   const slug = category as string;
   const tabParamValue = Array.isArray(tabParam) ? tabParam[0] : tabParam;
   const titleParamValue = Array.isArray(titleParam) ? titleParam[0] : titleParam;
-  const initialTab = tabParamValue?.toString().toLowerCase() === "logistics" ? "Logistics" : "Guidelines";
+  const initialTab =
+    tabParamValue?.toString().toLowerCase() === "logistics"
+      ? "Logistics"
+      : "Guidelines";
 
   const categoryMap: Record<string, string> = {
     "fire-evacuation": "Fire & Evacuation",
@@ -130,6 +156,27 @@ export default function CategoryPage() {
   const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
   const [quizShowResults, setQuizShowResults] = useState(false);
 
+  // ✅ NEW: quiz home (Generate / History) + DB state
+  const [quizStarted, setQuizStarted] = useState(false);
+
+  const [employeeId, setEmployeeId] = useState<string | null>(null);
+
+  const [attemptsLoading, setAttemptsLoading] = useState(false);
+  const [attemptsError, setAttemptsError] = useState<string | null>(null);
+  const [quizAttempts, setQuizAttempts] = useState<QuizAttemptRow[]>([]);
+
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewAttempt, setReviewAttempt] = useState<QuizAttemptRow | null>(
+    null
+  );
+  const [reviewAnswersLoading, setReviewAnswersLoading] = useState(false);
+  const [reviewAnswersError, setReviewAnswersError] = useState<string | null>(
+    null
+  );
+  const [reviewAnswers, setReviewAnswers] = useState<QuizAnswerRow[]>([]);
+
+  const QUIZ_QUESTION_COUNT = 10;
+
   const resetToDefault = () => {
     setTab(initialTab as "Guidelines" | "Logistics");
     setMediaTab("Images");
@@ -140,6 +187,29 @@ export default function CategoryPage() {
     setQuizAnswers({});
     setQuizShowResults(false);
 
+    setQuizError(null);
+    setQuizQuestions([]);
+
+    // NEW
+    setQuizStarted(false);
+    setAttemptsError(null);
+    setReviewOpen(false);
+    setReviewAttempt(null);
+    setReviewAnswers([]);
+    setReviewAnswersError(null);
+  };
+
+  const backToGuidelines = () => {
+    setTab("Guidelines");
+    setMediaTab("Images");
+
+    // reset quiz states
+    setQuizStarted(false);
+    setQuizIndex(0);
+    setQuizSelected(null);
+    setQuizSubmitted(false);
+    setQuizAnswers({});
+    setQuizShowResults(false);
     setQuizError(null);
     setQuizQuestions([]);
   };
@@ -153,6 +223,9 @@ export default function CategoryPage() {
     setQuizSubmitted(false);
     setQuizAnswers({});
     setQuizShowResults(false);
+
+    // NEW
+    setQuizStarted(true);
 
     await generateQuiz();
   };
@@ -257,8 +330,92 @@ export default function CategoryPage() {
     setLoading(false);
   };
 
+  // =========================
+  // employee + history
+  // =========================
+  const getEmployeeId = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) throw error;
+      // employees.id == auth.users.id
+      return data?.user?.id ?? null;
+    } catch (e) {
+      console.warn("getEmployeeId failed:", e);
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const id = await getEmployeeId();
+      setEmployeeId(id);
+    })();
+  }, [getEmployeeId]);
+
+  const fetchAttemptHistory = useCallback(async () => {
+    if (!employeeId) return;
+    if (!selectedTitle) return;
+
+    setAttemptsLoading(true);
+    setAttemptsError(null);
+
+    const { data, error } = await supabase
+      .from("quiz_attempts")
+      .select("*")
+      .eq("employee_id", employeeId)
+      .eq("category", decodedCategory)
+      .eq("sop_title", selectedTitle)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("fetchAttemptHistory error:", error);
+      setQuizAttempts([]);
+      setAttemptsError("Failed to load attempt history.");
+      setAttemptsLoading(false);
+      return;
+    }
+
+    setQuizAttempts((data ?? []) as QuizAttemptRow[]);
+    setAttemptsLoading(false);
+  }, [decodedCategory, employeeId, selectedTitle]);
+
+  const openAttemptReview = async (attempt: QuizAttemptRow) => {
+    setReviewAttempt(attempt);
+    setReviewOpen(true);
+    setReviewAnswers([]);
+    setReviewAnswersError(null);
+
+    setReviewAnswersLoading(true);
+    const { data, error } = await supabase
+      .from("quiz_answers")
+      .select("*")
+      .eq("attempt_id", attempt.id)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("openAttemptReview error:", error);
+      setReviewAnswersError("Failed to load answers for this attempt.");
+      setReviewAnswersLoading(false);
+      return;
+    }
+
+    setReviewAnswers((data ?? []) as QuizAnswerRow[]);
+    setReviewAnswersLoading(false);
+  };
+
+  const formatDate = (iso: string) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString();
+    } catch {
+      return iso;
+    }
+  };
+
+  // =========================
+  // Quiz generation
+  // =========================
   const generateQuiz = async () => {
-    // Need SOP steps + a chosen SOP title
     if (!selectedTitle) {
       setQuizError("Select an SOP first.");
       return;
@@ -278,7 +435,7 @@ export default function CategoryPage() {
         body: JSON.stringify({
           category: decodedCategory,
           title: selectedTitle,
-          num_questions: 5,
+          num_questions: QUIZ_QUESTION_COUNT,
           steps: steps.map((s: any) => ({
             step_no: s.step_no,
             step_short: s.step_short,
@@ -288,7 +445,6 @@ export default function CategoryPage() {
       });
 
       const data = await res.json().catch(() => ({}));
-
       if (!res.ok) {
         throw new Error(data?.error || `Quiz generation failed (${res.status})`);
       }
@@ -311,6 +467,14 @@ export default function CategoryPage() {
     setQuizSelected(null);
     setQuizSubmitted(false);
     setQuizAnswers({});
+
+    setQuizStarted(false);
+    setQuizAttempts([]);
+    setAttemptsError(null);
+    setReviewOpen(false);
+    setReviewAttempt(null);
+    setReviewAnswers([]);
+    setReviewAnswersError(null);
   }, [selectedTitle]);
 
   const imageSource = categoryImageMap[slug];
@@ -320,6 +484,10 @@ export default function CategoryPage() {
 
   const isQuizMode = tab === "Guidelines" && mediaTab === "Quiz";
   const isQuizResults = isQuizMode && quizShowResults;
+  const isQuizHome = isQuizMode && !quizStarted;
+
+  // ✅ Disable Logistics ONLY while actively taking the quiz (question pages)
+  const isTakingQuiz = isQuizMode && quizStarted && !quizShowResults;
 
   const listData = tab === "Guidelines" ? steps : logisticsItems;
   const currentQuestion = quizQuestions[quizIndex];
@@ -332,11 +500,71 @@ export default function CategoryPage() {
     setQuizAnswers((prev) => ({ ...prev, [currentQuestion.id]: quizSelected }));
   };
 
-  const handleNext = () => {
+  const saveAttemptToDb = async () => {
+    if (!employeeId) {
+      console.warn("No employeeId -> skipping DB save");
+      return;
+    }
+
+    const total = quizQuestions.length;
+    const score = quizScore;
+    const percentage = quizPercent;
+
+    const { data: attempt, error: attemptErr } = await supabase
+      .from("quiz_attempts")
+      .insert({
+        employee_id: employeeId,
+        category: decodedCategory,
+        sop_title: selectedTitle,
+        score,
+        total_questions: total,
+        percentage,
+      })
+      .select("*")
+      .single();
+
+    if (attemptErr) {
+      console.error("saveAttemptToDb attemptErr:", attemptErr);
+      setQuizError("Failed to save attempt to history.");
+      return;
+    }
+
+    const attemptId = (attempt as QuizAttemptRow).id;
+
+    const answerRows = quizQuestions.map((q) => {
+      const selected = quizAnswers[q.id];
+      const correct = q.answerIndex;
+      const is_correct = selected === correct;
+
+      return {
+        attempt_id: attemptId,
+        question: q.question,
+        selected_answer: typeof selected === "number" ? selected : -1,
+        correct_answer: correct,
+        is_correct,
+        explanation: q.explanation ?? null,
+      };
+    });
+
+    const { error: answersErr } = await supabase
+      .from("quiz_answers")
+      .insert(answerRows);
+
+    if (answersErr) {
+      console.error("saveAttemptToDb answersErr:", answersErr);
+      setQuizError("Attempt saved, but failed to save answer details.");
+      return;
+    }
+
+    await fetchAttemptHistory();
+  };
+
+  const handleNext = async () => {
     const nextIndex = quizIndex + 1;
 
     if (nextIndex >= quizQuestions.length) {
       setQuizShowResults(true);
+      await saveAttemptToDb();
       return;
     }
 
@@ -354,7 +582,18 @@ export default function CategoryPage() {
     setQuizAnswers({});
     setQuizShowResults(false);
     setQuizError(null);
+
+    setQuizStarted(false);
   };
+
+  // When entering Quiz tab, load history (if possible)
+  useEffect(() => {
+    if (!isQuizMode) return;
+    if (!employeeId) return;
+    if (!selectedTitle) return;
+
+    fetchAttemptHistory();
+  }, [employeeId, fetchAttemptHistory, isQuizMode, selectedTitle]);
 
   return (
     <View style={styles.container}>
@@ -405,9 +644,9 @@ export default function CategoryPage() {
             style={[
               styles.pill,
               tab === "Logistics" && styles.pillActive,
-              isQuizMode && styles.pillDisabled,
+              isTakingQuiz && styles.pillDisabled,
             ]}
-            disabled={isQuizMode}
+            disabled={isTakingQuiz}
             onPress={openLogistics}
           >
             <Text
@@ -499,7 +738,8 @@ export default function CategoryPage() {
                       <Text
                         style={[
                           styles.mediaChipText,
-                          mediaTab === "Videos" && styles.mediaChipTextActiveRed,
+                          mediaTab === "Videos" &&
+                            styles.mediaChipTextActiveRed,
                         ]}
                       >
                         Videos
@@ -509,13 +749,21 @@ export default function CategoryPage() {
                     <Pressable
                       onPress={async () => {
                         setMediaTab("Quiz");
+
+                        // reset quiz state and show quiz home
+                        setQuizStarted(false);
                         setQuizIndex(0);
                         setQuizSelected(null);
                         setQuizSubmitted(false);
                         setQuizAnswers({});
                         setQuizShowResults(false);
+                        setQuizQuestions([]);
+                        setQuizError(null);
 
-                        await generateQuiz();
+                        // load history
+                        if (employeeId) {
+                          await fetchAttemptHistory();
+                        }
                       }}
                       style={[
                         styles.mediaChip,
@@ -554,14 +802,22 @@ export default function CategoryPage() {
                           resizeMode="cover"
                         />
                         <View style={styles.expandIcon}>
-                          <Ionicons name="expand-outline" size={18} color="#fff" />
+                          <Ionicons
+                            name="expand-outline"
+                            size={18}
+                            color="#fff"
+                          />
                         </View>
                       </Pressable>
                     ) : null}
 
                     {mediaTab === "Videos" && videoId ? (
                       <View style={styles.videoWrap}>
-                        <YoutubePlayer height={190} play={false} videoId={videoId} />
+                        <YoutubePlayer
+                          height={190}
+                          play={false}
+                          videoId={videoId}
+                        />
                       </View>
                     ) : null}
 
@@ -570,229 +826,491 @@ export default function CategoryPage() {
                 ) : null}
 
                 {/* =======================
-                    QUIZ UI + RESULTS PAGE
+                    QUIZ UI + RESULTS PAGE + QUIZ HOME
                    ======================= */}
-                {isQuizMode ? (
+                {tab === "Guidelines" && mediaTab === "Quiz" ? (
                   <View style={styles.quizWrap}>
-                    {quizLoading ? (
-                      <View style={{ paddingVertical: 16, alignItems: "center" }}>
-                        <ActivityIndicator />
-                        <Text
-                          style={{
-                            marginTop: 8,
-                            fontWeight: "800",
-                            color: "#64748B",
-                          }}
-                        >
-                          Generating quiz...
+                    {/* QUIZ HOME */}
+                    {isQuizHome ? (
+                      <View style={styles.quizHomeWrap}>
+                        <Text style={styles.quizHomeTitle}>Quiz</Text>
+                        <Text style={styles.quizHomeSub}>
+                          Generate a quiz for:{" "}
+                          <Text style={styles.quizHomeSubBold}>
+                            {selectedTitle || "—"}
+                          </Text>
                         </Text>
-                      </View>
-                    ) : quizError ? (
-                      <View style={{ paddingVertical: 16, alignItems: "center" }}>
-                        <Text
-                          style={{
-                            color: "#EF4444",
-                            fontWeight: "900",
-                            textAlign: "center",
-                          }}
-                        >
-                          {quizError}
-                        </Text>
-                        <Pressable
-                          style={[styles.quizPrimaryBtn, { marginTop: 10 }]}
-                          onPress={generateQuiz}
-                        >
-                          <Text style={styles.quizPrimaryBtnText}>Try Again</Text>
-                        </Pressable>
-                      </View>
-                    ) : null}
 
-                    {/* RESULTS PAGE */}
-                    {isQuizResults ? (
-                      <View style={styles.quizResultsWrap}>
-                        <View style={styles.quizResultsTop}>
-                          <View style={styles.quizScoreCircle}>
-                            <Text style={styles.quizScoreBig}>{quizPercent}%</Text>
-                            <Text style={styles.quizScoreSmall}>
-                              {quizScore}/{quizQuestions.length}
+                        {!employeeId ? (
+                          <Text style={styles.quizHomeWarn}>
+                            Note: login/employee not found, attempts won’t be
+                            saved.
+                          </Text>
+                        ) : null}
+
+                        <View style={styles.quizHomeBtnRow}>
+                          <Pressable
+                            style={styles.quizPrimaryBtn}
+                            onPress={async () => {
+                              setQuizStarted(true);
+                              setQuizIndex(0);
+                              setQuizSelected(null);
+                              setQuizSubmitted(false);
+                              setQuizAnswers({});
+                              setQuizShowResults(false);
+                              setQuizQuestions([]);
+                              setQuizError(null);
+
+                              await generateQuiz();
+                            }}
+                          >
+                            <Text style={styles.quizPrimaryBtnText}>
+                              Generate Quiz
                             </Text>
-                          </View>
-
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.quizResultsTitle}>Results</Text>
-                            <Text style={styles.quizResultsBadge}>{quizBadge}</Text>
-                            <Text style={styles.quizResultsSub}>
-                              Review your score or try again to improve.
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={styles.quizReviewBox}>
-                          <Text style={styles.quizReviewTitle}>Question Review</Text>
-
-                          {quizQuestions.map((q, idx) => {
-                            const user = quizAnswers[q.id];
-                            const correct = user === q.answerIndex;
-                            const userLabel =
-                              typeof user === "number"
-                                ? `${String.fromCharCode(65 + user)}`
-                                : "—";
-                            const correctLabel = `${String.fromCharCode(
-                              65 + q.answerIndex
-                            )}`;
-
-                            return (
-                              <View key={q.id} style={styles.quizReviewRow}>
-                                <View
-                                  style={[
-                                    styles.quizReviewDot,
-                                    correct
-                                      ? styles.quizReviewDotCorrect
-                                      : styles.quizReviewDotWrong,
-                                  ]}
-                                />
-                                <View style={{ flex: 1 }}>
-                                  <Text style={styles.quizReviewQText}>
-                                    {idx + 1}. {q.question}
-                                  </Text>
-                                  <Text style={styles.quizReviewAText}>
-                                    Your: {userLabel} • Correct: {correctLabel}
-                                  </Text>
-                                </View>
-                              </View>
-                            );
-                          })}
-                        </View>
-
-                        <View style={styles.quizResultsBtnRow}>
-                          <Pressable style={styles.quizPrimaryBtn} onPress={restartQuiz}>
-                            <Text style={styles.quizPrimaryBtnText}>Try Again</Text>
                           </Pressable>
 
-                          <Pressable style={styles.quizSecondaryBtn} onPress={resetToDefault}>
+                          <Pressable
+                            style={styles.quizSecondaryBtn}
+                            onPress={backToGuidelines}
+                          >
                             <Text style={styles.quizSecondaryBtnText}>
                               Back to Guidelines
                             </Text>
                           </Pressable>
                         </View>
+
+                        <View style={styles.quizHistoryBox}>
+                          <View style={styles.quizHistoryTitleRow}>
+                            <Text style={styles.quizHistoryTitle}>
+                              Attempt History
+                            </Text>
+
+                            <Pressable
+                              onPress={fetchAttemptHistory}
+                              hitSlop={10}
+                              style={styles.quizHistoryRefreshBtn}
+                            >
+                              <Ionicons
+                                name="refresh"
+                                size={16}
+                                color="#2563EB"
+                              />
+                            </Pressable>
+                          </View>
+
+                          {attemptsLoading ? (
+                            <View
+                              style={{ paddingVertical: 10, alignItems: "center" }}
+                            >
+                              <ActivityIndicator />
+                            </View>
+                          ) : attemptsError ? (
+                            <Text style={styles.quizHomeError}>
+                              {attemptsError}
+                            </Text>
+                          ) : quizAttempts.length === 0 ? (
+                            <Text style={styles.quizHomeEmpty}>
+                              No attempts yet. Generate your first quiz.
+                            </Text>
+                          ) : (
+                            quizAttempts.map((a) => (
+                              <Pressable
+                                key={a.id}
+                                style={styles.attemptRow}
+                                onPress={() => openAttemptReview(a)}
+                              >
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.attemptRowTitle}>
+                                    {a.score}/{a.total_questions} •{" "}
+                                    {a.percentage}%
+                                  </Text>
+                                  <Text style={styles.attemptRowSub}>
+                                    {formatDate(a.created_at)}
+                                  </Text>
+                                </View>
+
+                                <Ionicons
+                                  name="chevron-forward"
+                                  size={18}
+                                  color="#64748B"
+                                />
+                              </Pressable>
+                            ))
+                          )}
+                        </View>
                       </View>
                     ) : (
-                      /* QUESTION PAGE */
                       <>
-                        {!currentQuestion ? (
-                          <View style={styles.quizEmptyBox}>
-                            {!quizLoading ? (
+                        {quizLoading ? (
+                          <View
+                            style={{
+                              paddingVertical: 16,
+                              alignItems: "center",
+                            }}
+                          >
+                            <ActivityIndicator />
+                            <Text
+                              style={{
+                                marginTop: 8,
+                                fontWeight: "800",
+                                color: "#64748B",
+                              }}
+                            >
+                              Generating quiz...
+                            </Text>
+                          </View>
+                        ) : quizError ? (
+                          <View
+                            style={{
+                              paddingVertical: 16,
+                              alignItems: "center",
+                            }}
+                          >
+                            <Text
+                              style={{
+                                color: "#EF4444",
+                                fontWeight: "900",
+                                textAlign: "center",
+                              }}
+                            >
+                              {quizError}
+                            </Text>
+                            <Pressable
+                              style={[styles.quizPrimaryBtn, { marginTop: 10 }]}
+                              onPress={generateQuiz}
+                            >
+                              <Text style={styles.quizPrimaryBtnText}>
+                                Try Again
+                              </Text>
+                            </Pressable>
+
+                            <Pressable
+                              style={[
+                                styles.quizSecondaryBtn,
+                                { marginTop: 10 },
+                              ]}
+                              onPress={() => {
+                                setQuizStarted(false);
+                                setQuizQuestions([]);
+                                setQuizError(null);
+                                setQuizShowResults(false);
+                                setQuizIndex(0);
+                                setQuizSelected(null);
+                                setQuizSubmitted(false);
+                                setQuizAnswers({});
+                              }}
+                            >
+                              <Text style={styles.quizSecondaryBtnText}>
+                                Back to Quiz Home
+                              </Text>
+                            </Pressable>
+                          </View>
+                        ) : null}
+
+                        {/* RESULTS PAGE */}
+                        {isQuizResults ? (
+                          <View style={styles.quizResultsWrap}>
+                            <View style={styles.quizResultsTop}>
+                              <View style={styles.quizScoreCircle}>
+                                <Text style={styles.quizScoreBig}>
+                                  {quizPercent}%
+                                </Text>
+                                <Text style={styles.quizScoreSmall}>
+                                  {quizScore}/{quizQuestions.length}
+                                </Text>
+                              </View>
+
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.quizResultsTitle}>
+                                  Results
+                                </Text>
+                                <Text style={styles.quizResultsBadge}>
+                                  {quizBadge}
+                                </Text>
+                                <Text style={styles.quizResultsSub}>
+                                  Review your score or try again to improve.
+                                </Text>
+                              </View>
+                            </View>
+
+                            <View style={styles.quizReviewBox}>
+                              <Text style={styles.quizReviewTitle}>
+                                Question Review
+                              </Text>
+
+                              {quizQuestions.map((q, idx) => {
+                                const user = quizAnswers[q.id];
+                                const correct = user === q.answerIndex;
+                                const userLabel =
+                                  typeof user === "number"
+                                    ? `${String.fromCharCode(65 + user)}`
+                                    : "—";
+                                const correctLabel = `${String.fromCharCode(
+                                  65 + q.answerIndex
+                                )}`;
+
+                                return (
+                                  <View key={q.id} style={styles.quizReviewRow}>
+                                    <View
+                                      style={[
+                                        styles.quizReviewDot,
+                                        correct
+                                          ? styles.quizReviewDotCorrect
+                                          : styles.quizReviewDotWrong,
+                                      ]}
+                                    />
+                                    <View style={{ flex: 1 }}>
+                                      <Text style={styles.quizReviewQText}>
+                                        {idx + 1}. {q.question}
+                                      </Text>
+                                      <Text style={styles.quizReviewAText}>
+                                        Your: {userLabel} • Correct:{" "}
+                                        {correctLabel}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                );
+                              })}
+                            </View>
+
+                            <View style={styles.quizResultsBtnRow}>
                               <Pressable
                                 style={styles.quizPrimaryBtn}
-                                onPress={generateQuiz}
+                                onPress={restartQuiz}
                               >
                                 <Text style={styles.quizPrimaryBtnText}>
                                   Try Again
                                 </Text>
                               </Pressable>
-                            ) : null}
+
+                              <Pressable
+                                style={styles.quizSecondaryBtn}
+                                onPress={async () => {
+                                  setQuizStarted(false);
+                                  setQuizQuestions([]);
+                                  setQuizError(null);
+                                  setQuizShowResults(false);
+                                  setQuizIndex(0);
+                                  setQuizSelected(null);
+                                  setQuizSubmitted(false);
+                                  setQuizAnswers({});
+                                  await fetchAttemptHistory();
+                                }}
+                              >
+                                <Text style={styles.quizSecondaryBtnText}>
+                                  Back to Quiz Home
+                                </Text>
+                              </Pressable>
+
+                              <Pressable
+                                style={styles.quizSecondaryBtn}
+                                onPress={backToGuidelines}
+                              >
+                                <Text style={styles.quizSecondaryBtnText}>
+                                  Back to Guidelines
+                                </Text>
+                              </Pressable>
+                            </View>
                           </View>
                         ) : (
+                          /* QUESTION PAGE */
                           <>
-                            <Text style={styles.quizProgressText}>
-                              Question {quizIndex + 1} of {quizQuestions.length}
-                            </Text>
+                            {!currentQuestion ? (
+                              <View style={styles.quizEmptyBox}>
+                                {!quizLoading ? (
+                                  <>
+                                    <Pressable
+                                      style={styles.quizPrimaryBtn}
+                                      onPress={generateQuiz}
+                                    >
+                                      <Text style={styles.quizPrimaryBtnText}>
+                                        Try Again
+                                      </Text>
+                                    </Pressable>
 
-                            <Text style={styles.quizQuestionText}>
-                              {currentQuestion.question}
-                            </Text>
+                                    <Pressable
+                                      style={[
+                                        styles.quizSecondaryBtn,
+                                        { marginTop: 10 },
+                                      ]}
+                                      onPress={async () => {
+                                        setQuizStarted(false);
+                                        setQuizQuestions([]);
+                                        setQuizError(null);
+                                        setQuizShowResults(false);
+                                        setQuizIndex(0);
+                                        setQuizSelected(null);
+                                        setQuizSubmitted(false);
+                                        setQuizAnswers({});
+                                        await fetchAttemptHistory();
+                                      }}
+                                    >
+                                      <Text style={styles.quizSecondaryBtnText}>
+                                        Back to Quiz Home
+                                      </Text>
+                                    </Pressable>
 
-                            <View style={styles.quizGrid}>
-                              {currentQuestion.choices.map((choice, i) => {
-                                const selected = quizSelected === i;
-                                const correct = currentQuestion.answerIndex === i;
-                                const showResult = quizSubmitted;
-
-                                const choiceStyle = [
-                                  styles.quizChoiceCard,
-                                  selected && styles.quizChoiceCardSelected,
-                                  showResult &&
-                                    correct &&
-                                    styles.quizChoiceCardCorrect,
-                                  showResult &&
-                                    selected &&
-                                    !correct &&
-                                    styles.quizChoiceCardWrong,
-                                ];
-
-                                const choiceTextStyle = [
-                                  styles.quizChoiceText,
-                                  showResult &&
-                                    correct &&
-                                    styles.quizChoiceTextCorrect,
-                                  showResult &&
-                                    selected &&
-                                    !correct &&
-                                    styles.quizChoiceTextWrong,
-                                ];
-
-                                return (
-                                  <Pressable
-                                    key={`${currentQuestion.id}-${i}`}
-                                    style={choiceStyle}
-                                    onPress={() => {
-                                      if (quizSubmitted) return;
-                                      setQuizSelected(i);
-                                    }}
-                                  >
-                                    <Text style={choiceTextStyle}>
-                                      {String.fromCharCode(65 + i)}. {choice}
-                                    </Text>
-                                  </Pressable>
-                                );
-                              })}
-                            </View>
-
-                            {quizSubmitted ? (
-                              <View style={styles.quizExplainBox}>
-                                <Text style={styles.quizExplainTitle}>
-                                  Correct Answer:
-                                </Text>
-                                <Text style={styles.quizExplainText}>
-                                  {String.fromCharCode(
-                                    65 + currentQuestion.answerIndex
-                                  )}
-                                  .{" "}
-                                  {currentQuestion.choices[currentQuestion.answerIndex]}
-                                </Text>
-
-                                <Text style={styles.quizExplainSub}>
-                                  {currentQuestion.explanation}
-                                </Text>
+                                    <Pressable
+                                      style={[
+                                        styles.quizSecondaryBtn,
+                                        { marginTop: 10 },
+                                      ]}
+                                      onPress={backToGuidelines}
+                                    >
+                                      <Text style={styles.quizSecondaryBtnText}>
+                                        Back to Guidelines
+                                      </Text>
+                                    </Pressable>
+                                  </>
+                                ) : null}
                               </View>
-                            ) : null}
+                            ) : (
+                              <>
+                                <Text style={styles.quizProgressText}>
+                                  Question {quizIndex + 1} of{" "}
+                                  {quizQuestions.length}
+                                </Text>
 
-                            <View style={styles.quizBtnRow}>
-                              {!quizSubmitted ? (
+                                <Text style={styles.quizQuestionText}>
+                                  {currentQuestion.question}
+                                </Text>
+
+                                <View style={styles.quizGrid}>
+                                  {currentQuestion.choices.map((choice, i) => {
+                                    const selected = quizSelected === i;
+                                    const correct =
+                                      currentQuestion.answerIndex === i;
+                                    const showResult = quizSubmitted;
+
+                                    const choiceStyle = [
+                                      styles.quizChoiceCard,
+                                      selected &&
+                                        styles.quizChoiceCardSelected,
+                                      showResult &&
+                                        correct &&
+                                        styles.quizChoiceCardCorrect,
+                                      showResult &&
+                                        selected &&
+                                        !correct &&
+                                        styles.quizChoiceCardWrong,
+                                    ];
+
+                                    const choiceTextStyle = [
+                                      styles.quizChoiceText,
+                                      showResult &&
+                                        correct &&
+                                        styles.quizChoiceTextCorrect,
+                                      showResult &&
+                                        selected &&
+                                        !correct &&
+                                        styles.quizChoiceTextWrong,
+                                    ];
+
+                                    return (
+                                      <Pressable
+                                        key={`${currentQuestion.id}-${i}`}
+                                        style={choiceStyle}
+                                        onPress={() => {
+                                          if (quizSubmitted) return;
+                                          setQuizSelected(i);
+                                        }}
+                                      >
+                                        <Text style={choiceTextStyle}>
+                                          {String.fromCharCode(65 + i)}.{" "}
+                                          {choice}
+                                        </Text>
+                                      </Pressable>
+                                    );
+                                  })}
+                                </View>
+
+                                {quizSubmitted ? (
+                                  <View style={styles.quizExplainBox}>
+                                    <Text style={styles.quizExplainTitle}>
+                                      Correct Answer:
+                                    </Text>
+                                    <Text style={styles.quizExplainText}>
+                                      {String.fromCharCode(
+                                        65 + currentQuestion.answerIndex
+                                      )}
+                                      .{" "}
+                                      {
+                                        currentQuestion.choices[
+                                          currentQuestion.answerIndex
+                                        ]
+                                      }
+                                    </Text>
+
+                                    <Text style={styles.quizExplainSub}>
+                                      {currentQuestion.explanation}
+                                    </Text>
+                                  </View>
+                                ) : null}
+
+                                <View style={styles.quizBtnRow}>
+                                  {!quizSubmitted ? (
+                                    <Pressable
+                                      style={[
+                                        styles.quizPrimaryBtn,
+                                        quizSelected === null &&
+                                          styles.quizPrimaryBtnDisabled,
+                                      ]}
+                                      disabled={quizSelected === null}
+                                      onPress={handleSubmitQuestion}
+                                    >
+                                      <Text style={styles.quizPrimaryBtnText}>
+                                        Submit
+                                      </Text>
+                                    </Pressable>
+                                  ) : (
+                                    <Pressable
+                                      style={styles.quizPrimaryBtn}
+                                      onPress={handleNext}
+                                    >
+                                      <Text style={styles.quizPrimaryBtnText}>
+                                        {quizIndex + 1 >= quizQuestions.length
+                                          ? "Finish"
+                                          : "Next"}
+                                      </Text>
+                                    </Pressable>
+                                  )}
+                                </View>
+
                                 <Pressable
                                   style={[
-                                    styles.quizPrimaryBtn,
-                                    quizSelected === null &&
-                                      styles.quizPrimaryBtnDisabled,
+                                    styles.quizSecondaryBtn,
+                                    { marginTop: 10, marginHorizontal: 10 },
                                   ]}
-                                  disabled={quizSelected === null}
-                                  onPress={handleSubmitQuestion}
+                                  onPress={async () => {
+                                    setQuizStarted(false);
+                                    setQuizQuestions([]);
+                                    setQuizError(null);
+                                    setQuizShowResults(false);
+                                    setQuizIndex(0);
+                                    setQuizSelected(null);
+                                    setQuizSubmitted(false);
+                                    setQuizAnswers({});
+                                    await fetchAttemptHistory();
+                                  }}
                                 >
-                                  <Text style={styles.quizPrimaryBtnText}>Submit</Text>
-                                </Pressable>
-                              ) : (
-                                <Pressable
-                                  style={styles.quizPrimaryBtn}
-                                  onPress={handleNext}
-                                >
-                                  <Text style={styles.quizPrimaryBtnText}>
-                                    {quizIndex + 1 >= quizQuestions.length
-                                      ? "Finish"
-                                      : "Next"}
+                                  <Text style={styles.quizSecondaryBtnText}>
+                                    Quit to Quiz Home
                                   </Text>
                                 </Pressable>
-                              )}
-                            </View>
+
+                                <Pressable
+                                  style={[
+                                    styles.quizSecondaryBtn,
+                                    { marginTop: 10, marginHorizontal: 10 },
+                                  ]}
+                                  onPress={backToGuidelines}
+                                >
+                                  <Text style={styles.quizSecondaryBtnText}>
+                                    Back to Guidelines
+                                  </Text>
+                                </Pressable>
+                              </>
+                            )}
                           </>
                         )}
                       </>
@@ -835,6 +1353,92 @@ export default function CategoryPage() {
           />
         )}
       </View>
+
+      {/* ATTEMPT REVIEW MODAL (scrollable on phone) */}
+      <Modal
+        transparent
+        visible={reviewOpen}
+        animationType="fade"
+        onRequestClose={() => setReviewOpen(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          {/* tap outside to close */}
+          <Pressable
+            style={{ ...StyleSheet.absoluteFillObject }}
+            onPress={() => setReviewOpen(false)}
+          />
+
+          {/* card */}
+          <View style={styles.reviewModalCard}>
+            <Text style={styles.modalTitle}>Attempt Review</Text>
+
+            {reviewAttempt ? (
+              <View style={styles.reviewSummaryBox}>
+                <Text style={styles.reviewSummaryTitle}>
+                  Score: {reviewAttempt.score}/{reviewAttempt.total_questions} •{" "}
+                  {reviewAttempt.percentage}%
+                </Text>
+                <Text style={styles.reviewSummarySub}>
+                  {reviewAttempt.sop_title} • {formatDate(reviewAttempt.created_at)}
+                </Text>
+              </View>
+            ) : null}
+
+            {reviewAnswersLoading ? (
+              <View style={{ paddingVertical: 10, alignItems: "center" }}>
+                <ActivityIndicator />
+              </View>
+            ) : reviewAnswersError ? (
+              <Text style={styles.quizHomeError}>{reviewAnswersError}</Text>
+            ) : (
+              <ScrollView
+                style={styles.reviewScroll}
+                contentContainerStyle={{ paddingBottom: 20 }}
+                showsVerticalScrollIndicator
+              >
+                {reviewAnswers.map((ans, idx) => {
+                  const yourLabel =
+                    ans.selected_answer >= 0
+                      ? String.fromCharCode(65 + ans.selected_answer)
+                      : "—";
+                  const correctLabel = String.fromCharCode(65 + ans.correct_answer);
+
+                  return (
+                    <View key={ans.id} style={styles.reviewAnswerRow}>
+                      <View
+                        style={[
+                          styles.reviewAnswerDot,
+                          ans.is_correct
+                            ? styles.reviewAnswerDotCorrect
+                            : styles.reviewAnswerDotWrong,
+                        ]}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.reviewAnswerQ}>
+                          {idx + 1}. {ans.question}
+                        </Text>
+                        <Text style={styles.reviewAnswerMeta}>
+                          Your: {yourLabel} • Correct: {correctLabel}
+                        </Text>
+                        {ans.explanation ? (
+                          <Text style={styles.reviewAnswerExplain}>{ans.explanation}</Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            <Pressable
+              style={[styles.quizSecondaryBtn, { marginTop: 10 }]}
+              onPress={() => setReviewOpen(false)}
+            >
+              <Text style={styles.quizSecondaryBtnText}>Close</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       {/* TITLE MODAL */}
       <Modal

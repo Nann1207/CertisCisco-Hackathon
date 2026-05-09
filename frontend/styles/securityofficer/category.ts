@@ -21,6 +21,12 @@ export const styles = StyleSheet.create({
   },
 
   backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
     marginRight: 10,
   },
 
@@ -30,7 +36,7 @@ export const styles = StyleSheet.create({
     fontWeight: "700",
     flex: 1,
     textAlign: "center",
-    marginRight: 24,
+    marginRight: 45,
   },
 
   dropdownBox: {
@@ -495,27 +501,28 @@ export const styles = StyleSheet.create({
   },
 
   quizBtnRow: {
-  alignItems: "center",   // ✅ center the button horizontally
-  justifyContent: "center",
-  paddingHorizontal: 10,
-  marginTop: 10,
-},
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+    marginTop: 10,
+  },
 
   quizPrimaryBtn: {
-  backgroundColor: "#E2E8F0",
-  paddingVertical: 8,
-  paddingHorizontal: 18,
-  borderRadius: 18,
-  alignItems: "center",     // ✅ center text inside button
-  justifyContent: "center",
-  minWidth: 180,            // ✅ optional: same width as secondary button
-},
+    backgroundColor: "#E2E8F0",
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 180,
+  },
 
-quizPrimaryBtnText: {
-  color: "#0E2D52",
-  fontWeight: "900",
-  textAlign: "center",      // ✅ ensures centered text
-},
+  quizPrimaryBtnText: {
+    color: "#0E2D52",
+    fontWeight: "900",
+    textAlign: "center",
+  },
+
   quizPrimaryBtnDisabled: {
     opacity: 0.5,
   },
@@ -531,7 +538,7 @@ quizPrimaryBtnText: {
     marginBottom: 10,
   },
 
-    /* =======================
+  /* =======================
      QUIZ RESULTS PAGE
   ======================= */
   quizProgressText: {
@@ -672,4 +679,189 @@ quizPrimaryBtnText: {
     color: "#0E2D52",
     fontWeight: "900",
   },
+
+  // ============================
+  // NEW STYLES: QUIZ HOME + HISTORY + REVIEW
+  // ============================
+  quizHomeWrap: {
+    paddingHorizontal: 10,
+    paddingTop: 6,
+    paddingBottom: 10,
+  },
+
+  quizHomeTitle: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#0E2D52",
+    marginBottom: 4,
+  },
+
+  quizHomeSub: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#64748B",
+    marginBottom: 8,
+  },
+
+  quizHomeSubBold: {
+    color: "#0E2D52",
+    fontWeight: "900",
+  },
+
+  quizHomeWarn: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#F59E0B",
+    marginBottom: 8,
+  },
+
+  quizHomeBtnRow: {
+    gap: 10,
+    marginBottom: 12,
+  },
+
+  quizHistoryBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#F8FAFC",
+    padding: 10,
+  },
+
+  quizHistoryTitle: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#0E2D52",
+    marginBottom: 8,
+  },
+
+  quizHomeEmpty: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#64748B",
+    paddingVertical: 8,
+  },
+
+  quizHomeError: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#EF4444",
+    paddingVertical: 8,
+  },
+
+  attemptRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+  },
+
+  attemptRowTitle: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: "#0E2D52",
+  },
+
+  attemptRowSub: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748B",
+  },
+
+  reviewSummaryBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#F8FAFC",
+    padding: 10,
+    marginBottom: 10,
+  },
+
+  reviewSummaryTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#0E2D52",
+  },
+
+  reviewSummarySub: {
+    marginTop: 4,
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748B",
+  },
+
+  reviewAnswerRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+  },
+
+  reviewAnswerDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 4,
+  },
+
+  reviewAnswerDotCorrect: {
+    backgroundColor: "#16A34A",
+  },
+
+  reviewAnswerDotWrong: {
+    backgroundColor: "#EF4444",
+  },
+
+  reviewAnswerQ: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#0E2D52",
+  },
+
+  reviewAnswerMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#64748B",
+  },
+
+  reviewAnswerExplain: {
+    marginTop: 6,
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#334155",
+    lineHeight: 16,
+  },
+
+    // --- Attempt Review Modal sizing ---
+  reviewModalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 14,
+    height: "80%", // important: gives scroll area space
+  },
+
+  reviewScroll: {
+    flex: 1, // important: makes ScrollView take remaining space & scroll
+  },
+
+  quizHistoryTitleRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  marginBottom: 8,
+},
+
+quizHistoryRefreshBtn: {
+  padding: 4,
+  borderRadius: 8,
+  backgroundColor: "#EFF6FF",
+  borderWidth: 1,
+  borderColor: "#BFDBFE",
+},
+
 });
