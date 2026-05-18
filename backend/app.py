@@ -134,8 +134,11 @@ def _call_sealion_chat(messages, *, temperature=0.4):
 
     data = resp.json()
 
-    # OpenAI-style parsing
-    content = data["choices"][0]["message"]["content"]
+    # OpenAI-style parsing, with fallback for responses that place the payload in reasoning_content.
+    message = data["choices"][0]["message"]
+    content = message.get("content") or message.get("reasoning_content")
+    if not content:
+        raise RuntimeError(f"SeaLion response missing content: {data}")
     return content
 
 
@@ -169,7 +172,10 @@ def _call_checklist_sealion_chat(messages, *, temperature=0.4):
         raise RuntimeError(f"SeaLion API error {resp.status_code}: {resp.text}")
 
     data = resp.json()
-    content = data["choices"][0]["message"]["content"]
+    message = data["choices"][0]["message"]
+    content = message.get("content") or message.get("reasoning_content")
+    if not content:
+        raise RuntimeError(f"SeaLion response missing content: {data}")
     return content
 
 

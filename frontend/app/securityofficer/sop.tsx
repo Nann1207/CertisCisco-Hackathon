@@ -72,6 +72,15 @@ export default function SOPPage() {
         </Pressable>
 
         <Text style={styles.headerTitle}>Service Of Operation</Text>
+
+        <Pressable
+          onPress={() => router.push("/securityofficer/sop-test")}
+          style={styles.sopTestBtn}
+          hitSlop={10}
+        >
+          <Ionicons name="document-text-outline" size={20} color="#fff" />
+          <Text style={styles.sopTestBtnText}>Test</Text>
+        </Pressable>
       </View>
 
       {/* GRID */}

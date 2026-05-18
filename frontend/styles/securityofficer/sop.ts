@@ -19,7 +19,7 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-start",
+    justifyContent: "space-between",
   },
 
   headerTitle: {
@@ -27,6 +27,23 @@ export const styles = StyleSheet.create({
     fontSize: 23,
     fontWeight: "700",
     marginLeft: 10,
+    flex: 1,
+  },
+
+  sopTestBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    borderRadius: 8,
+  },
+
+  sopTestBtnText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
   },
 
   search: {
